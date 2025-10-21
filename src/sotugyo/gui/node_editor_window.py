@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from collections.abc import Iterable as IterableABC, Mapping
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
@@ -1236,16 +1237,28 @@ class NodeEditorWindow(QMainWindow):
         except Exception:
             return []
 
-    def _collect_ports(self, node, *, output: bool) -> List:
+    def _collect_ports(self, node, *, output: bool) -> List[Port]:
         accessor = "output_ports" if output else "input_ports"
         ports_getter = getattr(node, accessor, None)
         if not callable(ports_getter):
             return []
         try:
-            ports = ports_getter() or []
+            raw_ports = ports_getter()
         except Exception:
             return []
-        return list(ports)
+        if not raw_ports:
+            return []
+        if isinstance(raw_ports, Mapping):
+            candidates = raw_ports.values()
+        elif isinstance(raw_ports, IterableABC) and not isinstance(raw_ports, (str, bytes)):
+            candidates = raw_ports
+        else:
+            return []
+        ports: List[Port] = []
+        for entry in candidates:
+            if isinstance(entry, Port):
+                ports.append(entry)
+        return ports
 
     def _port_index_in_node(self, node, port, *, output: bool) -> Optional[int]:
         for index, candidate in enumerate(self._collect_ports(node, output=output)):
