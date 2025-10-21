@@ -25,9 +25,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..settings.project_registry import ProjectRecord, ProjectRegistry
-from ..settings.project_settings import load_project_settings, save_project_settings
-from ..settings.project_structure import ensure_project_structure, validate_project_structure
+from ..settings.project_registry import ProjectRecord
+from ..settings.project_service import ProjectService
+from ..settings.project_structure import ProjectStructureReport
 from ..settings.user_settings import UserSettingsManager
 from .node_editor_window import NodeEditorWindow
 from .user_settings_dialog import UserSettingsDialog
@@ -65,7 +65,7 @@ class StartWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(640, 420)
         self._node_window: Optional[NodeEditorWindow] = None
-        self._registry = ProjectRegistry()
+        self._project_service = ProjectService()
         self._user_manager = UserSettingsManager()
         self._project_records: Dict[int, ProjectRecord] = {}
         self._current_settings_path: Optional[Path] = None
@@ -157,12 +157,12 @@ class StartWindow(QMainWindow):
         self._project_combo.clear()
         self._project_records.clear()
 
-        records = self._registry.records()
+        records = self._project_service.records()
         for index, record in enumerate(records):
             display_name = record.name or record.root.name
             self._project_combo.addItem(display_name, record.root)
             self._project_records[index] = record
-        last_root = self._registry.last_project()
+        last_root = self._project_service.last_project_root()
         if last_root is not None:
             for index, record in self._project_records.items():
                 if Path(record.root) == Path(last_root):
@@ -226,14 +226,15 @@ class StartWindow(QMainWindow):
                 self._structure_warning_label.clear()
             return
         self._current_settings_path = Path(record.root)
-        settings = load_project_settings(record.root)
+        context = self._project_service.load_context(record.root)
+        settings = context.settings
         info_lines = [
             f"プロジェクト名: {settings.project_name}",
             f"ルート: {record.root}",
             f"概要: {settings.description or '（なし）'}",
         ]
         self._project_info_label.setText("\n".join(info_lines))
-        report = validate_project_structure(record.root)
+        report = self._project_service.validate_structure(record.root)
         if self._structure_warning_label:
             if report.is_valid:
                 self._structure_warning_label.setText("構成チェック: 問題なし")
@@ -269,15 +270,13 @@ class StartWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
         try:
-            ensure_project_structure(project_dir)
+            self._project_service.ensure_structure(project_dir)
         except OSError as exc:
             QMessageBox.critical(self, "エラー", f"構成の作成に失敗しました: {exc}")
             return
-        settings = load_project_settings(project_dir)
+        settings = self._project_service.load_settings(project_dir)
         settings.project_name = project_name
-        save_project_settings(settings)
-        record = ProjectRecord(name=project_name, root=project_dir)
-        self._registry.register_project(record)
+        self._project_service.save_settings(settings, set_last=True)
         self.refresh_start_state()
         if self._project_combo is not None:
             for index in range(self._project_combo.count()):
@@ -314,8 +313,9 @@ class StartWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
 
-        settings = load_project_settings(record.root)
-        report = validate_project_structure(record.root)
+        context = self._project_service.load_context(record.root)
+        settings = context.settings
+        report: ProjectStructureReport = self._project_service.validate_structure(record.root)
         if not report.is_valid:
             proceed = QMessageBox.warning(
                 self,
@@ -347,14 +347,18 @@ class StartWindow(QMainWindow):
             settings.last_user_password = password
         else:
             settings.last_user_password = None
-        save_project_settings(settings)
+        self._project_service.save_settings(settings)
         self._user_manager.set_last_user_id(user_id)
-        self._registry.set_last_project(record.root)
+        self._project_service.set_last_project(record.root)
 
         if self._node_window is None:
-            self._node_window = NodeEditorWindow(self)
+            self._node_window = NodeEditorWindow(
+                self,
+                project_service=self._project_service,
+                user_manager=self._user_manager,
+            )
             self._node_window.return_to_start_requested.connect(self._on_return_to_start)
-        if not self._node_window.prepare_context(record.root, settings, account, password):
+        if not self._node_window.prepare_context(context, account, password):
             return
         self._active_project_root = record.root
         self._active_user_id = user_id
