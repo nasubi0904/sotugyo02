@@ -305,6 +305,7 @@ class NodeEditorWindow(QMainWindow):
         self._detail_name_label: Optional[QLabel] = None
         self._detail_type_label: Optional[QLabel] = None
         self._detail_position_label: Optional[QLabel] = None
+        self._detail_uuid_label: Optional[QLabel] = None
         self._rename_input: Optional[QLineEdit] = None
         self._rename_button: Optional[QPushButton] = None
         self._content_browser: Optional[NodeContentBrowser] = None
@@ -421,10 +422,12 @@ class NodeEditorWindow(QMainWindow):
 
         self._detail_name_label = QLabel("-", widget)
         self._detail_type_label = QLabel("-", widget)
+        self._detail_uuid_label = QLabel("-", widget)
         self._detail_position_label = QLabel("-", widget)
 
         layout.addRow("名前", self._detail_name_label)
         layout.addRow("タイプ", self._detail_type_label)
+        layout.addRow("UUID", self._detail_uuid_label)
         layout.addRow("位置", self._detail_position_label)
 
         return widget
@@ -932,6 +935,8 @@ class NodeEditorWindow(QMainWindow):
                 self._detail_type_label.setText("-")
             if self._detail_position_label:
                 self._detail_position_label.setText("-")
+            if self._detail_uuid_label:
+                self._detail_uuid_label.setText("-")
             if self._rename_input is not None:
                 self._rename_input.setText("")
                 self._rename_input.setEnabled(False)
@@ -952,12 +957,18 @@ class NodeEditorWindow(QMainWindow):
             else "-"
         )
 
+        node_uuid, _, metadata_changed = self._ensure_node_metadata(node)
+        if metadata_changed:
+            self._set_modified(True)
+
         if self._detail_name_label:
             self._detail_name_label.setText(name)
         if self._detail_type_label:
             self._detail_type_label.setText(str(node_type))
         if self._detail_position_label:
             self._detail_position_label.setText(pos_text)
+        if self._detail_uuid_label:
+            self._detail_uuid_label.setText(node_uuid)
         if self._rename_input is not None:
             self._rename_input.blockSignals(True)
             self._rename_input.setText(name)
@@ -1092,9 +1103,11 @@ class NodeEditorWindow(QMainWindow):
         node_list = list(nodes)
         node_entries = []
         node_id_map: Dict = {}
+        node_uuid_map: Dict[object, str] = {}
         for index, node in enumerate(node_list):
             node_id_map[node] = index
             node_uuid, assigned_at, _ = self._ensure_node_metadata(node)
+            node_uuid_map[node] = node_uuid
             entry = {
                 "id": index,
                 "name": self._safe_node_name(node),
@@ -1108,7 +1121,7 @@ class NodeEditorWindow(QMainWindow):
 
         connections = []
         seen_connections: Set[
-            Tuple[int, Optional[int], str, int, Optional[int], str]
+            Tuple[str, Optional[int], str, str, Optional[int], str]
         ] = set()
         for node in node_list:
             for port in self._collect_ports(node, output=True):
@@ -1118,6 +1131,10 @@ class NodeEditorWindow(QMainWindow):
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
+                    source_uuid = node_uuid_map.get(node)
+                    target_uuid = node_uuid_map.get(target_node)
+                    if source_uuid is None or target_uuid is None:
+                        continue
                     source_id = node_id_map[node]
                     target_id = node_id_map[target_node]
                     source_name = self._safe_port_name(port)
@@ -1125,10 +1142,10 @@ class NodeEditorWindow(QMainWindow):
                     source_index = self._port_index_in_node(node, port, output=True)
                     target_index = self._port_index_in_node(target_node, connected, output=False)
                     key = (
-                        source_id,
+                        source_uuid,
                         source_index,
                         source_name,
-                        target_id,
+                        target_uuid,
                         target_index,
                         target_name,
                     )
@@ -1137,8 +1154,10 @@ class NodeEditorWindow(QMainWindow):
                     seen_connections.add(key)
                     entry = {
                         "source": source_id,
+                        "source_uuid": source_uuid,
                         "source_port": source_name,
                         "target": target_id,
+                        "target_uuid": target_uuid,
                         "target_port": target_name,
                     }
                     if source_index is not None:
@@ -1203,6 +1222,7 @@ class NodeEditorWindow(QMainWindow):
         self._review_count = 0
 
         identifier_map: Dict[int, object] = {}
+        uuid_map: Dict[str, object] = {}
         metadata_changed = False
         for entry in nodes_info:
             if not isinstance(entry, dict):
@@ -1224,23 +1244,34 @@ class NodeEditorWindow(QMainWindow):
             self._known_nodes.append(node)
             node_uuid = entry.get("uuid")
             assigned_at = entry.get("uuid_assigned_at")
-            _, _, changed = self._ensure_node_metadata(
+            normalized_uuid, _, changed = self._ensure_node_metadata(
                 node,
                 uuid_value=node_uuid if isinstance(node_uuid, str) else None,
                 assigned_at=assigned_at if isinstance(assigned_at, str) else None,
             )
+            uuid_map[normalized_uuid] = node
             if changed:
                 metadata_changed = True
 
         for connection in connections_info:
             if not isinstance(connection, dict):
                 continue
-            source_id = connection.get("source")
-            target_id = connection.get("target")
-            if not isinstance(source_id, int) or not isinstance(target_id, int):
-                continue
-            source_node = identifier_map.get(source_id)
-            target_node = identifier_map.get(target_id)
+            source_node = None
+            target_node = None
+            source_uuid = connection.get("source_uuid")
+            target_uuid = connection.get("target_uuid")
+            if isinstance(source_uuid, str):
+                source_node = uuid_map.get(source_uuid)
+            if isinstance(target_uuid, str):
+                target_node = uuid_map.get(target_uuid)
+            if source_node is None:
+                source_id = connection.get("source")
+                if isinstance(source_id, int):
+                    source_node = identifier_map.get(source_id)
+            if target_node is None:
+                target_id = connection.get("target")
+                if isinstance(target_id, int):
+                    target_node = identifier_map.get(target_id)
             if source_node is None or target_node is None:
                 continue
             source_name, source_index = self._parse_connection_port_reference(
