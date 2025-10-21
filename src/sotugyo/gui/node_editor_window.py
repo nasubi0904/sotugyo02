@@ -334,6 +334,10 @@ class NodeEditorWindow(QMainWindow):
         save_action.setShortcut(QKeySequence.Save)
         file_menu.addAction(save_action)
 
+        export_selected_action = QAction("選択ノードを保存...", self)
+        export_selected_action.triggered.connect(self._file_export_selected_nodes)
+        file_menu.addAction(export_selected_action)
+
         import_action = QAction("アセットをインポート...", self)
         import_action.triggered.connect(self._file_import)
         import_action.setShortcut(QKeySequence.Open)
@@ -958,9 +962,13 @@ class NodeEditorWindow(QMainWindow):
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
+        return self._build_state_from_nodes(nodes)
+
+    def _build_state_from_nodes(self, nodes: Iterable) -> Dict:
+        node_list = list(nodes)
         node_entries = []
         node_id_map: Dict = {}
-        for index, node in enumerate(nodes):
+        for index, node in enumerate(node_list):
             node_id_map[node] = index
             node_entries.append(
                 {
@@ -972,11 +980,16 @@ class NodeEditorWindow(QMainWindow):
             )
 
         connections = []
-        seen_connections: Set[Tuple[int, Optional[int], str, int, Optional[int], str]] = set()
-        for node in nodes:
-            source_id = node_id_map[node]
-            for port in self._collect_ports(node, output=True):
-                for connected in self._connected_ports(port):
+        seen_connections: Set[Tuple[int, str, int, str]] = set()
+        for node in node_list:
+            outputs = getattr(node, "output_ports", None)
+            if not callable(outputs):
+                continue
+            for port in outputs() or []:
+                connected_ports = getattr(port, "connected_ports", None)
+                if not callable(connected_ports):
+                    continue
+                for connected in connected_ports() or []:
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
@@ -1009,6 +1022,42 @@ class NodeEditorWindow(QMainWindow):
                     connections.append(entry)
 
         return {"nodes": node_entries, "connections": connections}
+
+    def _file_export_selected_nodes(self) -> None:
+        selected_nodes = getattr(self._graph, "selected_nodes", None)
+        if not callable(selected_nodes):
+            self._show_error_dialog("選択中のノードを取得できませんでした。")
+            return
+        nodes = list(selected_nodes() or [])
+        if not nodes:
+            self._show_info_dialog("保存するノードを選択してください。")
+            return
+
+        start_dir = (
+            str(self._current_project_root)
+            if self._current_project_root is not None
+            else str(Path.home())
+        )
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "選択ノードを保存",
+            start_dir,
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not filename:
+            return
+
+        path = Path(filename)
+        try:
+            state = self._build_state_from_nodes(nodes)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("w", encoding="utf-8") as handle:
+                json.dump(state, handle, ensure_ascii=True, indent=2)
+        except (OSError, TypeError) as exc:
+            self._show_error_dialog(f"保存に失敗しました: {exc}")
+            return
+
+        self._show_info_dialog("選択したノードを保存しました。")
 
     def _apply_project_state(self, state: Dict) -> None:
         nodes_info = state.get("nodes") if isinstance(state, dict) else None
