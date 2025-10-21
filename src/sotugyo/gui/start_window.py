@@ -30,6 +30,7 @@ from ..settings.project_settings import load_project_settings, save_project_sett
 from ..settings.project_structure import ensure_project_structure, validate_project_structure
 from ..settings.user_settings import UserSettingsManager
 from .node_editor_window import NodeEditorWindow
+from .user_settings_dialog import UserSettingsDialog
 
 
 class PasswordPromptDialog(QDialog):
@@ -119,6 +120,13 @@ class StartWindow(QMainWindow):
         self._user_combo.currentIndexChanged.connect(self._on_user_changed)
         form.addRow("ユーザー", self._user_combo)
 
+        user_button_row = QHBoxLayout()
+        user_settings_button = QPushButton("ユーザー設定...", self)
+        user_settings_button.clicked.connect(self._open_user_settings)
+        user_button_row.addWidget(user_settings_button)
+        user_button_row.addStretch(1)
+        form.addRow(" ", user_button_row)
+
         layout.addLayout(form)
 
         self._project_info_label = QLabel("プロジェクト情報がここに表示されます。", self)
@@ -166,6 +174,7 @@ class StartWindow(QMainWindow):
     def _reload_users(self) -> None:
         if self._user_combo is None:
             return
+        previous_user = self._user_combo.currentData()
         accounts = self._user_manager.list_accounts()
         self._user_combo.blockSignals(True)
         self._user_combo.clear()
@@ -173,6 +182,8 @@ class StartWindow(QMainWindow):
             display = f"{account.display_name} ({account.user_id})"
             self._user_combo.addItem(display, account.user_id)
         self._user_combo.blockSignals(False)
+        if previous_user and self._set_user_selection(previous_user):
+            return
         self._apply_default_user_selection()
 
     def _apply_default_user_selection(self) -> None:
@@ -186,10 +197,23 @@ class StartWindow(QMainWindow):
         if preferred_user is None:
             preferred_user = self._user_manager.last_user_id()
         if preferred_user:
-            for index in range(self._user_combo.count()):
-                if self._user_combo.itemData(index) == preferred_user:
-                    self._user_combo.setCurrentIndex(index)
-                    break
+            self._set_user_selection(preferred_user)
+
+    def _set_user_selection(self, user_id: str) -> bool:
+        if self._user_combo is None:
+            return False
+        for index in range(self._user_combo.count()):
+            if self._user_combo.itemData(index) == user_id:
+                previous_block = self._user_combo.blockSignals(True)
+                self._user_combo.setCurrentIndex(index)
+                self._user_combo.blockSignals(previous_block)
+                return True
+        return False
+
+    def _open_user_settings(self) -> None:
+        dialog = UserSettingsDialog(self._user_manager, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._reload_users()
 
     def _on_project_changed(self, index: int) -> None:
         if self._project_combo is None or self._project_info_label is None:
