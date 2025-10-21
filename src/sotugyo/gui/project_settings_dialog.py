@@ -35,7 +35,8 @@ class ProjectSettingsDialog(QDialog):
             project_name=settings.project_name,
             description=settings.description,
             project_root=settings.project_root,
-            auto_fill_credentials=settings.auto_fill_credentials,
+            auto_fill_user_id=settings.auto_fill_user_id,
+            auto_fill_password=settings.auto_fill_password,
             last_user_id=settings.last_user_id,
             last_user_password=settings.last_user_password,
         )
@@ -47,11 +48,10 @@ class ProjectSettingsDialog(QDialog):
         self._root_edit = QLineEdit(str(settings.project_root), self)
         self._root_edit.setReadOnly(True)
         self._root_button = QPushButton("参照...")
-        self._auto_fill_checkbox = QCheckBox("前回ユーザーの資格情報を自動入力する", self)
-        self._auto_fill_checkbox.setChecked(settings.auto_fill_credentials)
-        self._last_user_edit = QLineEdit(settings.last_user_id or "", self)
-        self._last_password_edit = QLineEdit(settings.last_user_password or "", self)
-        self._last_password_edit.setEchoMode(QLineEdit.Password)
+        self._auto_fill_id_checkbox = QCheckBox("前回ユーザーのIDを自動入力する", self)
+        self._auto_fill_id_checkbox.setChecked(settings.auto_fill_user_id)
+        self._auto_fill_password_checkbox = QCheckBox("前回ユーザーのパスワードを自動入力する", self)
+        self._auto_fill_password_checkbox.setChecked(settings.auto_fill_password)
         self._structure_label = QLabel("", self)
         self._structure_label.setWordWrap(True)
 
@@ -69,9 +69,8 @@ class ProjectSettingsDialog(QDialog):
         root_layout.addWidget(self._root_button)
         form_layout.addRow("プロジェクトルート", root_layout)
 
-        form_layout.addRow(self._auto_fill_checkbox)
-        form_layout.addRow("自動入力するユーザーID", self._last_user_edit)
-        form_layout.addRow("自動入力するパスワード", self._last_password_edit)
+        form_layout.addRow(self._auto_fill_id_checkbox)
+        form_layout.addRow(self._auto_fill_password_checkbox)
 
         layout.addLayout(form_layout)
         layout.addWidget(self._structure_label)
@@ -141,9 +140,10 @@ class ProjectSettingsDialog(QDialog):
             project_name=self._name_edit.text().strip(),
             description=self._description_edit.toPlainText().strip(),
             project_root=root,
-            auto_fill_credentials=self._auto_fill_checkbox.isChecked(),
-            last_user_id=self._last_user_edit.text().strip() or None,
-            last_user_password=self._last_password_edit.text() or None,
+            auto_fill_user_id=self._auto_fill_id_checkbox.isChecked(),
+            auto_fill_password=self._auto_fill_password_checkbox.isChecked(),
+            last_user_id=self._original_settings.last_user_id,
+            last_user_password=self._original_settings.last_user_password,
         )
 
     # 公開 API --------------------------------------------------------
