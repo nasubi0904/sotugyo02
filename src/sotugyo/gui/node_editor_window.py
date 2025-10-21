@@ -4,20 +4,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import Signal
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QCloseEvent, QKeySequence
 from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QFrame,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
+    QShortcut,
+    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -26,6 +33,177 @@ from NodeGraphQt import NodeGraph, Port
 
 from .nodes import ReviewNode, TaskNode
 
+
+class NodeContentBrowser(QWidget):
+    """ノード追加と検索をまとめたコンテンツブラウザ風ウィジェット。"""
+
+    node_type_requested = Signal(str)
+    existing_node_requested = Signal(object)
+    search_submitted = Signal(str)
+    back_requested = Signal()
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._search_line: QLineEdit = QLineEdit(self)
+        self._available_list: QListWidget = QListWidget(self)
+        self._existing_list: QListWidget = QListWidget(self)
+        self._available_entries: List[Dict[str, str]] = []
+        self._existing_entries: List[Dict[str, object]] = []
+
+        self._setup_ui()
+        self._connect_signals()
+
+    def _setup_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(8)
+
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(8)
+
+        title_label = QLabel("コンテンツブラウザ", self)
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        header_layout.addWidget(title_label)
+        header_layout.addStretch(1)
+
+        back_button = QPushButton("スタート画面に戻る", self)
+        back_button.clicked.connect(self.back_requested.emit)
+        header_layout.addWidget(back_button)
+
+        layout.addLayout(header_layout)
+
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(8)
+
+        self._search_line.setPlaceholderText("ノードや配置済みコンテンツを検索")
+        search_layout.addWidget(self._search_line, 1)
+
+        layout.addLayout(search_layout)
+
+        self._configure_list_widget(self._available_list)
+        self._configure_list_widget(self._existing_list)
+
+        splitter = QSplitter(Qt.Vertical, self)
+        splitter.addWidget(self._build_section("追加可能ノード", self._available_list))
+        splitter.addWidget(self._build_section("配置済みノード", self._existing_list))
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 1)
+
+        layout.addWidget(splitter, 1)
+
+    def _configure_list_widget(self, widget: QListWidget) -> None:
+        widget.setViewMode(QListWidget.IconMode)
+        widget.setMovement(QListWidget.Static)
+        widget.setResizeMode(QListWidget.Adjust)
+        widget.setWrapping(True)
+        widget.setIconSize(QSize(48, 48))
+        widget.setSpacing(8)
+        widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        widget.setUniformItemSizes(True)
+
+    def _build_section(self, title: str, widget: QListWidget) -> QWidget:
+        frame = QFrame(self)
+        frame.setFrameShape(QFrame.StyledPanel)
+        frame_layout = QVBoxLayout(frame)
+        frame_layout.setContentsMargins(8, 8, 8, 8)
+        frame_layout.setSpacing(6)
+
+        label = QLabel(title, frame)
+        label.setStyleSheet("font-weight: bold;")
+        frame_layout.addWidget(label)
+        frame_layout.addWidget(widget, 1)
+
+        return frame
+
+    def _connect_signals(self) -> None:
+        self._search_line.textChanged.connect(self._apply_filter)
+        self._search_line.returnPressed.connect(self._on_search_submitted)
+        self._available_list.itemActivated.connect(self._on_available_item_activated)
+        self._existing_list.itemActivated.connect(self._on_existing_item_activated)
+
+    def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
+        self._available_entries = entries
+        self._available_list.clear()
+        for entry in entries:
+            title = entry.get("title", "")
+            subtitle = entry.get("subtitle", "")
+            node_type = entry.get("type", "")
+            item = QListWidgetItem(f"{title}\n{subtitle}")
+            item.setData(Qt.UserRole, node_type)
+            item.setToolTip(node_type)
+            item.setSizeHint(QSize(180, 72))
+            self._available_list.addItem(item)
+        self._apply_filter()
+
+    def update_existing_nodes(self, entries: List[Dict[str, object]]) -> None:
+        self._existing_entries = entries
+        self._existing_list.clear()
+        for entry in entries:
+            title = str(entry.get("title", ""))
+            subtitle = str(entry.get("subtitle", ""))
+            node_ref = entry.get("node")
+            item = QListWidgetItem(f"{title}\n{subtitle}")
+            item.setData(Qt.UserRole, node_ref)
+            item.setToolTip(subtitle)
+            item.setSizeHint(QSize(220, 72))
+            self._existing_list.addItem(item)
+        self._apply_filter()
+
+    def focus_search(self) -> None:
+        self._search_line.setFocus()
+        self._search_line.selectAll()
+
+    def current_search_text(self) -> str:
+        return self._search_line.text()
+
+    def first_visible_existing_node(self):
+        for index in range(self._existing_list.count()):
+            item = self._existing_list.item(index)
+            if item is not None and not item.isHidden():
+                return item.data(Qt.UserRole)
+        return None
+
+    def first_visible_available_type(self) -> Optional[str]:
+        for index in range(self._available_list.count()):
+            item = self._available_list.item(index)
+            if item is not None and not item.isHidden():
+                data = item.data(Qt.UserRole)
+                if isinstance(data, str):
+                    return data
+        return None
+
+    def _apply_filter(self) -> None:
+        keyword = self._search_line.text().strip().lower()
+        for index in range(self._available_list.count()):
+            item = self._available_list.item(index)
+            if item is None:
+                continue
+            text = item.text().lower()
+            item.setHidden(bool(keyword) and keyword not in text)
+        for index in range(self._existing_list.count()):
+            item = self._existing_list.item(index)
+            if item is None:
+                continue
+            text = item.text().lower()
+            item.setHidden(bool(keyword) and keyword not in text)
+
+    def _on_search_submitted(self) -> None:
+        self.search_submitted.emit(self._search_line.text())
+
+    def _on_available_item_activated(self, item: QListWidgetItem) -> None:
+        if item is None:
+            return
+        node_type = item.data(Qt.UserRole)
+        if isinstance(node_type, str):
+            self.node_type_requested.emit(node_type)
+
+    def _on_existing_item_activated(self, item: QListWidgetItem) -> None:
+        if item is None:
+            return
+        node_ref = item.data(Qt.UserRole)
+        self.existing_node_requested.emit(node_ref)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -60,12 +238,21 @@ class NodeEditorWindow(QMainWindow):
         self._detail_position_label: Optional[QLabel] = None
         self._rename_input: Optional[QLineEdit] = None
         self._rename_button: Optional[QPushButton] = None
-        self._search_input: Optional[QLineEdit] = None
+        self._content_browser: Optional[NodeContentBrowser] = None
+        self._shortcuts: List[QShortcut] = []
+        self._node_type_creators = {
+            "sotugyo.demo.TaskNode": self._create_task_node,
+            "sotugyo.demo.ReviewNode": self._create_review_node,
+        }
 
         self._init_ui()
         self._create_menus()
         self._setup_graph_signals()
+        self._setup_context_menu()
+        self._setup_shortcuts()
+        self._initialize_content_browser()
         self._update_selected_node_info()
+        self._refresh_node_catalog()
         self._set_modified(False)
 
     # ------------------------------------------------------------------
@@ -90,7 +277,12 @@ class NodeEditorWindow(QMainWindow):
         content_layout.addWidget(self._side_tabs)
 
         root_layout.addLayout(content_layout, 1)
-        root_layout.addWidget(self._build_bottom_panel())
+        self._content_browser = NodeContentBrowser(container)
+        self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
+        self._content_browser.existing_node_requested.connect(self._focus_existing_node)
+        self._content_browser.search_submitted.connect(self._handle_content_browser_search)
+        self._content_browser.back_requested.connect(self._return_to_start)
+        root_layout.addWidget(self._content_browser)
 
         self.setCentralWidget(container)
 
@@ -101,15 +293,24 @@ class NodeEditorWindow(QMainWindow):
 
         save_action = QAction("上書き保存", self)
         save_action.triggered.connect(self._file_save)
+        save_action.setShortcut(QKeySequence.Save)
         file_menu.addAction(save_action)
 
         save_as_action = QAction("別名保存...", self)
         save_as_action.triggered.connect(self._file_save_as)
+        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
         file_menu.addAction(save_as_action)
 
         import_action = QAction("インポート...", self)
         import_action.triggered.connect(self._file_import)
+        import_action.setShortcut(QKeySequence.Open)
         file_menu.addAction(import_action)
+
+        file_menu.addSeparator()
+
+        return_action = QAction("スタート画面に戻る", self)
+        return_action.triggered.connect(self._return_to_start)
+        file_menu.addAction(return_action)
 
         option_menu = menubar.addMenu("Option")
         project_settings_action = QAction("プロジェクト設定...", self)
@@ -157,50 +358,6 @@ class NodeEditorWindow(QMainWindow):
 
         return widget
 
-    def _build_bottom_panel(self) -> QWidget:
-        panel = QWidget(self)
-        layout = QHBoxLayout(panel)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(8)
-
-        self._search_input = QLineEdit(panel)
-        self._search_input.setPlaceholderText("ノード名で検索")
-        layout.addWidget(self._search_input)
-
-        search_button = QPushButton("検索", panel)
-        search_button.clicked.connect(self._search_nodes)
-        layout.addWidget(search_button)
-
-        layout.addSpacing(12)
-
-        add_task_button = QPushButton("タスク追加", panel)
-        add_task_button.clicked.connect(self._create_task_node)
-        layout.addWidget(add_task_button)
-
-        add_review_button = QPushButton("レビュー追加", panel)
-        add_review_button.clicked.connect(self._create_review_node)
-        layout.addWidget(add_review_button)
-
-        delete_button = QPushButton("選択ノード削除", panel)
-        delete_button.clicked.connect(self._delete_selected_nodes)
-        layout.addWidget(delete_button)
-
-        connect_button = QPushButton("選択ノード接続", panel)
-        connect_button.clicked.connect(self._connect_selected_nodes)
-        layout.addWidget(connect_button)
-
-        disconnect_button = QPushButton("選択ノード切断", panel)
-        disconnect_button.clicked.connect(self._disconnect_selected_nodes)
-        layout.addWidget(disconnect_button)
-
-        layout.addStretch(1)
-
-        back_button = QPushButton("スタート画面に戻る", panel)
-        back_button.clicked.connect(self._return_to_start)
-        layout.addWidget(back_button)
-
-        return panel
-
     def _open_project_settings(self) -> None:
         self._show_info_dialog(
             "プロジェクトごとの設定項目は現在準備中です。"
@@ -219,6 +376,123 @@ class NodeEditorWindow(QMainWindow):
             selection_signal = getattr(self._graph, "node_selection_changed", None)
             if selection_signal is not None and hasattr(selection_signal, "connect"):
                 selection_signal.connect(self._on_selection_changed)
+
+    def _setup_context_menu(self) -> None:
+        if hasattr(self._graph_widget, "setContextMenuPolicy"):
+            self._graph_widget.setContextMenuPolicy(Qt.CustomContextMenu)
+            self._graph_widget.customContextMenuRequested.connect(
+                self._open_graph_context_menu
+            )
+
+    def _setup_shortcuts(self) -> None:
+        self._shortcuts.clear()
+
+        def register(sequence: QKeySequence | str, callback) -> None:
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut)
+            shortcut.activated.connect(callback)
+            self._shortcuts.append(shortcut)
+
+        register("Delete", self._delete_selected_nodes)
+        register("Ctrl+S", self._file_save)
+        register("Ctrl+Shift+S", self._file_save_as)
+        register("Ctrl+O", self._file_import)
+        register("Ctrl+F", self._focus_content_browser_search)
+        register("Ctrl+Shift+C", self._connect_selected_nodes)
+        register("Ctrl+Shift+D", self._disconnect_selected_nodes)
+        register("Ctrl+T", self._create_task_node)
+        register("Ctrl+R", self._create_review_node)
+
+    def _initialize_content_browser(self) -> None:
+        if self._content_browser is None:
+            return
+        self._content_browser.set_available_nodes(self._build_available_node_entries())
+
+    def _build_available_node_entries(self) -> List[Dict[str, str]]:
+        return [
+            {
+                "type": "sotugyo.demo.TaskNode",
+                "title": TaskNode.NODE_NAME,
+                "subtitle": "工程を構成するタスクノード",
+            },
+            {
+                "type": "sotugyo.demo.ReviewNode",
+                "title": ReviewNode.NODE_NAME,
+                "subtitle": "成果物を検証するレビューノード",
+            },
+        ]
+
+    def _open_graph_context_menu(self, position: QPoint) -> None:
+        menu = QMenu(self)
+
+        add_task_action = menu.addAction("タスクノードを追加")
+        add_task_action.triggered.connect(self._create_task_node)
+
+        add_review_action = menu.addAction("レビューノードを追加")
+        add_review_action.triggered.connect(self._create_review_node)
+
+        menu.addSeparator()
+
+        delete_action = menu.addAction("選択ノードを削除")
+        delete_action.triggered.connect(self._delete_selected_nodes)
+
+        connect_action = menu.addAction("選択ノードを接続")
+        connect_action.triggered.connect(self._connect_selected_nodes)
+
+        disconnect_action = menu.addAction("選択ノードを切断")
+        disconnect_action.triggered.connect(self._disconnect_selected_nodes)
+
+        menu.addSeparator()
+
+        search_action = menu.addAction("ノード検索を開く")
+        search_action.triggered.connect(self._focus_content_browser_search)
+
+        selected_nodes = self._graph.selected_nodes()
+        delete_action.setEnabled(bool(selected_nodes))
+        connect_action.setEnabled(len(selected_nodes) == 2)
+        disconnect_action.setEnabled(len(selected_nodes) == 2)
+
+        global_pos = self._graph_widget.mapToGlobal(position)
+        menu.exec(global_pos)
+
+    def _focus_content_browser_search(self) -> None:
+        if self._content_browser is not None:
+            self._content_browser.focus_search()
+
+    def _handle_content_browser_search(self, keyword: str) -> None:
+        if self._content_browser is None:
+            return
+        keyword = keyword.strip()
+        if not keyword:
+            self._show_info_dialog("検索キーワードを入力してください。")
+            return
+
+        existing_node = self._content_browser.first_visible_existing_node()
+        if existing_node is not None:
+            self._focus_existing_node(existing_node)
+            return
+
+        available_type = self._content_browser.first_visible_available_type()
+        if available_type is not None:
+            self._spawn_node_by_type(available_type)
+            return
+
+        if self._search_nodes(keyword, show_dialog=False) is not None:
+            return
+
+        self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
+
+    def _spawn_node_by_type(self, node_type: str) -> None:
+        creator = self._node_type_creators.get(node_type)
+        if creator is not None:
+            creator()
+            return
+        display_name = self._derive_display_name(node_type)
+        self._create_node(node_type, display_name)
+
+    def _derive_display_name(self, node_type: str) -> str:
+        base_name = node_type.split(".")[-1] if node_type else "ノード"
+        return f"{base_name} {self._node_spawn_offset + 1}"
 
     # ------------------------------------------------------------------
     # ノード生成・削除
@@ -246,6 +520,7 @@ class NodeEditorWindow(QMainWindow):
         if hasattr(node, "set_selected"):
             node.set_selected(True)
         self._on_selection_changed()
+        self._refresh_node_catalog()
 
     def _delete_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
@@ -256,6 +531,7 @@ class NodeEditorWindow(QMainWindow):
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
         self._on_selection_changed()
         self._set_modified(True)
+        self._refresh_node_catalog()
 
     # ------------------------------------------------------------------
     # 接続処理
@@ -300,6 +576,46 @@ class NodeEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # ユーティリティ
     # ------------------------------------------------------------------
+    def _focus_existing_node(self, node) -> None:
+        if node is None:
+            return
+        if node not in self._collect_all_nodes():
+            self._show_info_dialog("対象のノードが見つかりませんでした。")
+            self._refresh_node_catalog()
+            return
+        self._select_single_node(node)
+
+    def _select_single_node(self, node) -> None:
+        clear_selection = getattr(self._graph, "clear_selection", None)
+        if callable(clear_selection):
+            clear_selection()
+        if hasattr(node, "set_selected"):
+            try:
+                node.set_selected(True)
+            except Exception:
+                pass
+        view_item = getattr(node, "view", None)
+        if hasattr(self._graph_widget, "centerOn") and view_item is not None:
+            try:
+                self._graph_widget.centerOn(view_item)
+            except Exception:
+                pass
+        self._on_selection_changed()
+
+    def _refresh_node_catalog(self) -> None:
+        if self._content_browser is None:
+            return
+        entries: List[Dict[str, object]] = []
+        for node in self._collect_all_nodes():
+            entries.append(
+                {
+                    "node": node,
+                    "title": self._safe_node_name(node),
+                    "subtitle": self._node_type_identifier(node),
+                }
+            )
+        self._content_browser.update_existing_nodes(entries)
+
     @staticmethod
     def _sort_nodes_by_position(nodes: Iterable) -> tuple:
         sorted_nodes = sorted(nodes, key=lambda node: node.pos()[0])
@@ -321,13 +637,20 @@ class NodeEditorWindow(QMainWindow):
     def _show_error_dialog(self, message: str) -> None:
         QMessageBox.critical(self, "エラー", message)
 
-    def _search_nodes(self) -> None:
-        if self._search_input is None:
-            return
-        keyword = self._search_input.text().strip()
+    def _search_nodes(
+        self, keyword: Optional[str] = None, *, show_dialog: bool = True
+    ):
+        if keyword is None:
+            keyword = (
+                self._content_browser.current_search_text()
+                if self._content_browser is not None
+                else ""
+            )
+        keyword = keyword.strip()
         if not keyword:
-            self._show_info_dialog("検索キーワードを入力してください。")
-            return
+            if show_dialog:
+                self._show_info_dialog("検索キーワードを入力してください。")
+            return None
 
         keyword_lower = keyword.lower()
         matched = [
@@ -336,22 +659,13 @@ class NodeEditorWindow(QMainWindow):
             if hasattr(node, "name") and keyword_lower in node.name().lower()
         ]
         if not matched:
-            self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
-            return
-
-        clear_selection = getattr(self._graph, "clear_selection", None)
-        if callable(clear_selection):
-            clear_selection()
+            if show_dialog:
+                self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
+            return None
 
         target = matched[0]
-        if hasattr(target, "set_selected"):
-            target.set_selected(True)
-        if hasattr(self._graph_widget, "centerOn") and hasattr(target, "view"):
-            try:
-                self._graph_widget.centerOn(target.view)
-            except Exception:
-                pass
-        self._on_selection_changed()
+        self._select_single_node(target)
+        return target
 
     def _collect_all_nodes(self) -> List:
         nodes: List = []
@@ -433,6 +747,7 @@ class NodeEditorWindow(QMainWindow):
             self._current_node.set_name(new_name)
         self._update_selected_node_info()
         self._set_modified(True)
+        self._refresh_node_catalog()
 
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
@@ -523,6 +838,7 @@ class NodeEditorWindow(QMainWindow):
             )
 
         connections = []
+        seen_connections: Set[Tuple[int, str, int, str]] = set()
         for node in nodes:
             outputs = getattr(node, "output_ports", None)
             if not callable(outputs):
@@ -535,12 +851,23 @@ class NodeEditorWindow(QMainWindow):
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
+                    source_name = self._safe_port_name(port)
+                    target_name = self._safe_port_name(connected)
+                    key = (
+                        node_id_map[node],
+                        source_name,
+                        node_id_map[target_node],
+                        target_name,
+                    )
+                    if key in seen_connections:
+                        continue
+                    seen_connections.add(key)
                     connections.append(
                         {
                             "source": node_id_map[node],
-                            "source_port": self._safe_port_name(port),
+                            "source_port": source_name,
                             "target": node_id_map[target_node],
-                            "target_port": self._safe_port_name(connected),
+                            "target_port": target_name,
                         }
                     )
 
@@ -615,6 +942,7 @@ class NodeEditorWindow(QMainWindow):
         if callable(clear_selection):
             clear_selection()
         self._on_selection_changed()
+        self._refresh_node_catalog()
 
     def _safe_node_name(self, node) -> str:
         if hasattr(node, "name"):
