@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from ..settings.project_registry import ProjectRecord
 from ..settings.project_service import ProjectService
+from ..settings.project_settings import load_project_settings
 from ..settings.project_structure import ProjectStructureReport
 from ..settings.user_settings import UserSettingsManager
 from .node_editor_window import NodeEditorWindow
