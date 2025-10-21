@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QSlider,
+    QSpinBox,
     QSizePolicy,
     QSplitter,
     QTabWidget,
@@ -53,6 +55,9 @@ class NodeContentBrowser(QWidget):
         self._search_line: QLineEdit = QLineEdit(self)
         self._available_list: QListWidget = QListWidget(self)
         self._available_entries: List[Dict[str, str]] = []
+        self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
+        self._icon_size_spin: QSpinBox = QSpinBox(self)
+        self._icon_size: int = 48
 
         self._setup_ui()
         self._connect_signals()
@@ -86,6 +91,27 @@ class NodeContentBrowser(QWidget):
 
         layout.addLayout(search_layout)
 
+        size_layout = QHBoxLayout()
+        size_layout.setContentsMargins(0, 0, 0, 0)
+        size_layout.setSpacing(8)
+
+        size_label = QLabel("アイコンサイズ", self)
+        self._icon_size_slider.setRange(32, 128)
+        self._icon_size_slider.setSingleStep(4)
+        self._icon_size_slider.setPageStep(8)
+        self._icon_size_slider.setValue(self._icon_size)
+        self._icon_size_slider.setTracking(True)
+
+        self._icon_size_spin.setRange(32, 128)
+        self._icon_size_spin.setSingleStep(1)
+        self._icon_size_spin.setValue(self._icon_size)
+
+        size_layout.addWidget(size_label)
+        size_layout.addWidget(self._icon_size_slider, 1)
+        size_layout.addWidget(self._icon_size_spin)
+
+        layout.addLayout(size_layout)
+
         self._configure_list_widget(self._available_list)
 
         layout.addWidget(
@@ -98,10 +124,11 @@ class NodeContentBrowser(QWidget):
         widget.setMovement(QListWidget.Static)
         widget.setResizeMode(QListWidget.Adjust)
         widget.setWrapping(True)
-        widget.setIconSize(QSize(48, 48))
+        widget.setIconSize(QSize(self._icon_size, self._icon_size))
         widget.setSpacing(8)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(True)
+        self._apply_icon_size()
 
     def _build_section(self, title: str, widget: QListWidget) -> QWidget:
         frame = QFrame(self)
@@ -121,6 +148,8 @@ class NodeContentBrowser(QWidget):
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_list.itemActivated.connect(self._on_available_item_activated)
+        self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
+        self._icon_size_spin.valueChanged.connect(self._on_icon_size_changed)
 
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
@@ -132,9 +161,10 @@ class NodeContentBrowser(QWidget):
             item = QListWidgetItem(f"{title}\n{subtitle}")
             item.setData(Qt.UserRole, node_type)
             item.setToolTip(node_type)
-            item.setSizeHint(QSize(180, 72))
+            item.setSizeHint(self._list_item_size_hint())
             self._available_list.addItem(item)
         self._apply_filter()
+        self._apply_icon_size()
 
     def focus_search(self) -> None:
         self._search_line.setFocus()
@@ -170,6 +200,35 @@ class NodeContentBrowser(QWidget):
         node_type = item.data(Qt.UserRole)
         if isinstance(node_type, str):
             self.node_type_requested.emit(node_type)
+
+    def _on_icon_size_changed(self, value: int) -> None:
+        clamped = max(self._icon_size_spin.minimum(), min(value, self._icon_size_spin.maximum()))
+        if clamped == self._icon_size:
+            return
+        self._icon_size = clamped
+        if self._icon_size_slider.value() != clamped:
+            self._icon_size_slider.blockSignals(True)
+            self._icon_size_slider.setValue(clamped)
+            self._icon_size_slider.blockSignals(False)
+        if self._icon_size_spin.value() != clamped:
+            self._icon_size_spin.blockSignals(True)
+            self._icon_size_spin.setValue(clamped)
+            self._icon_size_spin.blockSignals(False)
+        self._apply_icon_size()
+
+    def _apply_icon_size(self) -> None:
+        icon_size = QSize(self._icon_size, self._icon_size)
+        self._available_list.setIconSize(icon_size)
+        item_size = self._list_item_size_hint()
+        for index in range(self._available_list.count()):
+            item = self._available_list.item(index)
+            if item is not None:
+                item.setSizeHint(item_size)
+
+    def _list_item_size_hint(self) -> QSize:
+        width = max(180, self._icon_size + 132)
+        height = max(72, self._icon_size + 32)
+        return QSize(width, height)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
