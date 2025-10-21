@@ -37,7 +37,6 @@ class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ風ウィジェット。"""
 
     node_type_requested = Signal(str)
-    existing_node_requested = Signal(object)
     search_submitted = Signal(str)
     back_requested = Signal()
 
@@ -45,9 +44,7 @@ class NodeContentBrowser(QWidget):
         super().__init__(parent)
         self._search_line: QLineEdit = QLineEdit(self)
         self._available_list: QListWidget = QListWidget(self)
-        self._existing_list: QListWidget = QListWidget(self)
         self._available_entries: List[Dict[str, str]] = []
-        self._existing_entries: List[Dict[str, object]] = []
 
         self._setup_ui()
         self._connect_signals()
@@ -76,21 +73,17 @@ class NodeContentBrowser(QWidget):
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(8)
 
-        self._search_line.setPlaceholderText("ノードや配置済みコンテンツを検索")
+        self._search_line.setPlaceholderText("ノードを検索")
         search_layout.addWidget(self._search_line, 1)
 
         layout.addLayout(search_layout)
 
         self._configure_list_widget(self._available_list)
-        self._configure_list_widget(self._existing_list)
 
-        splitter = QSplitter(Qt.Vertical, self)
-        splitter.addWidget(self._build_section("追加可能ノード", self._available_list))
-        splitter.addWidget(self._build_section("配置済みノード", self._existing_list))
-        splitter.setStretchFactor(0, 1)
-        splitter.setStretchFactor(1, 1)
-
-        layout.addWidget(splitter, 1)
+        layout.addWidget(
+            self._build_section("追加可能ノード", self._available_list),
+            1,
+        )
 
     def _configure_list_widget(self, widget: QListWidget) -> None:
         widget.setViewMode(QListWidget.IconMode)
@@ -120,7 +113,6 @@ class NodeContentBrowser(QWidget):
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_list.itemActivated.connect(self._on_available_item_activated)
-        self._existing_list.itemActivated.connect(self._on_existing_item_activated)
 
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
@@ -136,33 +128,12 @@ class NodeContentBrowser(QWidget):
             self._available_list.addItem(item)
         self._apply_filter()
 
-    def update_existing_nodes(self, entries: List[Dict[str, object]]) -> None:
-        self._existing_entries = entries
-        self._existing_list.clear()
-        for entry in entries:
-            title = str(entry.get("title", ""))
-            subtitle = str(entry.get("subtitle", ""))
-            node_ref = entry.get("node")
-            item = QListWidgetItem(f"{title}\n{subtitle}")
-            item.setData(Qt.UserRole, node_ref)
-            item.setToolTip(subtitle)
-            item.setSizeHint(QSize(220, 72))
-            self._existing_list.addItem(item)
-        self._apply_filter()
-
     def focus_search(self) -> None:
         self._search_line.setFocus()
         self._search_line.selectAll()
 
     def current_search_text(self) -> str:
         return self._search_line.text()
-
-    def first_visible_existing_node(self):
-        for index in range(self._existing_list.count()):
-            item = self._existing_list.item(index)
-            if item is not None and not item.isHidden():
-                return item.data(Qt.UserRole)
-        return None
 
     def first_visible_available_type(self) -> Optional[str]:
         for index in range(self._available_list.count()):
@@ -181,12 +152,6 @@ class NodeContentBrowser(QWidget):
                 continue
             text = item.text().lower()
             item.setHidden(bool(keyword) and keyword not in text)
-        for index in range(self._existing_list.count()):
-            item = self._existing_list.item(index)
-            if item is None:
-                continue
-            text = item.text().lower()
-            item.setHidden(bool(keyword) and keyword not in text)
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
@@ -197,12 +162,6 @@ class NodeContentBrowser(QWidget):
         node_type = item.data(Qt.UserRole)
         if isinstance(node_type, str):
             self.node_type_requested.emit(node_type)
-
-    def _on_existing_item_activated(self, item: QListWidgetItem) -> None:
-        if item is None:
-            return
-        node_ref = item.data(Qt.UserRole)
-        self.existing_node_requested.emit(node_ref)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -263,11 +222,12 @@ class NodeEditorWindow(QMainWindow):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        content_layout = QHBoxLayout()
+        main_panel = QWidget(container)
+        content_layout = QHBoxLayout(main_panel)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        self._side_tabs = QTabWidget(container)
+        self._side_tabs = QTabWidget(main_panel)
         self._side_tabs.setMinimumWidth(260)
         self._side_tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._side_tabs.addTab(self._build_operation_tab(), "ノード操作")
@@ -275,13 +235,20 @@ class NodeEditorWindow(QMainWindow):
         content_layout.addWidget(self._graph_widget, 1)
         content_layout.addWidget(self._side_tabs)
 
-        root_layout.addLayout(content_layout, 1)
-        self._content_browser = NodeContentBrowser(container)
+        splitter = QSplitter(Qt.Vertical, container)
+        splitter.addWidget(main_panel)
+        self._content_browser = NodeContentBrowser(splitter)
         self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
-        self._content_browser.existing_node_requested.connect(self._focus_existing_node)
         self._content_browser.search_submitted.connect(self._handle_content_browser_search)
         self._content_browser.back_requested.connect(self._return_to_start)
-        root_layout.addWidget(self._content_browser)
+        self._content_browser.setMinimumHeight(160)
+
+        splitter.addWidget(self._content_browser)
+        splitter.setStretchFactor(0, 3)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([420, 180])
+
+        root_layout.addWidget(splitter, 1)
 
         self.setCentralWidget(container)
 
@@ -466,17 +433,12 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("検索キーワードを入力してください。")
             return
 
-        existing_node = self._content_browser.first_visible_existing_node()
-        if existing_node is not None:
-            self._focus_existing_node(existing_node)
+        if self._search_nodes(keyword, show_dialog=False) is not None:
             return
 
         available_type = self._content_browser.first_visible_available_type()
         if available_type is not None:
             self._spawn_node_by_type(available_type)
-            return
-
-        if self._search_nodes(keyword, show_dialog=False) is not None:
             return
 
         self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
@@ -575,15 +537,6 @@ class NodeEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # ユーティリティ
     # ------------------------------------------------------------------
-    def _focus_existing_node(self, node) -> None:
-        if node is None:
-            return
-        if node not in self._collect_all_nodes():
-            self._show_info_dialog("対象のノードが見つかりませんでした。")
-            self._refresh_node_catalog()
-            return
-        self._select_single_node(node)
-
     def _select_single_node(self, node) -> None:
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
@@ -602,18 +555,8 @@ class NodeEditorWindow(QMainWindow):
         self._on_selection_changed()
 
     def _refresh_node_catalog(self) -> None:
-        if self._content_browser is None:
-            return
-        entries: List[Dict[str, object]] = []
-        for node in self._collect_all_nodes():
-            entries.append(
-                {
-                    "node": node,
-                    "title": self._safe_node_name(node),
-                    "subtitle": self._node_type_identifier(node),
-                }
-            )
-        self._content_browser.update_existing_nodes(entries)
+        """既存ノード一覧を廃止したため更新処理は不要。"""
+        return
 
     @staticmethod
     def _sort_nodes_by_position(nodes: Iterable) -> tuple:
