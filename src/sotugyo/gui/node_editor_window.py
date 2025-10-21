@@ -866,6 +866,9 @@ class NodeEditorWindow(QMainWindow):
     def _show_info_dialog(self, message: str) -> None:
         QMessageBox.information(self, "操作案内", message)
 
+    def _show_warning_dialog(self, message: str) -> None:
+        QMessageBox.warning(self, "警告", message)
+
     def _show_error_dialog(self, message: str) -> None:
         QMessageBox.critical(self, "エラー", message)
 
@@ -1253,8 +1256,13 @@ class NodeEditorWindow(QMainWindow):
             if changed:
                 metadata_changed = True
 
-        for connection in connections_info:
+        failed_operations: List[str] = []
+
+        for index, connection in enumerate(connections_info):
             if not isinstance(connection, dict):
+                failed_operations.append(
+                    f"接続エントリ #{index + 1} の形式が不正なため処理できませんでした。"
+                )
                 continue
             source_node = None
             target_node = None
@@ -1272,7 +1280,28 @@ class NodeEditorWindow(QMainWindow):
                 target_id = connection.get("target")
                 if isinstance(target_id, int):
                     target_node = identifier_map.get(target_id)
+            raw_source_id = connection.get("source")
+            raw_target_id = connection.get("target")
+            if isinstance(source_uuid, str) and source_uuid:
+                source_label = source_uuid
+            elif isinstance(raw_source_id, int):
+                source_label = str(raw_source_id)
+            else:
+                source_label = "不明"
+            if isinstance(target_uuid, str) and target_uuid:
+                target_label = target_uuid
+            elif isinstance(raw_target_id, int):
+                target_label = str(raw_target_id)
+            else:
+                target_label = "不明"
             if source_node is None or target_node is None:
+                failed_operations.append(
+                    "接続（source="
+                    + source_label
+                    + ", target="
+                    + target_label
+                    + "）のノードが見つからないため再現できませんでした。"
+                )
                 continue
             source_name, source_index = self._parse_connection_port_reference(
                 connection.get("source_port"),
@@ -1299,10 +1328,22 @@ class NodeEditorWindow(QMainWindow):
             if target_port is None:
                 target_port = self._first_input_port(target_node)
             if source_port is None or target_port is None:
+                missing_parts: List[str] = []
+                if source_port is None:
+                    missing_parts.append("出力ポート")
+                if target_port is None:
+                    missing_parts.append("入力ポート")
+                reason = "と".join(missing_parts)
+                failed_operations.append(
+                    f"接続（source={source_label}, target={target_label}）の{reason}を特定できませんでした。"
+                )
                 continue
             try:
                 self._graph.connect_ports(source_port, target_port)
-            except Exception:
+            except Exception as exc:
+                failed_operations.append(
+                    f"接続（source={source_label}, target={target_label}）の再現に失敗しました: {exc}"
+                )
                 continue
 
         self._node_spawn_offset = len(self._known_nodes)
@@ -1318,6 +1359,12 @@ class NodeEditorWindow(QMainWindow):
             clear_selection()
         self._on_selection_changed()
         self._refresh_node_catalog()
+
+        if failed_operations:
+            summary = "\n".join(f"・{message}" for message in failed_operations)
+            self._show_warning_dialog(
+                "プロジェクトの再構成中に一部のコネクションを再現できませんでした。\n" + summary
+            )
 
         return metadata_changed
 
