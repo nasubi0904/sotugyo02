@@ -5,12 +5,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from ..settings.project_settings import ProjectSettings
 from ..settings.project_structure import ProjectStructureReport, validate_project_structure
+from .style import apply_base_style
 
 
 class ProjectSettingsDialog(QDialog):
@@ -53,18 +56,44 @@ class ProjectSettingsDialog(QDialog):
         self._auto_fill_password_checkbox = QCheckBox("前回ユーザーのパスワードを自動入力する", self)
         self._auto_fill_password_checkbox.setChecked(settings.auto_fill_password)
         self._structure_label = QLabel("", self)
+        self._structure_label.setObjectName("structureStatusLabel")
         self._structure_label.setWordWrap(True)
+        self._structure_label.setProperty("status", "warning")
 
         self._build_ui()
         self._update_structure_status()
+        apply_base_style(self)
+        status = self._structure_label.property("status")
+        if isinstance(status, str) and status:
+            self._set_structure_status(status)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        self.setObjectName("appDialog")
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(32, 32, 32, 32)
+        outer_layout.setSpacing(0)
+
+        card = QFrame(self)
+        card.setObjectName("dialogCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(28, 28, 28, 28)
+        card_layout.setSpacing(18)
+
+        header = QLabel("プロジェクト設定", card)
+        header.setObjectName("panelTitle")
+        card_layout.addWidget(header)
+
         form_layout = QFormLayout()
+        form_layout.setLabelAlignment(Qt.AlignLeft)
+        form_layout.setFormAlignment(Qt.AlignTop)
+        form_layout.setHorizontalSpacing(18)
+        form_layout.setVerticalSpacing(14)
         form_layout.addRow("プロジェクト名", self._name_edit)
         form_layout.addRow("プロジェクト概要", self._description_edit)
 
         root_layout = QHBoxLayout()
+        root_layout.setSpacing(12)
         root_layout.addWidget(self._root_edit, 1)
         root_layout.addWidget(self._root_button)
         form_layout.addRow("プロジェクトルート", root_layout)
@@ -72,15 +101,17 @@ class ProjectSettingsDialog(QDialog):
         form_layout.addRow(self._auto_fill_id_checkbox)
         form_layout.addRow(self._auto_fill_password_checkbox)
 
-        layout.addLayout(form_layout)
-        layout.addWidget(self._structure_label)
+        card_layout.addLayout(form_layout)
+        card_layout.addWidget(self._structure_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        layout.addWidget(buttons)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, card)
+        card_layout.addWidget(button_box, 0, Qt.AlignRight)
+
+        outer_layout.addWidget(card)
 
         self._root_button.clicked.connect(self._choose_root)
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
 
     # UI イベント ------------------------------------------------------
     def _choose_root(self) -> None:
@@ -122,17 +153,17 @@ class ProjectSettingsDialog(QDialog):
         root = Path(self._root_edit.text().strip())
         if not root:
             self._structure_label.setText("プロジェクトルートを指定してください。")
-            self._structure_label.setStyleSheet("color: #d9534f;")
+            self._set_structure_status("error")
             self._structure_report = None
             return
         report = validate_project_structure(root)
         self._structure_report = report
         if report.is_valid:
             self._structure_label.setText("既定の構成を満たしています。")
-            self._structure_label.setStyleSheet("color: #198754;")
+            self._set_structure_status("ok")
         else:
             self._structure_label.setText(report.summary())
-            self._structure_label.setStyleSheet("color: #d9534f;")
+            self._set_structure_status("error")
 
     def _apply_changes(self) -> None:
         root = Path(self._root_edit.text().strip())
@@ -149,3 +180,11 @@ class ProjectSettingsDialog(QDialog):
     # 公開 API --------------------------------------------------------
     def settings(self) -> ProjectSettings:
         return self._edited_settings
+
+    def _set_structure_status(self, status: str) -> None:
+        self._structure_label.setProperty("status", status)
+        style = self._structure_label.style()
+        if style is not None:
+            style.unpolish(self._structure_label)
+            style.polish(self._structure_label)
+        self._structure_label.update()
