@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
@@ -31,6 +32,12 @@ from PySide6.QtWidgets import (
 from NodeGraphQt import NodeGraph, Port
 
 from .nodes import ReviewNode, TaskNode
+from ..settings.project_registry import ProjectRecord, ProjectRegistry
+from ..settings.project_settings import ProjectSettings, load_project_settings, save_project_settings
+from ..settings.project_structure import ensure_project_structure, validate_project_structure
+from ..settings.user_settings import UserAccount, UserSettingsManager
+from .project_settings_dialog import ProjectSettingsDialog
+from .user_settings_dialog import UserSettingsDialog
 
 
 class NodeContentBrowser(QWidget):
@@ -229,7 +236,12 @@ class NodeEditorWindow(QMainWindow):
         self._current_node = None
         self._known_nodes: List = []
         self._is_modified = False
-        self._current_project_path: Optional[Path] = None
+        self._current_project_root: Optional[Path] = None
+        self._current_project_settings: Optional[ProjectSettings] = None
+        self._current_user: Optional[UserAccount] = None
+        self._current_user_password: Optional[str] = None
+        self._registry = ProjectRegistry()
+        self._user_manager = UserSettingsManager()
 
         self._side_tabs: Optional[QTabWidget] = None
         self._detail_name_label: Optional[QLabel] = None
@@ -295,12 +307,7 @@ class NodeEditorWindow(QMainWindow):
         save_action.setShortcut(QKeySequence.Save)
         file_menu.addAction(save_action)
 
-        save_as_action = QAction("別名保存...", self)
-        save_as_action.triggered.connect(self._file_save_as)
-        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        file_menu.addAction(save_as_action)
-
-        import_action = QAction("インポート...", self)
+        import_action = QAction("アセットをインポート...", self)
         import_action.triggered.connect(self._file_import)
         import_action.setShortcut(QKeySequence.Open)
         file_menu.addAction(import_action)
@@ -311,15 +318,15 @@ class NodeEditorWindow(QMainWindow):
         return_action.triggered.connect(self._return_to_start)
         file_menu.addAction(return_action)
 
-        option_menu = menubar.addMenu("Option")
+        project_menu = menubar.addMenu("ProjectSetting")
         project_settings_action = QAction("プロジェクト設定...", self)
         project_settings_action.triggered.connect(self._open_project_settings)
-        option_menu.addAction(project_settings_action)
+        project_menu.addAction(project_settings_action)
 
-        setting_menu = menubar.addMenu("Setting")
-        machine_settings_action = QAction("マシン設定...", self)
-        machine_settings_action.triggered.connect(self._open_machine_settings)
-        setting_menu.addAction(machine_settings_action)
+        user_menu = menubar.addMenu("UserSetting")
+        user_settings_action = QAction("ユーザー設定...", self)
+        user_settings_action.triggered.connect(self._open_user_settings)
+        user_menu.addAction(user_settings_action)
 
     def _build_detail_tab(self) -> QWidget:
         widget = QWidget(self)
@@ -358,14 +365,50 @@ class NodeEditorWindow(QMainWindow):
         return widget
 
     def _open_project_settings(self) -> None:
-        self._show_info_dialog(
-            "プロジェクトごとの設定項目は現在準備中です。"
+        if self._current_project_root is None:
+            self._show_info_dialog("プロジェクトが選択されていません。")
+            return
+        if self._current_project_settings is None:
+            self._current_project_settings = load_project_settings(self._current_project_root)
+        dialog = ProjectSettingsDialog(self._current_project_settings, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        updated = dialog.settings()
+        try:
+            save_project_settings(updated)
+        except OSError as exc:
+            self._show_error_dialog(f"設定の保存に失敗しました: {exc}")
+            return
+        root_changed = updated.project_root != self._current_project_root
+        name_changed = (
+            self._current_project_settings.project_name != updated.project_name
+            if self._current_project_settings
+            else True
         )
+        self._current_project_settings = updated
+        self._registry.register_project(ProjectRecord(updated.project_name, updated.project_root))
+        if root_changed:
+            if not self._confirm_discard_changes(
+                "プロジェクトルートが変更されます。未保存の編集内容は失われます。続行しますか？"
+            ):
+                return
+            if not self._confirm_project_change(updated.project_name):
+                return
+            self._current_project_root = updated.project_root
+            self._load_project_graph()
+        self._refresh_window_title()
+        if name_changed or root_changed:
+            self._notify_start_window_refresh()
 
-    def _open_machine_settings(self) -> None:
-        self._show_info_dialog(
-            "マシン依存の設定項目は現在準備中です。"
-        )
+    def _open_user_settings(self) -> None:
+        dialog = UserSettingsDialog(self._user_manager, self)
+        if dialog.exec() == QDialog.Accepted:
+            if self._current_user is not None:
+                refreshed = self._user_manager.get_account(self._current_user.user_id)
+                if refreshed is not None:
+                    self._current_user = refreshed
+            self._refresh_window_title()
+            self._notify_start_window_refresh()
 
     def _setup_graph_signals(self) -> None:
         selection_signal = getattr(self._graph, "selection_changed", None)
@@ -394,7 +437,6 @@ class NodeEditorWindow(QMainWindow):
 
         register("Delete", self._delete_selected_nodes)
         register("Ctrl+S", self._file_save)
-        register("Ctrl+Shift+S", self._file_save_as)
         register("Ctrl+O", self._file_import)
         register("Ctrl+F", self._focus_content_browser_search)
         register("Ctrl+Shift+C", self._connect_selected_nodes)
@@ -406,6 +448,65 @@ class NodeEditorWindow(QMainWindow):
         if self._content_browser is None:
             return
         self._content_browser.set_available_nodes(self._build_available_node_entries())
+
+    # ------------------------------------------------------------------
+    # プロジェクトコンテキスト管理
+    # ------------------------------------------------------------------
+    def prepare_context(
+        self,
+        project_root: Path,
+        settings: ProjectSettings,
+        user: UserAccount,
+        password: str,
+    ) -> bool:
+        project_root = Path(project_root)
+        if self._current_project_root is not None and project_root != self._current_project_root:
+            if not self._confirm_discard_changes(
+                "未保存の変更があります。プロジェクトを切り替えますか？"
+            ):
+                return False
+            if not self._confirm_project_change(settings.project_name):
+                return False
+        if self._current_user is not None and user.user_id != self._current_user.user_id:
+            result = QMessageBox.warning(
+                self,
+                "確認",
+                f"ユーザーを「{user.display_name}」に切り替えます。続行しますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return False
+
+        refreshed = self._user_manager.get_account(user.user_id)
+        if refreshed is not None:
+            user = refreshed
+
+        self._current_project_root = project_root
+        self._current_project_settings = load_project_settings(project_root)
+        self._current_user = user
+        self._current_user_password = password
+
+        effective_settings = self._current_project_settings or settings
+        self._registry.register_project(
+            ProjectRecord(effective_settings.project_name, project_root)
+        )
+        self._registry.set_last_project(project_root)
+        ensure_project_structure(project_root)
+
+        self._refresh_window_title()
+        self._load_project_graph()
+
+        report = validate_project_structure(project_root)
+        if not report.is_valid:
+            QMessageBox.warning(
+                self,
+                "警告",
+                "既定のプロジェクト構成に不足があります。\n" + report.summary(),
+            )
+
+        self._notify_start_window_refresh()
+        return True
 
     def _build_available_node_entries(self) -> List[Dict[str, str]]:
         return [
@@ -503,6 +604,10 @@ class NodeEditorWindow(QMainWindow):
     def _create_review_node(self) -> None:
         self._review_count += 1
         self._create_node("sotugyo.demo.ReviewNode", f"レビュー {self._review_count}")
+
+    def _create_asset_node(self, asset_name: str) -> None:
+        title = asset_name.strip() or "アセット"
+        self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
     def _create_node(self, node_type: str, display_name: str) -> None:
         node = self._graph.create_node(node_type, name=display_name)
@@ -758,63 +863,90 @@ class NodeEditorWindow(QMainWindow):
     # プロジェクトの保存・読み込み
     # ------------------------------------------------------------------
     def _file_save(self) -> None:
-        if self._current_project_path is None:
-            self._file_save_as()
+        graph_path = self._graph_file_path()
+        if graph_path is None:
+            self._show_error_dialog("プロジェクトが選択されていません。")
             return
+        if self._current_project_root is not None:
+            ensure_project_structure(self._current_project_root)
         try:
-            self._write_project_to_path(self._current_project_path)
+            self._write_project_to_path(graph_path)
             self._set_modified(False)
             self._show_info_dialog("プロジェクトを保存しました。")
         except OSError as exc:
             self._show_error_dialog(f"保存に失敗しました: {exc}")
 
-    def _file_save_as(self) -> None:
-        filename, _ = QFileDialog.getSaveFileName(
-            self,
-            "保存先を選択",
-            "",
-            "Project Files (*.json);;All Files (*)",
-        )
-        if not filename:
-            return
-        target_path = Path(filename)
-        try:
-            self._write_project_to_path(target_path)
-        except OSError as exc:
-            self._show_error_dialog(f"保存に失敗しました: {exc}")
-            return
-        self._current_project_path = target_path
-        self._set_modified(False)
-        self._show_info_dialog("プロジェクトを保存しました。")
-
     def _file_import(self) -> None:
-        if not self._confirm_discard_changes(
-            "現在の編集内容が失われる可能性があります。インポートを続行しますか？"
-        ):
+        if self._current_project_root is None:
+            self._show_info_dialog("先にプロジェクトを開いてください。")
             return
+        start_dir = str(self._current_project_root / "assets")
         filename, _ = QFileDialog.getOpenFileName(
             self,
-            "プロジェクトをインポート",
-            "",
-            "Project Files (*.json);;All Files (*)",
+            "アセットをインポート",
+            start_dir,
+            "All Files (*)",
         )
         if not filename:
             return
         source_path = Path(filename)
+        target_dir = self._current_project_root / "assets" / "source"
         try:
-            self._load_project_from_path(source_path)
-        except (OSError, ValueError, json.JSONDecodeError) as exc:
-            self._show_error_dialog(f"インポートに失敗しました: {exc}")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            destination = target_dir / source_path.name
+            if source_path != destination:
+                shutil.copy2(source_path, destination)
+        except OSError as exc:
+            self._show_error_dialog(f"アセットのコピーに失敗しました: {exc}")
             return
-        self._current_project_path = source_path
-        self._set_modified(False)
-        self._show_info_dialog("プロジェクトをインポートしました。")
+        self._create_asset_node(source_path.stem)
+        self._set_modified(True)
+        self._show_info_dialog(f"アセット「{source_path.name}」を登録しました。")
 
     def _write_project_to_path(self, path: Path) -> None:
         state = self._export_project_state()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
             json.dump(state, handle, ensure_ascii=True, indent=2)
+
+    def _graph_file_path(self) -> Optional[Path]:
+        if self._current_project_root is None:
+            return None
+        return self._current_project_root / "config" / "node_graph.json"
+
+    def _reset_graph(self) -> None:
+        existing_nodes = self._collect_all_nodes()
+        if existing_nodes:
+            try:
+                self._graph.delete_nodes(existing_nodes)
+            except Exception:
+                pass
+        self._known_nodes.clear()
+        self._node_spawn_offset = 0
+        self._task_count = 0
+        self._review_count = 0
+        clear_selection = getattr(self._graph, "clear_selection", None)
+        if callable(clear_selection):
+            try:
+                clear_selection()
+            except Exception:
+                pass
+        self._on_selection_changed()
+        self._refresh_node_catalog()
+
+    def _load_project_graph(self) -> None:
+        graph_path = self._graph_file_path()
+        self._reset_graph()
+        if graph_path is None or not graph_path.exists():
+            self._set_modified(False)
+            return
+        try:
+            self._load_project_from_path(graph_path)
+            self._set_modified(False)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self._show_error_dialog(f"プロジェクトの読み込みに失敗しました: {exc}")
+            self._reset_graph()
+            self._set_modified(False)
 
     def _load_project_from_path(self, path: Path) -> None:
         with path.open("r", encoding="utf-8") as handle:
@@ -997,10 +1129,39 @@ class NodeEditorWindow(QMainWindow):
 
     def _set_modified(self, modified: bool) -> None:
         self._is_modified = modified
-        title = self._base_window_title
-        if modified:
+        self._refresh_window_title()
+
+    def _refresh_window_title(self) -> None:
+        title = self.WINDOW_TITLE
+        if self._current_project_settings is not None:
+            title += f" - {self._current_project_settings.project_name}"
+        if self._current_user is not None:
+            title += f" ({self._current_user.display_name})"
+        self._base_window_title = title
+        if self._is_modified:
             title = f"*{title}"
         self.setWindowTitle(title)
+
+    def _confirm_project_change(self, project_name: str) -> bool:
+        result = QMessageBox.question(
+            self,
+            "確認",
+            f"プロジェクト「{project_name}」に切り替えますか？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    def _notify_start_window_refresh(self) -> None:
+        parent = self.parent()
+        if parent is None:
+            return
+        refresher = getattr(parent, "refresh_start_state", None)
+        if callable(refresher):
+            try:
+                refresher()
+            except Exception:
+                pass
 
     def _confirm_discard_changes(self, message: Optional[str] = None) -> bool:
         if not self._is_modified:
