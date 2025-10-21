@@ -1019,6 +1019,7 @@ class NodeEditorWindow(QMainWindow):
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
+                    source_id = node_id_map[node]
                     target_id = node_id_map[target_node]
                     source_name = self._safe_port_name(port)
                     target_name = self._safe_port_name(connected)
