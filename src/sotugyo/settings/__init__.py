@@ -10,6 +10,8 @@ __all__ = [
     "validate_project_structure",
     "ensure_project_structure",
     "ProjectRegistry",
+    "ProjectContext",
+    "ProjectService",
     "UserAccount",
     "UserSettingsManager",
 ]
@@ -21,4 +23,5 @@ from .project_structure import (
     validate_project_structure,
 )
 from .project_registry import ProjectRegistry
+from .project_service import ProjectContext, ProjectService
 from .user_settings import UserAccount, UserSettingsManager

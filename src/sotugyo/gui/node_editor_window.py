@@ -38,9 +38,8 @@ from PySide6.QtWidgets import (
 from NodeGraphQt import NodeGraph, Port
 
 from .nodes import ReviewNode, TaskNode
-from ..settings.project_registry import ProjectRecord, ProjectRegistry
-from ..settings.project_settings import ProjectSettings, load_project_settings, save_project_settings
-from ..settings.project_structure import ensure_project_structure, validate_project_structure
+from ..settings.project_service import ProjectContext, ProjectService
+from ..settings.project_settings import ProjectSettings
 from ..settings.user_settings import UserAccount, UserSettingsManager
 from .project_settings_dialog import ProjectSettingsDialog
 from .user_settings_dialog import UserSettingsDialog
@@ -265,7 +264,13 @@ class NodeEditorWindow(QMainWindow):
     WINDOW_TITLE = "ノード編集テスト"
     return_to_start_requested = Signal()
 
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        parent: Optional[QWidget] = None,
+        *,
+        project_service: Optional[ProjectService] = None,
+        user_manager: Optional[UserSettingsManager] = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.WINDOW_TITLE)
         self._base_window_title = self.windowTitle()
@@ -289,8 +294,8 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
-        self._registry = ProjectRegistry()
-        self._user_manager = UserSettingsManager()
+        self._project_service = project_service or ProjectService()
+        self._user_manager = user_manager or UserSettingsManager()
 
         self._side_tabs: Optional[QTabWidget] = None
         self._detail_name_label: Optional[QLabel] = None
@@ -430,16 +435,13 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("プロジェクトが選択されていません。")
             return
         if self._current_project_settings is None:
-            self._current_project_settings = load_project_settings(self._current_project_root)
+            self._current_project_settings = self._project_service.load_settings(
+                self._current_project_root
+            )
         dialog = ProjectSettingsDialog(self._current_project_settings, self)
         if dialog.exec() != dialog.DialogCode.Accepted:
             return
         updated = dialog.settings()
-        try:
-            save_project_settings(updated)
-        except OSError as exc:
-            self._show_error_dialog(f"設定の保存に失敗しました: {exc}")
-            return
         root_changed = updated.project_root != self._current_project_root
         name_changed = (
             self._current_project_settings.project_name != updated.project_name
@@ -447,7 +449,11 @@ class NodeEditorWindow(QMainWindow):
             else True
         )
         self._current_project_settings = updated
-        self._registry.register_project(ProjectRecord(updated.project_name, updated.project_root))
+        try:
+            self._project_service.save_settings(updated)
+        except OSError as exc:
+            self._show_error_dialog(f"設定の保存に失敗しました: {exc}")
+            return
         if root_changed:
             if not self._confirm_discard_changes(
                 "プロジェクトルートが変更されます。未保存の編集内容は失われます。続行しますか？"
@@ -524,12 +530,12 @@ class NodeEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     def prepare_context(
         self,
-        project_root: Path,
-        settings: ProjectSettings,
+        context: ProjectContext,
         user: UserAccount,
         password: str,
     ) -> bool:
-        project_root = Path(project_root)
+        project_root = Path(context.root)
+        settings = context.settings
         if self._current_project_root is not None and project_root != self._current_project_root:
             if not self._confirm_discard_changes(
                 "未保存の変更があります。プロジェクトを切り替えますか？"
@@ -553,21 +559,17 @@ class NodeEditorWindow(QMainWindow):
             user = refreshed
 
         self._current_project_root = project_root
-        self._current_project_settings = load_project_settings(project_root)
+        self._current_project_settings = settings
         self._current_user = user
         self._current_user_password = password
 
-        effective_settings = self._current_project_settings or settings
-        self._registry.register_project(
-            ProjectRecord(effective_settings.project_name, project_root)
-        )
-        self._registry.set_last_project(project_root)
-        ensure_project_structure(project_root)
+        self._project_service.register_project(context.record, set_last=True)
+        self._project_service.ensure_structure(project_root)
 
         self._refresh_window_title()
         self._load_project_graph()
 
-        report = validate_project_structure(project_root)
+        report = self._project_service.validate_structure(project_root)
         if not report.is_valid:
             QMessageBox.warning(
                 self,
@@ -976,7 +978,7 @@ class NodeEditorWindow(QMainWindow):
             self._show_error_dialog("プロジェクトが選択されていません。")
             return
         if self._current_project_root is not None:
-            ensure_project_structure(self._current_project_root)
+            self._project_service.ensure_structure(self._current_project_root)
         try:
             self._write_project_to_path(graph_path)
             self._set_modified(False)
