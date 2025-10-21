@@ -86,7 +86,7 @@ class NodeEditorWindow(QMainWindow):
         node = self._graph.create_node(node_type, name=display_name)
         pos_x = (self._node_spawn_offset % 4) * 220
         pos_y = (self._node_spawn_offset // 4) * 180
-        node.set_pos([pos_x, pos_y])
+        node.set_pos(pos_x, pos_y)
         self._node_spawn_offset += 1
 
     def _delete_selected_nodes(self) -> None:
