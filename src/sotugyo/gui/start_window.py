@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -83,19 +84,29 @@ class StartWindow(QMainWindow):
 
     # UI -----------------------------------------------------------------
     def _init_ui(self) -> None:
-        container = QWidget(self)
-        layout = QVBoxLayout(container)
+        root = QWidget(self)
+        root.setObjectName("startRoot")
+        root_layout = QVBoxLayout(root)
+        root_layout.setContentsMargins(32, 32, 32, 32)
+        root_layout.setSpacing(0)
+
+        card = QFrame(root)
+        card.setObjectName("startCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        layout = QVBoxLayout(card)
         layout.setContentsMargins(32, 32, 32, 32)
-        layout.setSpacing(16)
+        layout.setSpacing(24)
 
         title = QLabel("Sotugyo パイプラインへようこそ", self)
         title.setObjectName("startTitle")
         title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         layout.addWidget(title)
 
         description = QLabel(
             "プロジェクトとユーザーを選択してノードエディタを開始します。", self
         )
+        description.setObjectName("startDescription")
         description.setWordWrap(True)
         layout.addWidget(description)
 
@@ -103,10 +114,15 @@ class StartWindow(QMainWindow):
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignLeft)
+        form.setFormAlignment(Qt.AlignTop)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(14)
 
         self._project_combo = QComboBox(self)
         self._project_combo.currentIndexChanged.connect(self._on_project_changed)
-        form.addRow("プロジェクト", self._project_combo)
+        project_label = QLabel("プロジェクト", self)
+        project_label.setObjectName("formLabel")
+        form.addRow(project_label, self._project_combo)
 
         project_button_row = QHBoxLayout()
         create_button = QPushButton("新規プロジェクト...", self)
@@ -115,36 +131,175 @@ class StartWindow(QMainWindow):
         refresh_button.clicked.connect(self.refresh_start_state)
         project_button_row.addWidget(create_button)
         project_button_row.addWidget(refresh_button)
-        form.addRow(" ", project_button_row)
+        project_button_label = QLabel("", self)
+        project_button_label.setObjectName("formLabel")
+        form.addRow(project_button_label, project_button_row)
 
         self._user_combo = QComboBox(self)
         self._user_combo.currentIndexChanged.connect(self._on_user_changed)
-        form.addRow("ユーザー", self._user_combo)
+        user_label = QLabel("ユーザー", self)
+        user_label.setObjectName("formLabel")
+        form.addRow(user_label, self._user_combo)
 
         user_button_row = QHBoxLayout()
         user_settings_button = QPushButton("ユーザー設定...", self)
         user_settings_button.clicked.connect(self._open_user_settings)
         user_button_row.addWidget(user_settings_button)
         user_button_row.addStretch(1)
-        form.addRow(" ", user_button_row)
+        user_button_label = QLabel("", self)
+        user_button_label.setObjectName("formLabel")
+        form.addRow(user_button_label, user_button_row)
 
         layout.addLayout(form)
 
         self._project_info_label = QLabel("プロジェクト情報がここに表示されます。", self)
+        self._project_info_label.setObjectName("projectInfoLabel")
         self._project_info_label.setWordWrap(True)
         layout.addWidget(self._project_info_label)
 
         self._structure_warning_label = QLabel("", self)
+        self._structure_warning_label.setObjectName("structureWarningLabel")
         self._structure_warning_label.setWordWrap(True)
+        self._structure_warning_label.hide()
         layout.addWidget(self._structure_warning_label)
 
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
         open_button = QPushButton("ノードエディタを開く", self)
+        open_button.setObjectName("primaryActionButton")
         open_button.clicked.connect(self._open_node_editor)
         layout.addWidget(open_button, alignment=Qt.AlignRight)
 
-        self.setCentralWidget(container)
+        root_layout.addStretch(1)
+        root_layout.addWidget(card, 0, Qt.AlignCenter)
+        root_layout.addStretch(1)
+
+        self.setCentralWidget(root)
+        self._apply_styles()
+
+    def _update_structure_warning(self, status: Optional[str], text: str = "") -> None:
+        if self._structure_warning_label is None:
+            return
+        label = self._structure_warning_label
+        if status and text:
+            label.setText(text)
+            label.setProperty("status", status)
+            label.show()
+        else:
+            label.clear()
+            label.setProperty("status", "")
+            label.hide()
+        style = label.style()
+        if style is not None:
+            style.unpolish(label)
+            style.polish(label)
+        label.update()
+
+    def _apply_styles(self) -> None:
+        self.setStyleSheet(
+            """
+            QWidget#startRoot {
+                background: qradialgradient(
+                    cx: 0.3, cy: 0.1, radius: 1.1,
+                    fx: 0.3, fy: 0.1,
+                    stop: 0 #1f2937,
+                    stop: 0.6 #0f172a,
+                    stop: 1 #020617
+                );
+            }
+            QFrame#startCard {
+                background-color: rgba(15, 23, 42, 0.92);
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                border-radius: 18px;
+            }
+            QLabel#startTitle {
+                font-size: 22px;
+                font-weight: 600;
+                color: #f8fafc;
+            }
+            QLabel#startDescription {
+                color: #cbd5f5;
+                font-size: 13px;
+            }
+            QLabel#formLabel {
+                color: #cbd5f5;
+                font-weight: 500;
+            }
+            QLabel#projectInfoLabel {
+                color: #e2e8f0;
+                background-color: rgba(30, 41, 59, 0.65);
+                border: 1px solid rgba(148, 163, 184, 0.25);
+                border-radius: 10px;
+                padding: 12px 14px;
+            }
+            QLabel#structureWarningLabel {
+                color: #e2e8f0;
+                border-radius: 10px;
+                border: none;
+                padding: 0;
+                background: transparent;
+            }
+            QLabel#structureWarningLabel[status="ok"] {
+                color: #34d399;
+                background-color: rgba(34, 197, 94, 0.12);
+                border: 1px solid rgba(34, 197, 94, 0.4);
+                padding: 10px 12px;
+            }
+            QLabel#structureWarningLabel[status="error"] {
+                color: #fca5a5;
+                background-color: rgba(248, 113, 113, 0.12);
+                border: 1px solid rgba(248, 113, 113, 0.4);
+                padding: 10px 12px;
+            }
+            QComboBox {
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                border-radius: 8px;
+                padding: 8px 12px;
+                background-color: rgba(15, 23, 42, 0.9);
+                color: #e2e8f0;
+            }
+            QComboBox:hover, QComboBox:focus {
+                border: 1px solid rgba(96, 165, 250, 0.7);
+                background-color: rgba(30, 58, 138, 0.85);
+            }
+            QPushButton {
+                background-color: rgba(148, 163, 184, 0.1);
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                border-radius: 10px;
+                color: #e2e8f0;
+                padding: 8px 18px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: rgba(96, 165, 250, 0.18);
+                border: 1px solid rgba(96, 165, 250, 0.5);
+            }
+            QPushButton#primaryActionButton {
+                background-color: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #2563eb,
+                    stop: 1 #7c3aed
+                );
+                border: none;
+                color: #f8fafc;
+                padding: 10px 24px;
+                font-size: 14px;
+            }
+            QPushButton#primaryActionButton:hover {
+                background-color: qlineargradient(
+                    x1: 0, y1: 0, x2: 1, y2: 0,
+                    stop: 0 #1d4ed8,
+                    stop: 1 #6d28d9
+                );
+            }
+            QPushButton#primaryActionButton:pressed {
+                background-color: #1e3a8a;
+            }
+            QDialogButtonBox QPushButton {
+                min-width: 80px;
+            }
+            """
+        )
 
     # 状態更新 -----------------------------------------------------------
     def refresh_start_state(self) -> None:
@@ -223,8 +378,7 @@ class StartWindow(QMainWindow):
         if record is None:
             self._current_settings_path = None
             self._project_info_label.setText("プロジェクトが選択されていません。")
-            if self._structure_warning_label:
-                self._structure_warning_label.clear()
+            self._update_structure_warning(None)
             return
         self._current_settings_path = Path(record.root)
         context = self._project_service.load_context(record.root)
@@ -236,13 +390,10 @@ class StartWindow(QMainWindow):
         ]
         self._project_info_label.setText("\n".join(info_lines))
         report = self._project_service.validate_structure(record.root)
-        if self._structure_warning_label:
-            if report.is_valid:
-                self._structure_warning_label.setText("構成チェック: 問題なし")
-                self._structure_warning_label.setStyleSheet("color: #198754;")
-            else:
-                self._structure_warning_label.setText("構成チェック: " + report.summary())
-                self._structure_warning_label.setStyleSheet("color: #d9534f;")
+        if report.is_valid:
+            self._update_structure_warning("ok", "構成チェック: 問題なし")
+        else:
+            self._update_structure_warning("error", "構成チェック: " + report.summary())
         self._apply_default_user_selection()
 
     def _on_user_changed(self, index: int) -> None:
