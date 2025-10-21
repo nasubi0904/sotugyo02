@@ -57,7 +57,7 @@ class NodeContentBrowser(QWidget):
         self._available_entries: List[Dict[str, str]] = []
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
-        self._icon_size: int = 48
+        self._icon_size: int = 32
 
         self._setup_ui()
         self._connect_signals()
@@ -91,31 +91,16 @@ class NodeContentBrowser(QWidget):
 
         layout.addLayout(search_layout)
 
-        size_layout = QHBoxLayout()
-        size_layout.setContentsMargins(0, 0, 0, 0)
-        size_layout.setSpacing(8)
-
-        size_label = QLabel("アイコンサイズ", self)
-        self._icon_size_slider.setRange(32, 128)
-        self._icon_size_slider.setSingleStep(4)
-        self._icon_size_slider.setPageStep(8)
-        self._icon_size_slider.setValue(self._icon_size)
-        self._icon_size_slider.setTracking(True)
-
-        self._icon_size_spin.setRange(32, 128)
-        self._icon_size_spin.setSingleStep(1)
-        self._icon_size_spin.setValue(self._icon_size)
-
-        size_layout.addWidget(size_label)
-        size_layout.addWidget(self._icon_size_slider, 1)
-        size_layout.addWidget(self._icon_size_spin)
-
-        layout.addLayout(size_layout)
-
         self._configure_list_widget(self._available_list)
 
+        icon_control = self._create_icon_size_control(self)
+
         layout.addWidget(
-            self._build_section("追加可能ノード", self._available_list),
+            self._build_section(
+                "追加可能ノード",
+                self._available_list,
+                header_widget=icon_control,
+            ),
             1,
         )
 
@@ -130,19 +115,60 @@ class NodeContentBrowser(QWidget):
         widget.setUniformItemSizes(True)
         self._apply_icon_size()
 
-    def _build_section(self, title: str, widget: QListWidget) -> QWidget:
+    def _build_section(
+        self,
+        title: str,
+        widget: QListWidget,
+        header_widget: Optional[QWidget] = None,
+    ) -> QWidget:
         frame = QFrame(self)
         frame.setFrameShape(QFrame.StyledPanel)
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(8, 8, 8, 8)
         frame_layout.setSpacing(6)
 
+        header_layout = QHBoxLayout()
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_layout.setSpacing(6)
+
         label = QLabel(title, frame)
         label.setStyleSheet("font-weight: bold;")
-        frame_layout.addWidget(label)
+        header_layout.addWidget(label)
+
+        if header_widget is not None:
+            header_layout.addStretch(1)
+            header_layout.addWidget(header_widget)
+
+        frame_layout.addLayout(header_layout)
         frame_layout.addWidget(widget, 1)
 
         return frame
+
+    def _create_icon_size_control(self, parent: QWidget) -> QWidget:
+        container = QWidget(parent)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        size_label = QLabel("アイコンサイズ", container)
+
+        self._icon_size_slider.setParent(container)
+        self._icon_size_slider.setRange(16, 96)
+        self._icon_size_slider.setSingleStep(2)
+        self._icon_size_slider.setPageStep(6)
+        self._icon_size_slider.setValue(self._icon_size)
+        self._icon_size_slider.setTracking(True)
+
+        self._icon_size_spin.setParent(container)
+        self._icon_size_spin.setRange(16, 96)
+        self._icon_size_spin.setSingleStep(1)
+        self._icon_size_spin.setValue(self._icon_size)
+
+        layout.addWidget(size_label)
+        layout.addWidget(self._icon_size_slider, 1)
+        layout.addWidget(self._icon_size_spin)
+
+        return container
 
     def _connect_signals(self) -> None:
         self._search_line.textChanged.connect(self._apply_filter)
