@@ -67,6 +67,15 @@ class StartWindow(QMainWindow):
     def _open_node_editor(self) -> None:
         if self._node_window is None:
             self._node_window = NodeEditorWindow(self)
+            self._node_window.return_to_start_requested.connect(
+                self._on_return_to_start_requested
+            )
         self._node_window.show()
         self._node_window.raise_()
         self._node_window.activateWindow()
+        self.hide()
+
+    def _on_return_to_start_requested(self) -> None:
+        self.show()
+        self.raise_()
+        self.activateWindow()
