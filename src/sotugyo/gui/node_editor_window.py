@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import uuid
 from pathlib import Path
@@ -36,6 +37,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from NodeGraphQt import NodeGraph, Port
+
+
+LOGGER = logging.getLogger(__name__)
 
 from .nodes import ReviewNode, TaskNode
 from ..settings.project_service import ProjectContext, ProjectService
@@ -1408,8 +1412,21 @@ class NodeEditorWindow(QMainWindow):
             return None
         if isinstance(port_index, int) and 0 <= port_index < len(ports):
             candidate = ports[port_index]
-            if port_name is None or self._safe_port_name(candidate) == port_name:
-                return candidate
+            candidate_name = self._safe_port_name(candidate)
+            if port_name is not None and candidate_name != port_name:
+                node_identifier = getattr(node, "name", None)
+                if callable(node_identifier):
+                    node_identifier = node_identifier()
+                if node_identifier is None:
+                    node_identifier = repr(node)
+                LOGGER.debug(
+                    "ポート名の不一致: index=%s, expected=%s, actual=%s, node=%s",
+                    port_index,
+                    port_name,
+                    candidate_name,
+                    node_identifier,
+                )
+            return candidate
         for index, port in enumerate(ports):
             if port_name is not None and self._safe_port_name(port) != port_name:
                 continue
