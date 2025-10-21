@@ -15,6 +15,7 @@ from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
+    QDockWidget,
     QFrame,
     QFileDialog,
     QFormLayout,
@@ -30,7 +31,6 @@ from PySide6.QtWidgets import (
     QSlider,
     QSpinBox,
     QSizePolicy,
-    QSplitter,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -309,6 +309,8 @@ class NodeEditorWindow(QMainWindow):
             "sotugyo.demo.TaskNode": self._create_task_node,
             "sotugyo.demo.ReviewNode": self._create_review_node,
         }
+        self._inspector_dock: Optional[QDockWidget] = None
+        self._content_dock: Optional[QDockWidget] = None
 
         self._init_ui()
         self._create_menus()
@@ -324,40 +326,47 @@ class NodeEditorWindow(QMainWindow):
     # UI 初期化
     # ------------------------------------------------------------------
     def _init_ui(self) -> None:
-        container = QWidget(self)
-        root_layout = QVBoxLayout(container)
-        root_layout.setContentsMargins(0, 0, 0, 0)
-        root_layout.setSpacing(0)
+        self.setCentralWidget(self._graph_widget)
 
-        main_panel = QWidget(container)
-        content_layout = QHBoxLayout(main_panel)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-
-        self._side_tabs = QTabWidget(main_panel)
+        self._side_tabs = QTabWidget(self)
         self._side_tabs.setMinimumWidth(260)
         self._side_tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._side_tabs.addTab(self._build_operation_tab(), "ノード操作")
 
-        content_layout.addWidget(self._graph_widget, 1)
-        content_layout.addWidget(self._side_tabs)
+        inspector_dock = QDockWidget("インスペクタ", self)
+        inspector_dock.setObjectName("InspectorDock")
+        inspector_dock.setAllowedAreas(
+            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+        )
+        inspector_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        inspector_dock.setWidget(self._side_tabs)
+        self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
+        self._inspector_dock = inspector_dock
 
-        splitter = QSplitter(Qt.Vertical, container)
-        splitter.addWidget(main_panel)
-        self._content_browser = NodeContentBrowser(splitter)
+        self._content_browser = NodeContentBrowser(self)
         self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
         self._content_browser.search_submitted.connect(self._handle_content_browser_search)
         self._content_browser.back_requested.connect(self._return_to_start)
         self._content_browser.setMinimumHeight(160)
 
-        splitter.addWidget(self._content_browser)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([420, 180])
+        content_dock = QDockWidget("コンテンツブラウザ", self)
+        content_dock.setObjectName("ContentBrowserDock")
+        content_dock.setAllowedAreas(Qt.TopDockWidgetArea | Qt.BottomDockWidgetArea)
+        content_dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        content_dock.setWidget(self._content_browser)
+        self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
+        self._content_dock = content_dock
 
-        root_layout.addWidget(splitter, 1)
-
-        self.setCentralWidget(container)
+        self.resizeDocks([content_dock], [220], Qt.Vertical)
+        self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
 
     def _create_menus(self) -> None:
         menubar = self.menuBar()
@@ -393,6 +402,12 @@ class NodeEditorWindow(QMainWindow):
         user_settings_action = QAction("ユーザー設定...", self)
         user_settings_action.triggered.connect(self._open_user_settings)
         user_menu.addAction(user_settings_action)
+
+        view_menu = menubar.addMenu("View")
+        if self._inspector_dock is not None:
+            view_menu.addAction(self._inspector_dock.toggleViewAction())
+        if self._content_dock is not None:
+            view_menu.addAction(self._content_dock.toggleViewAction())
 
     def _build_detail_tab(self) -> QWidget:
         widget = QWidget(self)
