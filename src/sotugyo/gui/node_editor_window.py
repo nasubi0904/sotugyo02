@@ -339,7 +339,7 @@ class NodeEditorWindow(QMainWindow):
         if self._current_project_settings is None:
             self._current_project_settings = load_project_settings(self._current_project_root)
         dialog = ProjectSettingsDialog(self._current_project_settings, self)
-        if dialog.exec() != QDialog.Accepted:
+        if dialog.exec() != dialog.DialogCode.Accepted:
             return
         updated = dialog.settings()
         try:
