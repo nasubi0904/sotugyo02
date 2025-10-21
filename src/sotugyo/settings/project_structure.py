@@ -106,9 +106,8 @@ def ensure_project_structure(root: Path) -> ProjectStructureReport:
             continue
         try:
             file_path.parent.mkdir(parents=True, exist_ok=True)
-            content = DEFAULT_FILE_CONTENT.get(
-                str(file_path.relative_to(root)) if file_path.is_relative_to(root) else ""
-            )
+            relative_key = file_path.relative_to(root).as_posix()
+            content = DEFAULT_FILE_CONTENT.get(relative_key)
             if content is None:
                 file_path.touch(exist_ok=True)
             else:
