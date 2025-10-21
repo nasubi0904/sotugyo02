@@ -476,6 +476,15 @@ class NodeEditorWindow(QMainWindow):
             if selection_signal is not None and hasattr(selection_signal, "connect"):
                 selection_signal.connect(self._on_selection_changed)
 
+        connection_signals = [
+            getattr(self._graph, "port_connected", None),
+            getattr(self._graph, "port_disconnected", None),
+            getattr(self._graph, "pipes_deleted", None),
+        ]
+        for signal in connection_signals:
+            if signal is not None and hasattr(signal, "connect"):
+                signal.connect(self._on_port_connection_changed)
+
     def _setup_context_menu(self) -> None:
         if hasattr(self._graph_widget, "setContextMenuPolicy"):
             self._graph_widget.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -822,6 +831,10 @@ class NodeEditorWindow(QMainWindow):
         return nodes
 
     def _on_selection_changed(self, *_args, **_kwargs) -> None:
+        self._update_selected_node_info()
+
+    def _on_port_connection_changed(self, *_ports, **_kwargs) -> None:
+        self._set_modified(True)
         self._update_selected_node_info()
 
     def _update_selected_node_info(self) -> None:
