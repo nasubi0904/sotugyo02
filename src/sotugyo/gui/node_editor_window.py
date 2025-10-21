@@ -913,38 +913,41 @@ class NodeEditorWindow(QMainWindow):
             )
 
         connections = []
-        seen_connections: Set[Tuple[int, str, int, str]] = set()
+        seen_connections: Set[Tuple[int, Optional[int], str, int, Optional[int], str]] = set()
         for node in nodes:
-            outputs = getattr(node, "output_ports", None)
-            if not callable(outputs):
-                continue
-            for port in outputs() or []:
-                connected_ports = getattr(port, "connected_ports", None)
-                if not callable(connected_ports):
-                    continue
-                for connected in connected_ports() or []:
+            source_id = node_id_map[node]
+            for port in self._collect_ports(node, output=True):
+                for connected in self._connected_ports(port):
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
+                    target_id = node_id_map[target_node]
                     source_name = self._safe_port_name(port)
                     target_name = self._safe_port_name(connected)
+                    source_index = self._port_index_in_node(node, port, output=True)
+                    target_index = self._port_index_in_node(target_node, connected, output=False)
                     key = (
-                        node_id_map[node],
+                        source_id,
+                        source_index,
                         source_name,
-                        node_id_map[target_node],
+                        target_id,
+                        target_index,
                         target_name,
                     )
                     if key in seen_connections:
                         continue
                     seen_connections.add(key)
-                    connections.append(
-                        {
-                            "source": node_id_map[node],
-                            "source_port": source_name,
-                            "target": node_id_map[target_node],
-                            "target_port": target_name,
-                        }
-                    )
+                    entry = {
+                        "source": source_id,
+                        "source_port": source_name,
+                        "target": target_id,
+                        "target_port": target_name,
+                    }
+                    if source_index is not None:
+                        entry["source_port_index"] = source_index
+                    if target_index is not None:
+                        entry["target_port_index"] = target_index
+                    connections.append(entry)
 
         return {"nodes": node_entries, "connections": connections}
 
@@ -994,10 +997,26 @@ class NodeEditorWindow(QMainWindow):
             target_node = identifier_map.get(target_id)
             if source_node is None or target_node is None:
                 continue
-            source_port_name = connection.get("source_port")
-            target_port_name = connection.get("target_port")
-            source_port = self._find_port_by_name(source_node, source_port_name, output=True)
-            target_port = self._find_port_by_name(target_node, target_port_name, output=False)
+            source_name, source_index = self._parse_connection_port_reference(
+                connection.get("source_port"),
+                connection.get("source_port_index"),
+            )
+            target_name, target_index = self._parse_connection_port_reference(
+                connection.get("target_port"),
+                connection.get("target_port_index"),
+            )
+            source_port = self._find_port(
+                source_node,
+                port_name=source_name,
+                port_index=source_index,
+                output=True,
+            )
+            target_port = self._find_port(
+                target_node,
+                port_name=target_name,
+                port_index=target_index,
+                output=False,
+            )
             if source_port is None or target_port is None:
                 continue
             try:
@@ -1059,16 +1078,84 @@ class NodeEditorWindow(QMainWindow):
                 pass
         return str(port)
 
-    def _find_port_by_name(self, node, port_name: Optional[str], *, output: bool) -> Optional[Port]:
+    @staticmethod
+    def _connected_ports(port) -> List:
+        connected_getter = getattr(port, "connected_ports", None)
+        if not callable(connected_getter):
+            return []
+        try:
+            return list(connected_getter() or [])
+        except Exception:
+            return []
+
+    def _collect_ports(self, node, *, output: bool) -> List:
         accessor = "output_ports" if output else "input_ports"
         ports_getter = getattr(node, accessor, None)
         if not callable(ports_getter):
+            return []
+        try:
+            ports = ports_getter() or []
+        except Exception:
+            return []
+        return list(ports)
+
+    def _port_index_in_node(self, node, port, *, output: bool) -> Optional[int]:
+        for index, candidate in enumerate(self._collect_ports(node, output=output)):
+            if candidate is port:
+                return index
+        return None
+
+    @staticmethod
+    def _parse_connection_port_reference(
+        port_entry, index_entry
+    ) -> Tuple[Optional[str], Optional[int]]:
+        name: Optional[str] = None
+        index: Optional[int] = None
+        
+        def _normalize_index(value) -> Optional[int]:
+            if isinstance(value, bool):
+                return None
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return None
+
+        if isinstance(port_entry, dict):
+            raw_name = port_entry.get("name")
+            if isinstance(raw_name, str):
+                name = raw_name
+            raw_index = port_entry.get("index")
+            normalized = _normalize_index(raw_index)
+            if normalized is not None:
+                index = normalized
+        elif isinstance(port_entry, str):
+            name = port_entry
+        normalized_index = _normalize_index(index_entry)
+        if normalized_index is not None:
+            index = normalized_index
+        return name, index
+
+    def _find_port(
+        self,
+        node,
+        *,
+        port_name: Optional[str],
+        port_index: Optional[int],
+        output: bool,
+    ) -> Optional[Port]:
+        ports = self._collect_ports(node, output=output)
+        if not ports:
             return None
-        for port in ports_getter() or []:
-            if port_name is None:
-                return port
-            if self._safe_port_name(port) == port_name:
-                return port
+        if isinstance(port_index, int) and 0 <= port_index < len(ports):
+            candidate = ports[port_index]
+            if port_name is None or self._safe_port_name(candidate) == port_name:
+                return candidate
+        for index, port in enumerate(ports):
+            if port_name is not None and self._safe_port_name(port) != port_name:
+                continue
+            if port_index is not None and port_index != index:
+                continue
+            return port
         return None
 
     def _set_modified(self, modified: bool) -> None:
