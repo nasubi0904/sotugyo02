@@ -46,6 +46,7 @@ from ..settings.project_service import ProjectContext, ProjectService
 from ..settings.project_settings import ProjectSettings
 from ..settings.user_settings import UserAccount, UserSettingsManager
 from .project_settings_dialog import ProjectSettingsDialog
+from .style import apply_base_style
 from .user_settings_dialog import UserSettingsDialog
 
 
@@ -69,39 +70,46 @@ class NodeContentBrowser(QWidget):
         self._connect_signals()
 
     def _setup_ui(self) -> None:
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
-        layout.setSpacing(8)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        card = QFrame(self)
+        card.setObjectName("panelCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 20, 20, 20)
+        card_layout.setSpacing(12)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
 
-        title_label = QLabel("コンテンツブラウザ", self)
-        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title_label = QLabel("コンテンツブラウザ", card)
+        title_label.setObjectName("panelTitle")
         header_layout.addWidget(title_label)
         header_layout.addStretch(1)
 
-        back_button = QPushButton("スタート画面に戻る", self)
+        back_button = QPushButton("スタート画面に戻る", card)
         back_button.clicked.connect(self.back_requested.emit)
         header_layout.addWidget(back_button)
 
-        layout.addLayout(header_layout)
+        card_layout.addLayout(header_layout)
 
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(8)
 
         self._search_line.setPlaceholderText("ノードを検索")
+        self._search_line.setClearButtonEnabled(True)
         search_layout.addWidget(self._search_line, 1)
 
-        layout.addLayout(search_layout)
+        card_layout.addLayout(search_layout)
 
         self._configure_list_widget(self._available_list)
 
-        icon_control = self._create_icon_size_control(self)
+        icon_control = self._create_icon_size_control(card)
 
-        layout.addWidget(
+        card_layout.addWidget(
             self._build_section(
                 "追加可能ノード",
                 self._available_list,
@@ -110,15 +118,20 @@ class NodeContentBrowser(QWidget):
             1,
         )
 
+        outer_layout.addWidget(card)
+
     def _configure_list_widget(self, widget: QListWidget) -> None:
+        widget.setObjectName("contentList")
         widget.setViewMode(QListWidget.IconMode)
         widget.setMovement(QListWidget.Static)
         widget.setResizeMode(QListWidget.Adjust)
         widget.setWrapping(True)
+        widget.setWordWrap(True)
+        widget.setTextElideMode(Qt.TextElideMode.ElideNone)
         widget.setIconSize(QSize(self._icon_size, self._icon_size))
-        widget.setSpacing(8)
+        widget.setSpacing(10)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        widget.setUniformItemSizes(True)
+        widget.setUniformItemSizes(False)
         self._apply_icon_size()
 
     def _build_section(
@@ -128,17 +141,17 @@ class NodeContentBrowser(QWidget):
         header_widget: Optional[QWidget] = None,
     ) -> QWidget:
         frame = QFrame(self)
-        frame.setFrameShape(QFrame.StyledPanel)
+        frame.setObjectName("inspectorSection")
         frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(8, 8, 8, 8)
-        frame_layout.setSpacing(6)
+        frame_layout.setContentsMargins(16, 16, 16, 16)
+        frame_layout.setSpacing(10)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
 
         label = QLabel(title, frame)
-        label.setStyleSheet("font-weight: bold;")
+        label.setObjectName("panelTitle")
         header_layout.addWidget(label)
 
         if header_widget is not None:
@@ -157,6 +170,7 @@ class NodeContentBrowser(QWidget):
         layout.setSpacing(6)
 
         size_label = QLabel("アイコンサイズ", container)
+        size_label.setProperty("hint", "secondary")
 
         self._icon_size_slider.setParent(container)
         self._icon_size_slider.setRange(16, 96)
@@ -193,6 +207,7 @@ class NodeContentBrowser(QWidget):
             item = QListWidgetItem(f"{title}\n{subtitle}")
             item.setData(Qt.UserRole, node_type)
             item.setToolTip(node_type)
+            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
             item.setSizeHint(self._list_item_size_hint())
             self._available_list.addItem(item)
         self._apply_filter()
@@ -325,6 +340,7 @@ class NodeEditorWindow(QMainWindow):
         self._update_selected_node_info()
         self._refresh_node_catalog()
         self._set_modified(False)
+        apply_base_style(self)
 
     # ------------------------------------------------------------------
     # UI 初期化
@@ -414,10 +430,11 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._content_dock.toggleViewAction())
 
     def _build_detail_tab(self) -> QWidget:
-        widget = QWidget(self)
+        widget = QFrame(self)
+        widget.setObjectName("inspectorSection")
         layout = QFormLayout(widget)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
 
         self._detail_name_label = QLabel("-", widget)
         self._detail_type_label = QLabel("-", widget)
@@ -430,12 +447,14 @@ class NodeEditorWindow(QMainWindow):
         return widget
 
     def _build_operation_tab(self) -> QWidget:
-        widget = QWidget(self)
+        widget = QFrame(self)
+        widget.setObjectName("inspectorSection")
         layout = QVBoxLayout(widget)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(8)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
 
         rename_label = QLabel("名前の変更", widget)
+        rename_label.setObjectName("panelTitle")
         self._rename_input = QLineEdit(widget)
         self._rename_input.setPlaceholderText("ノード名を入力")
 

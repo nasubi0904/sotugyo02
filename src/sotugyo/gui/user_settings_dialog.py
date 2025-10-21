@@ -9,7 +9,9 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
+    QLabel,
     QInputDialog,
     QLineEdit,
     QListWidget,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..settings.user_settings import UserAccount, UserSettingsManager
+from .style import apply_base_style
 
 
 class UserSettingsDialog(QDialog):
@@ -42,14 +45,36 @@ class UserSettingsDialog(QDialog):
 
         self._build_ui()
         self._populate_list()
+        apply_base_style(self)
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        self.setObjectName("appDialog")
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(32, 32, 32, 32)
+        outer_layout.setSpacing(0)
+
+        card = QFrame(self)
+        card.setObjectName("dialogCard")
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(28, 28, 28, 28)
+        card_layout.setSpacing(18)
+
+        header = QLabel("ユーザー設定", card)
+        header.setObjectName("panelTitle")
+        card_layout.addWidget(header)
 
         list_layout = QHBoxLayout()
+        list_layout.setSpacing(16)
+        self._list_widget.setObjectName("userList")
+        self._list_widget.setAlternatingRowColors(False)
+        self._list_widget.setSelectionMode(QListWidget.SingleSelection)
+        self._list_widget.setWordWrap(True)
+        self._list_widget.setTextElideMode(Qt.TextElideMode.ElideNone)
         list_layout.addWidget(self._list_widget, 1)
 
         button_column = QVBoxLayout()
+        button_column.setSpacing(10)
         add_button = QPushButton("追加")
         remove_button = QPushButton("削除")
         button_column.addWidget(add_button)
@@ -57,21 +82,27 @@ class UserSettingsDialog(QDialog):
         button_column.addStretch(1)
         list_layout.addLayout(button_column)
 
-        layout.addLayout(list_layout)
+        card_layout.addLayout(list_layout)
 
         form_layout = QFormLayout()
+        form_layout.setLabelAlignment(Qt.AlignLeft)
+        form_layout.setFormAlignment(Qt.AlignTop)
+        form_layout.setHorizontalSpacing(18)
+        form_layout.setVerticalSpacing(12)
         form_layout.addRow("表示名", self._display_name_edit)
         form_layout.addRow("パスワード", self._password_edit)
-        layout.addLayout(form_layout)
+        card_layout.addLayout(form_layout)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, self)
-        layout.addWidget(buttons)
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, card)
+        card_layout.addWidget(button_box, 0, Qt.AlignRight)
+
+        outer_layout.addWidget(card)
 
         self._list_widget.currentItemChanged.connect(self._on_selection_changed)
         add_button.clicked.connect(self._add_account)
         remove_button.clicked.connect(self._remove_account)
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
 
     def _populate_list(self) -> None:
         self._list_widget.clear()
