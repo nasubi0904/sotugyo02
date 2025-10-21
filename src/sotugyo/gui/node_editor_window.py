@@ -1022,14 +1022,10 @@ class NodeEditorWindow(QMainWindow):
         connections = []
         seen_connections: Set[Tuple[int, str, int, str]] = set()
         for node in node_list:
-            outputs = getattr(node, "output_ports", None)
-            if not callable(outputs):
-                continue
-            for port in outputs() or []:
-                connected_ports = getattr(port, "connected_ports", None)
-                if not callable(connected_ports):
-                    continue
-                for connected in connected_ports() or []:
+            for port in self._collect_ports(node, output=True):
+                for connected in self._connected_ports(port):
+                    if not isinstance(connected, Port):
+                        continue
                     target_node = connected.node() if hasattr(connected, "node") else None
                     if target_node is None or target_node not in node_id_map:
                         continue
