@@ -192,7 +192,7 @@ class StartWindow(QMainWindow):
         preferred_user: Optional[str] = None
         if self._current_settings_path:
             settings = load_project_settings(self._current_settings_path)
-            if settings.auto_fill_credentials and settings.last_user_id:
+            if settings.auto_fill_user_id and settings.last_user_id:
                 preferred_user = settings.last_user_id
         if preferred_user is None:
             preferred_user = self._user_manager.last_user_id()
@@ -328,7 +328,7 @@ class StartWindow(QMainWindow):
                 return
 
         default_password: Optional[str] = None
-        if settings.auto_fill_credentials and settings.last_user_id == user_id:
+        if settings.auto_fill_password and settings.last_user_id == user_id:
             default_password = settings.last_user_password
 
         prompt = PasswordPromptDialog(user_id=user_id, default_password=default_password, parent=self)
@@ -339,10 +339,15 @@ class StartWindow(QMainWindow):
             QMessageBox.critical(self, "エラー", "パスワードが一致しません。")
             return
 
-        if settings.auto_fill_credentials:
+        if settings.auto_fill_user_id:
             settings.last_user_id = user_id
+        else:
+            settings.last_user_id = None
+        if settings.auto_fill_password:
             settings.last_user_password = password
-            save_project_settings(settings)
+        else:
+            settings.last_user_password = None
+        save_project_settings(settings)
         self._user_manager.set_last_user_id(user_id)
         self._registry.set_last_project(record.root)
 
