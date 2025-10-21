@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+import json
+from pathlib import Path
+from typing import Dict, Iterable, List, Optional
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -33,6 +36,7 @@ class NodeEditorWindow(QMainWindow):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setWindowTitle(self.WINDOW_TITLE)
+        self._base_window_title = self.windowTitle()
         self.resize(960, 600)
 
         self._graph = NodeGraph()
@@ -47,6 +51,8 @@ class NodeEditorWindow(QMainWindow):
         self._review_count = 0
         self._current_node = None
         self._known_nodes: List = []
+        self._is_modified = False
+        self._current_project_path: Optional[Path] = None
 
         self._side_tabs: Optional[QTabWidget] = None
         self._detail_name_label: Optional[QLabel] = None
@@ -57,8 +63,10 @@ class NodeEditorWindow(QMainWindow):
         self._search_input: Optional[QLineEdit] = None
 
         self._init_ui()
+        self._create_menus()
         self._setup_graph_signals()
         self._update_selected_node_info()
+        self._set_modified(False)
 
     # ------------------------------------------------------------------
     # UI 初期化
@@ -78,13 +86,40 @@ class NodeEditorWindow(QMainWindow):
         self._side_tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._side_tabs.addTab(self._build_operation_tab(), "ノード操作")
 
-        content_layout.addWidget(self._side_tabs)
         content_layout.addWidget(self._graph_widget, 1)
+        content_layout.addWidget(self._side_tabs)
 
         root_layout.addLayout(content_layout, 1)
         root_layout.addWidget(self._build_bottom_panel())
 
         self.setCentralWidget(container)
+
+    def _create_menus(self) -> None:
+        menubar = self.menuBar()
+
+        file_menu = menubar.addMenu("File")
+
+        save_action = QAction("上書き保存", self)
+        save_action.triggered.connect(self._file_save)
+        file_menu.addAction(save_action)
+
+        save_as_action = QAction("別名保存...", self)
+        save_as_action.triggered.connect(self._file_save_as)
+        file_menu.addAction(save_as_action)
+
+        import_action = QAction("インポート...", self)
+        import_action.triggered.connect(self._file_import)
+        file_menu.addAction(import_action)
+
+        option_menu = menubar.addMenu("Option")
+        project_settings_action = QAction("プロジェクト設定...", self)
+        project_settings_action.triggered.connect(self._open_project_settings)
+        option_menu.addAction(project_settings_action)
+
+        setting_menu = menubar.addMenu("Setting")
+        machine_settings_action = QAction("マシン設定...", self)
+        machine_settings_action.triggered.connect(self._open_machine_settings)
+        setting_menu.addAction(machine_settings_action)
 
     def _build_detail_tab(self) -> QWidget:
         widget = QWidget(self)
@@ -166,6 +201,16 @@ class NodeEditorWindow(QMainWindow):
 
         return panel
 
+    def _open_project_settings(self) -> None:
+        self._show_info_dialog(
+            "プロジェクトごとの設定項目は現在準備中です。"
+        )
+
+    def _open_machine_settings(self) -> None:
+        self._show_info_dialog(
+            "マシン依存の設定項目は現在準備中です。"
+        )
+
     def _setup_graph_signals(self) -> None:
         selection_signal = getattr(self._graph, "selection_changed", None)
         if selection_signal is not None and hasattr(selection_signal, "connect"):
@@ -193,6 +238,7 @@ class NodeEditorWindow(QMainWindow):
         node.set_pos(pos_x, pos_y)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
+        self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
@@ -209,6 +255,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.delete_nodes(nodes)
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
         self._on_selection_changed()
+        self._set_modified(True)
 
     # ------------------------------------------------------------------
     # 接続処理
@@ -226,6 +273,7 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("接続できるポートが見つかりませんでした。")
             return
         self._graph.connect_ports(source_port, target_port)
+        self._set_modified(True)
 
     def _disconnect_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
@@ -245,6 +293,7 @@ class NodeEditorWindow(QMainWindow):
             if connected_port.node() is target:
                 self._graph.disconnect_ports(source_port, connected_port)
                 disconnected = True
+                self._set_modified(True)
         if not disconnected:
             self._show_info_dialog("選択されたノード間に接続が存在しません。")
 
@@ -268,6 +317,9 @@ class NodeEditorWindow(QMainWindow):
 
     def _show_info_dialog(self, message: str) -> None:
         QMessageBox.information(self, "操作案内", message)
+
+    def _show_error_dialog(self, message: str) -> None:
+        QMessageBox.critical(self, "エラー", message)
 
     def _search_nodes(self) -> None:
         if self._search_input is None:
@@ -380,11 +432,269 @@ class NodeEditorWindow(QMainWindow):
         if hasattr(self._current_node, "set_name"):
             self._current_node.set_name(new_name)
         self._update_selected_node_info()
+        self._set_modified(True)
 
     def _return_to_start(self) -> None:
+        if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
+            return
         self.hide()
         self.return_to_start_requested.emit()
 
+    # ------------------------------------------------------------------
+    # プロジェクトの保存・読み込み
+    # ------------------------------------------------------------------
+    def _file_save(self) -> None:
+        if self._current_project_path is None:
+            self._file_save_as()
+            return
+        try:
+            self._write_project_to_path(self._current_project_path)
+            self._set_modified(False)
+            self._show_info_dialog("プロジェクトを保存しました。")
+        except OSError as exc:
+            self._show_error_dialog(f"保存に失敗しました: {exc}")
+
+    def _file_save_as(self) -> None:
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "保存先を選択",
+            "",
+            "Project Files (*.json);;All Files (*)",
+        )
+        if not filename:
+            return
+        target_path = Path(filename)
+        try:
+            self._write_project_to_path(target_path)
+        except OSError as exc:
+            self._show_error_dialog(f"保存に失敗しました: {exc}")
+            return
+        self._current_project_path = target_path
+        self._set_modified(False)
+        self._show_info_dialog("プロジェクトを保存しました。")
+
+    def _file_import(self) -> None:
+        if not self._confirm_discard_changes(
+            "現在の編集内容が失われる可能性があります。インポートを続行しますか？"
+        ):
+            return
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "プロジェクトをインポート",
+            "",
+            "Project Files (*.json);;All Files (*)",
+        )
+        if not filename:
+            return
+        source_path = Path(filename)
+        try:
+            self._load_project_from_path(source_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            self._show_error_dialog(f"インポートに失敗しました: {exc}")
+            return
+        self._current_project_path = source_path
+        self._set_modified(False)
+        self._show_info_dialog("プロジェクトをインポートしました。")
+
+    def _write_project_to_path(self, path: Path) -> None:
+        state = self._export_project_state()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(state, handle, ensure_ascii=True, indent=2)
+
+    def _load_project_from_path(self, path: Path) -> None:
+        with path.open("r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        self._apply_project_state(state)
+
+    def _export_project_state(self) -> Dict:
+        nodes = self._collect_all_nodes()
+        node_entries = []
+        node_id_map: Dict = {}
+        for index, node in enumerate(nodes):
+            node_id_map[node] = index
+            node_entries.append(
+                {
+                    "id": index,
+                    "name": self._safe_node_name(node),
+                    "type": self._node_type_identifier(node),
+                    "position": self._safe_node_position(node),
+                }
+            )
+
+        connections = []
+        for node in nodes:
+            outputs = getattr(node, "output_ports", None)
+            if not callable(outputs):
+                continue
+            for port in outputs() or []:
+                connected_ports = getattr(port, "connected_ports", None)
+                if not callable(connected_ports):
+                    continue
+                for connected in connected_ports() or []:
+                    target_node = connected.node() if hasattr(connected, "node") else None
+                    if target_node is None or target_node not in node_id_map:
+                        continue
+                    connections.append(
+                        {
+                            "source": node_id_map[node],
+                            "source_port": self._safe_port_name(port),
+                            "target": node_id_map[target_node],
+                            "target_port": self._safe_port_name(connected),
+                        }
+                    )
+
+        return {"nodes": node_entries, "connections": connections}
+
+    def _apply_project_state(self, state: Dict) -> None:
+        nodes_info = state.get("nodes") if isinstance(state, dict) else None
+        connections_info = state.get("connections") if isinstance(state, dict) else None
+        if not isinstance(nodes_info, list) or not isinstance(connections_info, list):
+            raise ValueError("プロジェクトファイルの形式が不正です。")
+
+        existing_nodes = self._collect_all_nodes()
+        if existing_nodes:
+            self._graph.delete_nodes(existing_nodes)
+
+        self._known_nodes.clear()
+        self._node_spawn_offset = 0
+        self._task_count = 0
+        self._review_count = 0
+
+        identifier_map: Dict[int, object] = {}
+        for entry in nodes_info:
+            if not isinstance(entry, dict):
+                continue
+            node_type = entry.get("type")
+            node_name = entry.get("name")
+            position = entry.get("position")
+            if not isinstance(node_type, str) or not isinstance(node_name, str):
+                continue
+            node = self._graph.create_node(node_type, name=node_name)
+            if isinstance(position, (list, tuple)) and len(position) >= 2:
+                try:
+                    node.set_pos(float(position[0]), float(position[1]))
+                except Exception:
+                    pass
+            entry_id = entry.get("id")
+            if isinstance(entry_id, int):
+                identifier_map[entry_id] = node
+            self._known_nodes.append(node)
+
+        for connection in connections_info:
+            if not isinstance(connection, dict):
+                continue
+            source_id = connection.get("source")
+            target_id = connection.get("target")
+            if not isinstance(source_id, int) or not isinstance(target_id, int):
+                continue
+            source_node = identifier_map.get(source_id)
+            target_node = identifier_map.get(target_id)
+            if source_node is None or target_node is None:
+                continue
+            source_port_name = connection.get("source_port")
+            target_port_name = connection.get("target_port")
+            source_port = self._find_port_by_name(source_node, source_port_name, output=True)
+            target_port = self._find_port_by_name(target_node, target_port_name, output=False)
+            if source_port is None or target_port is None:
+                continue
+            try:
+                self._graph.connect_ports(source_port, target_port)
+            except Exception:
+                continue
+
+        self._node_spawn_offset = len(self._known_nodes)
+        self._task_count = sum(
+            1 for node in self._known_nodes if self._node_type_identifier(node) == "sotugyo.demo.TaskNode"
+        )
+        self._review_count = sum(
+            1 for node in self._known_nodes if self._node_type_identifier(node) == "sotugyo.demo.ReviewNode"
+        )
+
+        clear_selection = getattr(self._graph, "clear_selection", None)
+        if callable(clear_selection):
+            clear_selection()
+        self._on_selection_changed()
+
+    def _safe_node_name(self, node) -> str:
+        if hasattr(node, "name"):
+            try:
+                return str(node.name())
+            except Exception:
+                pass
+        return str(node)
+
+    def _node_type_identifier(self, node) -> str:
+        type_getter = getattr(node, "type_", None)
+        if callable(type_getter):
+            try:
+                return str(type_getter())
+            except Exception:
+                pass
+        identifier = getattr(node, "__identifier__", "")
+        class_name = node.__class__.__name__
+        return f"{identifier}.{class_name}" if identifier else class_name
+
+    def _safe_node_position(self, node) -> List[float]:
+        position = getattr(node, "pos", None)
+        if callable(position):
+            try:
+                pos = position()
+                if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                    return [float(pos[0]), float(pos[1])]
+            except Exception:
+                pass
+        return [0.0, 0.0]
+
+    @staticmethod
+    def _safe_port_name(port) -> str:
+        name_method = getattr(port, "name", None)
+        if callable(name_method):
+            try:
+                return str(name_method())
+            except Exception:
+                pass
+        return str(port)
+
+    def _find_port_by_name(self, node, port_name: Optional[str], *, output: bool) -> Optional[Port]:
+        accessor = "output_ports" if output else "input_ports"
+        ports_getter = getattr(node, accessor, None)
+        if not callable(ports_getter):
+            return None
+        for port in ports_getter() or []:
+            if port_name is None:
+                return port
+            if self._safe_port_name(port) == port_name:
+                return port
+        return None
+
+    def _set_modified(self, modified: bool) -> None:
+        self._is_modified = modified
+        title = self._base_window_title
+        if modified:
+            title = f"*{title}"
+        self.setWindowTitle(title)
+
+    def _confirm_discard_changes(self, message: Optional[str] = None) -> bool:
+        if not self._is_modified:
+            return True
+        text = (
+            message
+            if message
+            else "未保存の変更があります。操作を続行すると現在の編集内容が失われます。続行しますか？"
+        )
+        result = QMessageBox.warning(
+            self,
+            "確認",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._confirm_discard_changes("未保存の変更があります。ウィンドウを閉じますか？"):
+            event.ignore()
+            return
         super().closeEvent(event)
         self.return_to_start_requested.emit()
