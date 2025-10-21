@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import shutil
+import uuid
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
@@ -281,6 +283,7 @@ class NodeEditorWindow(QMainWindow):
         self._review_count = 0
         self._current_node = None
         self._known_nodes: List = []
+        self._node_metadata: Dict[object, Dict[str, str]] = {}
         self._is_modified = False
         self._current_project_root: Optional[Path] = None
         self._current_project_settings: Optional[ProjectSettings] = None
@@ -659,6 +662,62 @@ class NodeEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # ノード生成・削除
     # ------------------------------------------------------------------
+    def _ensure_node_metadata(
+        self,
+        node,
+        *,
+        uuid_value: Optional[str] = None,
+        assigned_at: Optional[str] = None,
+    ) -> Tuple[str, str, bool]:
+        metadata = self._node_metadata.get(node)
+        existing_uuid = metadata.get("uuid") if metadata else None
+        existing_assigned_at = metadata.get("uuid_assigned_at") if metadata else None
+
+        provided_uuid = uuid_value.strip() if isinstance(uuid_value, str) else None
+        uuid_was_missing = False
+        if provided_uuid:
+            normalized_uuid = provided_uuid
+        elif existing_uuid:
+            normalized_uuid = existing_uuid
+        else:
+            normalized_uuid = str(uuid.uuid4())
+            uuid_was_missing = True
+
+        provided_assigned_at = assigned_at.strip() if isinstance(assigned_at, str) else None
+        assigned_at_was_missing = False
+        if provided_assigned_at:
+            normalized_assigned_at = provided_assigned_at
+        elif existing_assigned_at:
+            normalized_assigned_at = existing_assigned_at
+        else:
+            normalized_assigned_at = datetime.now().strftime("%Y-%m-%d")
+            assigned_at_was_missing = True
+
+        previous_uuid = metadata.get("uuid") if metadata else None
+        previous_assigned_at = metadata.get("uuid_assigned_at") if metadata else None
+        if (
+            metadata is None
+            or previous_uuid != normalized_uuid
+            or previous_assigned_at != normalized_assigned_at
+        ):
+            self._node_metadata[node] = {
+                "uuid": normalized_uuid,
+                "uuid_assigned_at": normalized_assigned_at,
+            }
+
+        metadata_changed = uuid_was_missing or assigned_at_was_missing
+        if not metadata_changed and metadata is not None:
+            metadata_changed = (
+                previous_uuid != normalized_uuid
+                or previous_assigned_at != normalized_assigned_at
+            )
+
+        return normalized_uuid, normalized_assigned_at, metadata_changed
+
+    def _remove_node_metadata(self, nodes: Iterable) -> None:
+        for node in nodes:
+            self._node_metadata.pop(node, None)
+
     def _create_task_node(self) -> None:
         self._task_count += 1
         self._create_node("sotugyo.demo.TaskNode", f"タスク {self._task_count}")
@@ -678,6 +737,7 @@ class NodeEditorWindow(QMainWindow):
         node.set_pos(pos_x, pos_y)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
+        self._ensure_node_metadata(node)
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -695,6 +755,7 @@ class NodeEditorWindow(QMainWindow):
             return
         self._graph.delete_nodes(nodes)
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
+        self._remove_node_metadata(nodes)
         self._on_selection_changed()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -968,7 +1029,9 @@ class NodeEditorWindow(QMainWindow):
                 self._graph.delete_nodes(existing_nodes)
             except Exception:
                 pass
+            self._remove_node_metadata(existing_nodes)
         self._known_nodes.clear()
+        self._node_metadata.clear()
         self._node_spawn_offset = 0
         self._task_count = 0
         self._review_count = 0
@@ -988,17 +1051,17 @@ class NodeEditorWindow(QMainWindow):
             self._set_modified(False)
             return
         try:
-            self._load_project_from_path(graph_path)
-            self._set_modified(False)
+            metadata_changed = self._load_project_from_path(graph_path)
+            self._set_modified(bool(metadata_changed))
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._show_error_dialog(f"プロジェクトの読み込みに失敗しました: {exc}")
             self._reset_graph()
             self._set_modified(False)
 
-    def _load_project_from_path(self, path: Path) -> None:
+    def _load_project_from_path(self, path: Path) -> bool:
         with path.open("r", encoding="utf-8") as handle:
             state = json.load(handle)
-        self._apply_project_state(state)
+        return self._apply_project_state(state)
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
@@ -1010,17 +1073,22 @@ class NodeEditorWindow(QMainWindow):
         node_id_map: Dict = {}
         for index, node in enumerate(node_list):
             node_id_map[node] = index
-            node_entries.append(
-                {
-                    "id": index,
-                    "name": self._safe_node_name(node),
-                    "type": self._node_type_identifier(node),
-                    "position": self._safe_node_position(node),
-                }
-            )
+            node_uuid, assigned_at, _ = self._ensure_node_metadata(node)
+            entry = {
+                "id": index,
+                "name": self._safe_node_name(node),
+                "type": self._node_type_identifier(node),
+                "position": self._safe_node_position(node),
+                "uuid": node_uuid,
+            }
+            if assigned_at:
+                entry["uuid_assigned_at"] = assigned_at
+            node_entries.append(entry)
 
         connections = []
-        seen_connections: Set[Tuple[int, str, int, str]] = set()
+        seen_connections: Set[
+            Tuple[int, Optional[int], str, int, Optional[int], str]
+        ] = set()
         for node in node_list:
             for port in self._collect_ports(node, output=True):
                 for connected in self._connected_ports(port):
@@ -1096,7 +1164,7 @@ class NodeEditorWindow(QMainWindow):
 
         self._show_info_dialog("選択したノードを保存しました。")
 
-    def _apply_project_state(self, state: Dict) -> None:
+    def _apply_project_state(self, state: Dict) -> bool:
         nodes_info = state.get("nodes") if isinstance(state, dict) else None
         connections_info = state.get("connections") if isinstance(state, dict) else None
         if not isinstance(nodes_info, list) or not isinstance(connections_info, list):
@@ -1105,13 +1173,16 @@ class NodeEditorWindow(QMainWindow):
         existing_nodes = self._collect_all_nodes()
         if existing_nodes:
             self._graph.delete_nodes(existing_nodes)
+            self._remove_node_metadata(existing_nodes)
 
         self._known_nodes.clear()
+        self._node_metadata.clear()
         self._node_spawn_offset = 0
         self._task_count = 0
         self._review_count = 0
 
         identifier_map: Dict[int, object] = {}
+        metadata_changed = False
         for entry in nodes_info:
             if not isinstance(entry, dict):
                 continue
@@ -1130,6 +1201,15 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(entry_id, int):
                 identifier_map[entry_id] = node
             self._known_nodes.append(node)
+            node_uuid = entry.get("uuid")
+            assigned_at = entry.get("uuid_assigned_at")
+            _, _, changed = self._ensure_node_metadata(
+                node,
+                uuid_value=node_uuid if isinstance(node_uuid, str) else None,
+                assigned_at=assigned_at if isinstance(assigned_at, str) else None,
+            )
+            if changed:
+                metadata_changed = True
 
         for connection in connections_info:
             if not isinstance(connection, dict):
@@ -1162,6 +1242,10 @@ class NodeEditorWindow(QMainWindow):
                 port_index=target_index,
                 output=False,
             )
+            if source_port is None:
+                source_port = self._first_output_port(source_node)
+            if target_port is None:
+                target_port = self._first_input_port(target_node)
             if source_port is None or target_port is None:
                 continue
             try:
@@ -1182,6 +1266,8 @@ class NodeEditorWindow(QMainWindow):
             clear_selection()
         self._on_selection_changed()
         self._refresh_node_catalog()
+
+        return metadata_changed
 
     def _safe_node_name(self, node) -> str:
         if hasattr(node, "name"):
