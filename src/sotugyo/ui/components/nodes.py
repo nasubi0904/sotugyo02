@@ -128,7 +128,8 @@ class MemoNode(BaseNode):
         self._apply_font_size(self.DEFAULT_FONT_SIZE)
         self.set_property("width", 320, push_undo=False)
         self.set_property("height", 240, push_undo=False)
-        self.set_color(255, 250, 220)
+        # 既存より少し暗めのベージュトーンに設定し、視認性を保ちつつ背景との差を付ける。
+        self.set_color(238, 231, 200)
         if hasattr(self.view, "setZValue"):
             self.view.setZValue(-1000)
 
