@@ -70,8 +70,18 @@ class NodeContentBrowser(QWidget):
         self._available_entries: List[Dict[str, str]] = []
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
-        self._icon_size_levels: List[int] = [12, 20, 34, 57, 96]
-        self._icon_size_level: int = 3
+        self._icon_size_levels: Dict[int, int] = {
+            1: 24,
+            2: 32,
+            3: 40,
+            4: 48,
+            5: 64,
+        }
+        self._icon_size_default_level: int = 2
+        self._icon_size_level: int = self._icon_size_default_level
+        self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
+        self._compact_mode: bool = False
+        self._icon_control_container: Optional[QWidget] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -136,7 +146,9 @@ class NodeContentBrowser(QWidget):
         widget.setWrapping(True)
         widget.setWordWrap(True)
         widget.setTextElideMode(Qt.TextElideMode.ElideNone)
-        widget.setIconSize(QSize(self._current_icon_size(), self._current_icon_size()))
+        widget.setIconSize(
+            QSize(self._current_icon_size_value(), self._current_icon_size_value())
+        )
         widget.setSpacing(10)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
@@ -274,6 +286,7 @@ class NodeContentBrowser(QWidget):
         if clamped == self._icon_size_level:
             return
         self._icon_size_level = clamped
+        self._icon_size = self._icon_size_from_level(self._icon_size_level)
         if self._icon_size_slider.value() != clamped:
             self._icon_size_slider.blockSignals(True)
             self._icon_size_slider.setValue(clamped)
@@ -299,6 +312,12 @@ class NodeContentBrowser(QWidget):
         )
         self._icon_size_slider.setToolTip(tooltip)
         self._icon_size_spin.setToolTip(tooltip)
+
+    def _icon_size_from_level(self, level: int) -> int:
+        return self._icon_size_levels.get(
+            level,
+            self._icon_size_levels.get(self._icon_size_default_level, 32),
+        )
 
     def _list_item_size_hint(self) -> QSize:
         if self._compact_mode:
