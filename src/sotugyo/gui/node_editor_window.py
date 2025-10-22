@@ -137,7 +137,7 @@ class NodeContentBrowser(QWidget):
         widget.setWrapping(True)
         widget.setWordWrap(True)
         widget.setTextElideMode(Qt.TextElideMode.ElideNone)
-        widget.setIconSize(QSize(self._icon_size, self._icon_size))
+        widget.setIconSize(QSize(self._current_icon_size(), self._current_icon_size()))
         widget.setSpacing(10)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
@@ -184,16 +184,19 @@ class NodeContentBrowser(QWidget):
         size_label.setProperty("hint", "secondary")
 
         self._icon_size_slider.setParent(container)
-        self._icon_size_slider.setRange(16, 96)
-        self._icon_size_slider.setSingleStep(2)
-        self._icon_size_slider.setPageStep(6)
-        self._icon_size_slider.setValue(self._icon_size)
+        self._icon_size_slider.setRange(1, 5)
+        self._icon_size_slider.setSingleStep(1)
+        self._icon_size_slider.setPageStep(1)
+        self._icon_size_slider.setValue(self._icon_size_level)
+        self._icon_size_slider.setTickInterval(1)
+        self._icon_size_slider.setTickPosition(QSlider.TicksBelow)
         self._icon_size_slider.setTracking(True)
 
         self._icon_size_spin.setParent(container)
-        self._icon_size_spin.setRange(16, 96)
+        self._icon_size_spin.setRange(1, 5)
         self._icon_size_spin.setSingleStep(1)
-        self._icon_size_spin.setValue(self._icon_size)
+        self._icon_size_spin.setValue(self._icon_size_level)
+        self._icon_size_spin.setSuffix("x")
 
         layout.addWidget(size_label)
         layout.addWidget(self._icon_size_slider, 1)
@@ -269,9 +272,9 @@ class NodeContentBrowser(QWidget):
 
     def _on_icon_size_changed(self, value: int) -> None:
         clamped = max(self._icon_size_spin.minimum(), min(value, self._icon_size_spin.maximum()))
-        if clamped == self._icon_size:
+        if clamped == self._icon_size_level:
             return
-        self._icon_size = clamped
+        self._icon_size_level = clamped
         if self._icon_size_slider.value() != clamped:
             self._icon_size_slider.blockSignals(True)
             self._icon_size_slider.setValue(clamped)
