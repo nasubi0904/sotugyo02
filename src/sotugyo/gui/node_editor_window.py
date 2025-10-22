@@ -307,7 +307,7 @@ class NodeContentBrowser(QWidget):
             if item is not None:
                 item.setSizeHint(item_size)
         tooltip = (
-            f"表示サイズ: {icon_length}px"
+            f"表示サイズ: {icon_size_value}px"
             f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
         )
         self._icon_size_slider.setToolTip(tooltip)
@@ -319,6 +319,11 @@ class NodeContentBrowser(QWidget):
             self._icon_size_levels.get(self._icon_size_default_level, 32),
         )
 
+    def _current_icon_size_value(self) -> int:
+        """現在のアイコン表示サイズ（ピクセル）を返す。"""
+
+        return self._icon_size
+
     def _list_item_size_hint(self) -> QSize:
         if self._compact_mode:
             height = max(40, self._current_icon_size_value() + 16)
@@ -329,10 +334,6 @@ class NodeContentBrowser(QWidget):
         width = max(180, self._icon_size + 132)
         height = max(72, self._icon_size + 32)
         return QSize(width, height)
-
-    def _current_icon_size(self) -> int:
-        level_index = max(1, min(self._icon_size_level, len(self._icon_size_levels))) - 1
-        return self._icon_size_levels[level_index]
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
