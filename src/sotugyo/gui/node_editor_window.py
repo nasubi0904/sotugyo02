@@ -12,7 +12,13 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QKeySequence,
+    QResizeEvent,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -65,9 +71,12 @@ class NodeContentBrowser(QWidget):
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
         self._icon_size: int = 32
+        self._compact_mode: bool = False
+        self._icon_control_container: Optional[QWidget] = None
 
         self._setup_ui()
         self._connect_signals()
+        self._update_layout_for_size(self.size())
 
     def _setup_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
@@ -166,6 +175,7 @@ class NodeContentBrowser(QWidget):
 
     def _create_icon_size_control(self, parent: QWidget) -> QWidget:
         container = QWidget(parent)
+        self._icon_control_container = container
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -201,18 +211,24 @@ class NodeContentBrowser(QWidget):
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
         self._available_list.clear()
+        alignment = Qt.AlignLeft | Qt.AlignTop
         for entry in entries:
             title = entry.get("title", "")
             subtitle = entry.get("subtitle", "")
             node_type = entry.get("type", "")
-            item = QListWidgetItem(f"{title}\n{subtitle}")
+            item = QListWidgetItem(self._format_entry_text(entry))
             item.setData(Qt.UserRole, node_type)
+            searchable = "\n".join(
+                part for part in (title, subtitle, node_type) if part
+            ).lower()
+            item.setData(Qt.UserRole + 1, searchable)
             item.setToolTip(node_type)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            item.setTextAlignment(alignment)
             item.setSizeHint(self._list_item_size_hint())
             self._available_list.addItem(item)
         self._apply_filter()
         self._apply_icon_size()
+        self._update_item_texts()
 
     def focus_search(self) -> None:
         self._search_line.setFocus()
@@ -236,8 +252,10 @@ class NodeContentBrowser(QWidget):
             item = self._available_list.item(index)
             if item is None:
                 continue
-            text = item.text().lower()
-            item.setHidden(bool(keyword) and keyword not in text)
+            search_text = item.data(Qt.UserRole + 1)
+            if not isinstance(search_text, str):
+                search_text = item.text().lower()
+            item.setHidden(bool(keyword) and keyword not in search_text)
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
@@ -265,18 +283,95 @@ class NodeContentBrowser(QWidget):
         self._apply_icon_size()
 
     def _apply_icon_size(self) -> None:
-        icon_size = QSize(self._icon_size, self._icon_size)
+        icon_size_value = self._current_icon_size_value()
+        icon_size = QSize(icon_size_value, icon_size_value)
         self._available_list.setIconSize(icon_size)
         item_size = self._list_item_size_hint()
         for index in range(self._available_list.count()):
             item = self._available_list.item(index)
             if item is not None:
                 item.setSizeHint(item_size)
+        if self._compact_mode:
+            self._available_list.setGridSize(QSize())
+        else:
+            self._available_list.setGridSize(item_size)
+
+    def _current_icon_size_value(self) -> int:
+        if self._compact_mode:
+            return min(28, max(20, self._icon_size))
+        return self._icon_size
 
     def _list_item_size_hint(self) -> QSize:
+        if self._compact_mode:
+            height = max(40, self._current_icon_size_value() + 16)
+            viewport_width = self._available_list.viewport().width()
+            if viewport_width <= 0:
+                viewport_width = self.width() - 40
+            return QSize(max(160, viewport_width), height)
         width = max(180, self._icon_size + 132)
         height = max(72, self._icon_size + 32)
         return QSize(width, height)
+
+    def _current_alignment(self) -> Qt.Alignment:
+        if self._compact_mode:
+            return Qt.AlignLeft | Qt.AlignVCenter
+        return Qt.AlignLeft | Qt.AlignTop
+
+    def _format_entry_text(self, entry: Mapping[str, str]) -> str:
+        title = entry.get("title", "")
+        subtitle = entry.get("subtitle", "")
+        if self._compact_mode or not subtitle:
+            return title
+        return f"{title}\n{subtitle}" if subtitle else title
+
+    def _update_item_texts(self) -> None:
+        alignment = self._current_alignment()
+        for index, entry in enumerate(self._available_entries):
+            item = self._available_list.item(index)
+            if item is None:
+                continue
+            item.setText(self._format_entry_text(entry))
+            item.setTextAlignment(alignment)
+            item.setSizeHint(self._list_item_size_hint())
+
+    def _apply_compact_mode(self, compact: bool) -> None:
+        if compact == self._compact_mode:
+            return
+        self._compact_mode = compact
+        if compact:
+            self._available_list.setViewMode(QListWidget.ListMode)
+            self._available_list.setWrapping(False)
+            self._available_list.setUniformItemSizes(True)
+            self._available_list.setWordWrap(False)
+            self._available_list.setSpacing(4)
+            self._available_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+            self._available_list.setAlternatingRowColors(True)
+            if self._icon_control_container is not None:
+                self._icon_control_container.hide()
+            self._icon_size_slider.setEnabled(False)
+            self._icon_size_spin.setEnabled(False)
+        else:
+            self._available_list.setViewMode(QListWidget.IconMode)
+            self._available_list.setWrapping(True)
+            self._available_list.setUniformItemSizes(False)
+            self._available_list.setWordWrap(True)
+            self._available_list.setSpacing(10)
+            self._available_list.setTextElideMode(Qt.TextElideMode.ElideNone)
+            self._available_list.setAlternatingRowColors(False)
+            if self._icon_control_container is not None:
+                self._icon_control_container.show()
+            self._icon_size_slider.setEnabled(True)
+            self._icon_size_spin.setEnabled(True)
+        self._update_item_texts()
+        self._apply_icon_size()
+
+    def _update_layout_for_size(self, size: QSize) -> None:
+        compact = size.width() < 520 or size.height() < 280
+        self._apply_compact_mode(compact)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        self._update_layout_for_size(event.size())
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
