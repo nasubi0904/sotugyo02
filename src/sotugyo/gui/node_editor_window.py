@@ -195,7 +195,7 @@ class NodeContentBrowser(QWidget):
         size_label.setProperty("hint", "secondary")
 
         self._icon_size_slider.setParent(container)
-        self._icon_size_slider.setRange(1, 5)
+        self._icon_size_slider.setRange(1, len(self._icon_size_levels))
         self._icon_size_slider.setSingleStep(1)
         self._icon_size_slider.setPageStep(1)
         self._icon_size_slider.setValue(self._icon_size_level)
@@ -204,10 +204,10 @@ class NodeContentBrowser(QWidget):
         self._icon_size_slider.setTracking(True)
 
         self._icon_size_spin.setParent(container)
-        self._icon_size_spin.setRange(1, 5)
+        self._icon_size_spin.setRange(1, len(self._icon_size_levels))
         self._icon_size_spin.setSingleStep(1)
         self._icon_size_spin.setValue(self._icon_size_level)
-        self._icon_size_spin.setSuffix("x")
+        self._icon_size_spin.setSuffix(" 段階")
 
         layout.addWidget(size_label)
         layout.addWidget(self._icon_size_slider, 1)
@@ -306,15 +306,12 @@ class NodeContentBrowser(QWidget):
             item = self._available_list.item(index)
             if item is not None:
                 item.setSizeHint(item_size)
-        if self._compact_mode:
-            self._available_list.setGridSize(QSize())
-        else:
-            self._available_list.setGridSize(item_size)
-
-    def _current_icon_size_value(self) -> int:
-        if self._compact_mode:
-            return min(28, max(20, self._icon_size))
-        return self._icon_size
+        tooltip = (
+            f"表示サイズ: {icon_length}px"
+            f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
+        )
+        self._icon_size_slider.setToolTip(tooltip)
+        self._icon_size_spin.setToolTip(tooltip)
 
     def _icon_size_from_level(self, level: int) -> int:
         return self._icon_size_levels.get(
@@ -333,66 +330,9 @@ class NodeContentBrowser(QWidget):
         height = max(72, self._icon_size + 32)
         return QSize(width, height)
 
-    def _current_alignment(self) -> Qt.Alignment:
-        if self._compact_mode:
-            return Qt.AlignLeft | Qt.AlignVCenter
-        return Qt.AlignLeft | Qt.AlignTop
-
-    def _format_entry_text(self, entry: Mapping[str, str]) -> str:
-        title = entry.get("title", "")
-        subtitle = entry.get("subtitle", "")
-        if self._compact_mode or not subtitle:
-            return title
-        return f"{title}\n{subtitle}" if subtitle else title
-
-    def _update_item_texts(self) -> None:
-        alignment = self._current_alignment()
-        for index, entry in enumerate(self._available_entries):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
-            item.setText(self._format_entry_text(entry))
-            item.setTextAlignment(alignment)
-            item.setSizeHint(self._list_item_size_hint())
-
-    def _apply_compact_mode(self, compact: bool) -> None:
-        if compact == self._compact_mode:
-            return
-        self._compact_mode = compact
-        if compact:
-            self._available_list.setViewMode(QListWidget.ListMode)
-            self._available_list.setWrapping(False)
-            self._available_list.setUniformItemSizes(True)
-            self._available_list.setWordWrap(False)
-            self._available_list.setSpacing(4)
-            self._available_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-            self._available_list.setAlternatingRowColors(True)
-            if self._icon_control_container is not None:
-                self._icon_control_container.hide()
-            self._icon_size_slider.setEnabled(False)
-            self._icon_size_spin.setEnabled(False)
-        else:
-            self._available_list.setViewMode(QListWidget.IconMode)
-            self._available_list.setWrapping(True)
-            self._available_list.setUniformItemSizes(False)
-            self._available_list.setWordWrap(True)
-            self._available_list.setSpacing(10)
-            self._available_list.setTextElideMode(Qt.TextElideMode.ElideNone)
-            self._available_list.setAlternatingRowColors(False)
-            if self._icon_control_container is not None:
-                self._icon_control_container.show()
-            self._icon_size_slider.setEnabled(True)
-            self._icon_size_spin.setEnabled(True)
-        self._update_item_texts()
-        self._apply_icon_size()
-
-    def _update_layout_for_size(self, size: QSize) -> None:
-        compact = size.width() < 520 or size.height() < 280
-        self._apply_compact_mode(compact)
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # type: ignore[override]
-        super().resizeEvent(event)
-        self._update_layout_for_size(event.size())
+    def _current_icon_size(self) -> int:
+        level_index = max(1, min(self._icon_size_level, len(self._icon_size_levels))) - 1
+        return self._icon_size_levels[level_index]
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
