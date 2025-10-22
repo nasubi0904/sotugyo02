@@ -157,7 +157,7 @@ class NodeContentBrowser(QWidget):
         widget.setIconSize(
             QSize(self._current_icon_size_value(), self._current_icon_size_value())
         )
-        widget.setSpacing(10)
+        widget.setSpacing(12)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
