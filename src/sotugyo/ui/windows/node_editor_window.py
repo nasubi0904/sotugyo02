@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QTextEdit,
     QSizePolicy,
     QTabWidget,
     QVBoxLayout,
@@ -48,7 +49,7 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ..components.nodes import ReviewNode, TaskNode
+from ..components.nodes import MemoNode, ReviewNode, TaskNode
 from ...domain.projects.service import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
 from ...domain.users.settings import UserAccount, UserSettingsManager
@@ -422,6 +423,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph = NodeGraph()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
+        self._graph.register_node(MemoNode)
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -429,6 +431,7 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset = 0
         self._task_count = 0
         self._review_count = 0
+        self._memo_count = 0
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
@@ -447,11 +450,15 @@ class NodeEditorWindow(QMainWindow):
         self._detail_uuid_label: Optional[QLabel] = None
         self._rename_input: Optional[QLineEdit] = None
         self._rename_button: Optional[QPushButton] = None
+        self._memo_text_edit: Optional[QTextEdit] = None
+        self._memo_font_spin: Optional[QSpinBox] = None
+        self._memo_controls_active = False
         self._content_browser: Optional[NodeContentBrowser] = None
         self._shortcuts: List[QShortcut] = []
         self._node_type_creators = {
             "sotugyo.demo.TaskNode": self._create_task_node,
             "sotugyo.demo.ReviewNode": self._create_review_node,
+            MemoNode.node_type_identifier(): self._create_memo_node,
         }
         self._inspector_dock: Optional[QDockWidget] = None
         self._content_dock: Optional[QDockWidget] = None
@@ -609,6 +616,30 @@ class NodeEditorWindow(QMainWindow):
         layout.addWidget(rename_label)
         layout.addWidget(self._rename_input)
         layout.addWidget(self._rename_button)
+
+        memo_label = QLabel("メモ編集", widget)
+        memo_label.setObjectName("panelTitle")
+        layout.addWidget(memo_label)
+
+        self._memo_text_edit = QTextEdit(widget)
+        self._memo_text_edit.setAcceptRichText(False)
+        self._memo_text_edit.setPlaceholderText("メモノードの内容を入力")
+        self._memo_text_edit.setMinimumHeight(140)
+        self._memo_text_edit.textChanged.connect(self._handle_memo_text_changed)
+        layout.addWidget(self._memo_text_edit)
+
+        memo_font_layout = QHBoxLayout()
+        memo_font_label = QLabel("文字サイズ", widget)
+        self._memo_font_spin = QSpinBox(widget)
+        self._memo_font_spin.setRange(MemoNode.MIN_FONT_SIZE, MemoNode.MAX_FONT_SIZE)
+        self._memo_font_spin.setValue(MemoNode.DEFAULT_FONT_SIZE)
+        self._memo_font_spin.valueChanged.connect(self._handle_memo_font_size_changed)
+        memo_font_layout.addWidget(memo_font_label)
+        memo_font_layout.addWidget(self._memo_font_spin)
+        layout.addLayout(memo_font_layout)
+
+        self._set_memo_controls_enabled(False)
+
         layout.addStretch(1)
 
         return widget
@@ -775,6 +806,11 @@ class NodeEditorWindow(QMainWindow):
                 "title": ReviewNode.NODE_NAME,
                 "subtitle": "成果物を検証するレビューノード",
             },
+            {
+                "type": MemoNode.node_type_identifier(),
+                "title": MemoNode.NODE_NAME,
+                "subtitle": "ノードエディタ上で自由に記述できるメモ",
+            },
         ]
 
     def _open_graph_context_menu(self, position: QPoint) -> None:
@@ -785,6 +821,9 @@ class NodeEditorWindow(QMainWindow):
 
         add_review_action = menu.addAction("レビューノードを追加")
         add_review_action.triggered.connect(self._create_review_node)
+
+        add_memo_action = menu.addAction("メモノードを追加")
+        add_memo_action.triggered.connect(self._create_memo_node)
 
         menu.addSeparator()
 
@@ -910,6 +949,10 @@ class NodeEditorWindow(QMainWindow):
     def _create_review_node(self) -> None:
         self._review_count += 1
         self._create_node("sotugyo.demo.ReviewNode", f"レビュー {self._review_count}")
+
+    def _create_memo_node(self) -> None:
+        self._memo_count += 1
+        self._create_node(MemoNode.node_type_identifier(), f"メモ {self._memo_count}")
 
     def _create_asset_node(self, asset_name: str) -> None:
         title = asset_name.strip() or "アセット"
@@ -1172,6 +1215,7 @@ class NodeEditorWindow(QMainWindow):
                 self._rename_input.setEnabled(False)
             if self._rename_button is not None:
                 self._rename_button.setEnabled(False)
+            self._update_memo_controls(None)
             return
 
         name = node.name() if hasattr(node, "name") else str(node)
@@ -1207,6 +1251,8 @@ class NodeEditorWindow(QMainWindow):
         if self._rename_button is not None:
             self._rename_button.setEnabled(True)
 
+        self._update_memo_controls(node)
+
     def _apply_node_rename(self) -> None:
         if self._current_node is None or self._rename_input is None:
             self._show_info_dialog("名前を変更するノードを選択してください。")
@@ -1222,6 +1268,83 @@ class NodeEditorWindow(QMainWindow):
         self._update_selected_node_info()
         self._set_modified(True)
         self._refresh_node_catalog()
+
+    def _handle_memo_text_changed(self) -> None:
+        if self._memo_controls_active or self._memo_text_edit is None:
+            return
+        if self._current_node is None or not self._is_memo_node(self._current_node):
+            return
+        text = self._memo_text_edit.toPlainText()
+        try:
+            current = self._current_node.get_property("memo_text")
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            current = None
+        if current == text:
+            return
+        try:
+            self._current_node.set_property("memo_text", text)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモテキストの更新に失敗しました", exc_info=True)
+            return
+        self._set_modified(True)
+
+    def _handle_memo_font_size_changed(self, value: int) -> None:
+        if self._memo_controls_active or self._memo_font_spin is None:
+            return
+        if self._current_node is None or not self._is_memo_node(self._current_node):
+            return
+        try:
+            current = self._current_node.get_property("memo_font_size")
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            current = None
+        if current == value:
+            return
+        try:
+            self._current_node.set_property("memo_font_size", value)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
+            return
+        self._set_modified(True)
+
+    def _set_memo_controls_enabled(self, enabled: bool) -> None:
+        if self._memo_text_edit is not None:
+            self._memo_text_edit.setEnabled(enabled)
+        if self._memo_font_spin is not None:
+            self._memo_font_spin.setEnabled(enabled)
+
+    def _update_memo_controls(self, node) -> None:
+        if self._memo_text_edit is None or self._memo_font_spin is None:
+            return
+        is_memo = self._is_memo_node(node)
+        self._memo_controls_active = True
+        if not is_memo:
+            self._memo_text_edit.setPlainText("")
+            self._memo_font_spin.setValue(MemoNode.DEFAULT_FONT_SIZE)
+            self._set_memo_controls_enabled(False)
+            self._memo_controls_active = False
+            return
+
+        self._set_memo_controls_enabled(True)
+        try:
+            memo_text = node.get_property("memo_text")
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            memo_text = ""
+        try:
+            font_size = node.get_property("memo_font_size")
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            font_size = MemoNode.DEFAULT_FONT_SIZE
+        self._memo_text_edit.setPlainText(str(memo_text or ""))
+        try:
+            normalized_size = int(font_size)
+        except (TypeError, ValueError):
+            normalized_size = MemoNode.DEFAULT_FONT_SIZE
+        self._memo_font_spin.setValue(normalized_size)
+        self._memo_controls_active = False
+
+    def _is_memo_node(self, node) -> bool:
+        if node is None:
+            return False
+        return self._node_type_identifier(node) == MemoNode.node_type_identifier()
 
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
@@ -1297,6 +1420,7 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset = 0
         self._task_count = 0
         self._review_count = 0
+        self._memo_count = 0
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             try:
@@ -1347,6 +1471,9 @@ class NodeEditorWindow(QMainWindow):
             }
             if assigned_at:
                 entry["uuid_assigned_at"] = assigned_at
+            custom_props = self._node_custom_properties(node)
+            if custom_props:
+                entry["custom_properties"] = custom_props
             node_entries.append(entry)
 
         connections = []
@@ -1482,6 +1609,13 @@ class NodeEditorWindow(QMainWindow):
             uuid_map[normalized_uuid] = node
             if changed:
                 metadata_changed = True
+            custom_props = entry.get("custom_properties")
+            if isinstance(custom_props, dict):
+                for key, value in custom_props.items():
+                    try:
+                        node.set_property(key, value, push_undo=False)
+                    except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                        LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
 
         failed_operations: List[str] = []
 
@@ -1580,6 +1714,9 @@ class NodeEditorWindow(QMainWindow):
         self._review_count = sum(
             1 for node in self._known_nodes if self._node_type_identifier(node) == "sotugyo.demo.ReviewNode"
         )
+        self._memo_count = sum(
+            1 for node in self._known_nodes if self._node_type_identifier(node) == MemoNode.node_type_identifier()
+        )
 
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
@@ -1602,6 +1739,27 @@ class NodeEditorWindow(QMainWindow):
             except Exception:
                 pass
         return str(node)
+
+    def _node_custom_properties(self, node) -> Dict[str, object]:
+        model = getattr(node, "model", None)
+        if model is None:
+            return {}
+        props = getattr(model, "custom_properties", None)
+        if callable(props):
+            try:
+                props = props()
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                props = None
+        if not isinstance(props, dict):
+            return {}
+        serializable: Dict[str, object] = {}
+        for key, value in props.items():
+            if isinstance(key, str):
+                if isinstance(value, (str, int, float, bool)) or value is None:
+                    serializable[key] = value
+                else:
+                    serializable[key] = str(value)
+        return serializable
 
     def _node_type_identifier(self, node) -> str:
         type_getter = getattr(node, "type_", None)
