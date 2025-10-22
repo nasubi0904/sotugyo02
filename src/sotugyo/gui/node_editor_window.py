@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -86,6 +87,13 @@ class NodeContentBrowser(QWidget):
         self._setup_ui()
         self._connect_signals()
         self._update_layout_for_size(self.size())
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: D401
+        """ウィジェットのリサイズイベントを処理する。"""
+
+        super().resizeEvent(event)
+        if event is not None:
+            self._update_layout_for_size(event.size())
 
     def _setup_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
@@ -334,6 +342,64 @@ class NodeContentBrowser(QWidget):
         width = max(180, self._icon_size + 132)
         height = max(72, self._icon_size + 32)
         return QSize(width, height)
+
+    def _update_layout_for_size(self, size: QSize) -> None:
+        """ウィジェット幅に応じてレイアウトモードを切り替える。"""
+
+        width = size.width() if size is not None else self.width()
+        compact_threshold = 520
+        compact_mode = width < compact_threshold
+        mode_changed = compact_mode != self._compact_mode
+        self._compact_mode = compact_mode
+
+        if self._icon_control_container is not None:
+            self._icon_control_container.setVisible(not self._compact_mode)
+
+        if mode_changed:
+            if self._compact_mode:
+                self._available_list.setViewMode(QListWidget.ListMode)
+                self._available_list.setFlow(QListView.TopToBottom)
+                self._available_list.setWrapping(False)
+            else:
+                self._available_list.setViewMode(QListWidget.IconMode)
+                self._available_list.setFlow(QListView.LeftToRight)
+                self._available_list.setWrapping(True)
+
+        self._apply_icon_size()
+        self._update_item_texts()
+
+    def _format_entry_text(self, entry: Mapping[str, str]) -> str:
+        """エントリー情報を表示用文字列に整形する。"""
+
+        title = (entry.get("title", "") or "").strip()
+        subtitle = (entry.get("subtitle", "") or "").strip()
+        node_type = (entry.get("type", "") or "").strip()
+
+        if self._compact_mode:
+            parts: List[str] = []
+            if title:
+                parts.append(title)
+            if subtitle:
+                parts.append(subtitle)
+            if not parts and node_type:
+                parts.append(node_type)
+            return " – ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
+
+        lines = [text for text in (title, subtitle) if text]
+        if not lines and node_type:
+            lines.append(node_type)
+        return "\n".join(lines)
+
+    def _update_item_texts(self) -> None:
+        """現在表示中の項目テキストを再整形する。"""
+
+        item_size = self._list_item_size_hint()
+        for index, entry in enumerate(self._available_entries):
+            item = self._available_list.item(index)
+            if item is None:
+                continue
+            item.setText(self._format_entry_text(entry))
+            item.setSizeHint(item_size)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
