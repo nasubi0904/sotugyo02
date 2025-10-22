@@ -48,13 +48,13 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from .nodes import ReviewNode, TaskNode
-from ..settings.project_service import ProjectContext, ProjectService
-from ..settings.project_settings import ProjectSettings
-from ..settings.user_settings import UserAccount, UserSettingsManager
-from .project_settings_dialog import ProjectSettingsDialog
-from .style import apply_base_style
-from .user_settings_dialog import UserSettingsDialog
+from ..components.nodes import ReviewNode, TaskNode
+from ...domain.projects.service import ProjectContext, ProjectService
+from ...domain.projects.settings import ProjectSettings
+from ...domain.users.settings import UserAccount, UserSettingsManager
+from ..dialogs.project_settings_dialog import ProjectSettingsDialog
+from ..dialogs.user_settings_dialog import UserSettingsDialog
+from ..style import apply_base_style
 
 
 class NodeContentBrowser(QWidget):

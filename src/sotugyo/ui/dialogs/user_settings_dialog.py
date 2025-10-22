@@ -21,8 +21,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..settings.user_settings import UserAccount, UserSettingsManager
-from .style import apply_base_style
+from ...domain.users.settings import UserAccount, UserSettingsManager
+from ..style import apply_base_style
 
 
 class UserSettingsDialog(QDialog):

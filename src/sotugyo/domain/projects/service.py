@@ -7,9 +7,9 @@ from os import PathLike
 from pathlib import Path
 from typing import Optional, Union
 
-from .project_registry import ProjectRecord, ProjectRegistry
-from .project_settings import ProjectSettings, load_project_settings, save_project_settings
-from .project_structure import (
+from .registry import ProjectRecord, ProjectRegistry
+from .settings import ProjectSettings, load_project_settings, save_project_settings
+from .structure import (
     ProjectStructureReport,
     ensure_project_structure,
     validate_project_structure,
