@@ -25,6 +25,14 @@
 AI エージェントは担当タスクに紐づくジャンルのディレクトリ内のファイルのみを編集し、関係しないジャンルのファイルやフォルダには変更を加えないこと。
 また、作業開始時にどのファイルを編集するか明示すること。
 
+ジャンルごとに配置した `about.md` を必ず確認してから該当ディレクトリで作業すること。
+- `src/sotugyo/domain/projects/about.md`
+- `src/sotugyo/domain/users/about.md`
+- `src/sotugyo/infrastructure/paths/about.md`
+- `src/sotugyo/ui/windows/about.md`
+- `src/sotugyo/ui/components/about.md`
+- `src/sotugyo/ui/dialogs/about.md`
+
 ## 開発環境情報
 - `pip list` の結果（2025-10-21 時点）
   - NodeGraphQt 0.6.43
