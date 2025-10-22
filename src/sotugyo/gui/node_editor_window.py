@@ -12,7 +12,13 @@ from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QKeySequence, QShortcut
+from PySide6.QtGui import (
+    QAction,
+    QCloseEvent,
+    QKeySequence,
+    QResizeEvent,
+    QShortcut,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -69,6 +75,7 @@ class NodeContentBrowser(QWidget):
 
         self._setup_ui()
         self._connect_signals()
+        self._update_layout_for_size(self.size())
 
     def _setup_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
@@ -167,6 +174,7 @@ class NodeContentBrowser(QWidget):
 
     def _create_icon_size_control(self, parent: QWidget) -> QWidget:
         container = QWidget(parent)
+        self._icon_control_container = container
         layout = QHBoxLayout(container)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -205,18 +213,24 @@ class NodeContentBrowser(QWidget):
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
         self._available_list.clear()
+        alignment = Qt.AlignLeft | Qt.AlignTop
         for entry in entries:
             title = entry.get("title", "")
             subtitle = entry.get("subtitle", "")
             node_type = entry.get("type", "")
-            item = QListWidgetItem(f"{title}\n{subtitle}")
+            item = QListWidgetItem(self._format_entry_text(entry))
             item.setData(Qt.UserRole, node_type)
+            searchable = "\n".join(
+                part for part in (title, subtitle, node_type) if part
+            ).lower()
+            item.setData(Qt.UserRole + 1, searchable)
             item.setToolTip(node_type)
-            item.setTextAlignment(Qt.AlignLeft | Qt.AlignTop)
+            item.setTextAlignment(alignment)
             item.setSizeHint(self._list_item_size_hint())
             self._available_list.addItem(item)
         self._apply_filter()
         self._apply_icon_size()
+        self._update_item_texts()
 
     def focus_search(self) -> None:
         self._search_line.setFocus()
@@ -240,8 +254,10 @@ class NodeContentBrowser(QWidget):
             item = self._available_list.item(index)
             if item is None:
                 continue
-            text = item.text().lower()
-            item.setHidden(bool(keyword) and keyword not in text)
+            search_text = item.data(Qt.UserRole + 1)
+            if not isinstance(search_text, str):
+                search_text = item.text().lower()
+            item.setHidden(bool(keyword) and keyword not in search_text)
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
@@ -269,8 +285,8 @@ class NodeContentBrowser(QWidget):
         self._apply_icon_size()
 
     def _apply_icon_size(self) -> None:
-        icon_length = self._current_icon_size()
-        icon_size = QSize(icon_length, icon_length)
+        icon_size_value = self._current_icon_size_value()
+        icon_size = QSize(icon_size_value, icon_size_value)
         self._available_list.setIconSize(icon_size)
         item_size = self._list_item_size_hint()
         for index in range(self._available_list.count()):
@@ -285,9 +301,14 @@ class NodeContentBrowser(QWidget):
         self._icon_size_spin.setToolTip(tooltip)
 
     def _list_item_size_hint(self) -> QSize:
-        icon_length = self._current_icon_size()
-        width = max(180, icon_length + 132)
-        height = max(72, icon_length + 32)
+        if self._compact_mode:
+            height = max(40, self._current_icon_size_value() + 16)
+            viewport_width = self._available_list.viewport().width()
+            if viewport_width <= 0:
+                viewport_width = self.width() - 40
+            return QSize(max(160, viewport_width), height)
+        width = max(180, self._icon_size + 132)
+        height = max(72, self._icon_size + 32)
         return QSize(width, height)
 
     def _current_icon_size(self) -> int:
