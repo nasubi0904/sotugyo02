@@ -224,6 +224,12 @@ QListWidget::item {
     border-radius: 10px;
     padding: 8px;
 }
+QListWidget#contentList {
+    padding: 4px 6px;
+}
+QListWidget#contentList::item {
+    padding: 4px;
+}
 QListWidget::item:selected {
     background-color: rgba(99, 163, 255, 0.28);
 }
