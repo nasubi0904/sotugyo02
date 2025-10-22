@@ -15,6 +15,7 @@ from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
+    QFontMetrics,
     QKeySequence,
     QResizeEvent,
     QShortcut,
@@ -309,11 +310,7 @@ class NodeContentBrowser(QWidget):
         icon_size_value = self._current_icon_size_value()
         icon_size = QSize(icon_size_value, icon_size_value)
         self._available_list.setIconSize(icon_size)
-        item_size = self._list_item_size_hint()
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is not None:
-                item.setSizeHint(item_size)
+        self._refresh_item_sizes()
         tooltip = (
             f"表示サイズ: {icon_size_value}px"
             f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
@@ -333,14 +330,31 @@ class NodeContentBrowser(QWidget):
         return self._icon_size
 
     def _list_item_size_hint(self) -> QSize:
+        font: QFontMetrics = self._available_list.fontMetrics()
+        icon_size = self._current_icon_size_value()
+        viewport = self._available_list.viewport()
+        viewport_width = viewport.width() if viewport is not None else 0
+        if viewport_width <= 0:
+            viewport_width = max(self.width() - 40, icon_size + 64)
+
+        line_spacing = font.lineSpacing()
+        leading = font.leading()
+
         if self._compact_mode:
-            height = max(40, self._current_icon_size_value() + 16)
-            viewport_width = self._available_list.viewport().width()
-            if viewport_width <= 0:
-                viewport_width = self.width() - 40
-            return QSize(max(160, viewport_width), height)
-        width = max(180, self._icon_size + 132)
-        height = max(72, self._icon_size + 32)
+            vertical_padding = max(12, leading + 8)
+            text_lines = 2
+            text_height = line_spacing * text_lines
+            height = max(icon_size + vertical_padding, text_height + vertical_padding)
+            width = max(100, viewport_width)
+            return QSize(width, height)
+
+        vertical_padding = max(20, leading + 16)
+        text_lines = 2
+        text_block_width = font.horizontalAdvance("M" * 16)
+        min_width = icon_size + font.averageCharWidth() * 8 + 32
+        width = max(min_width, min(viewport_width, text_block_width + 32))
+        text_height = line_spacing * text_lines
+        height = max(icon_size + vertical_padding, text_height + vertical_padding)
         return QSize(width, height)
 
     def _update_layout_for_size(self, size: QSize) -> None:
@@ -366,6 +380,7 @@ class NodeContentBrowser(QWidget):
                 self._available_list.setWrapping(True)
 
         self._apply_icon_size()
+        self._refresh_item_sizes()
         self._update_item_texts()
 
     def _format_entry_text(self, entry: Mapping[str, str]) -> str:
@@ -393,13 +408,26 @@ class NodeContentBrowser(QWidget):
     def _update_item_texts(self) -> None:
         """現在表示中の項目テキストを再整形する。"""
 
-        item_size = self._list_item_size_hint()
         for index, entry in enumerate(self._available_entries):
             item = self._available_list.item(index)
             if item is None:
                 continue
             item.setText(self._format_entry_text(entry))
-            item.setSizeHint(item_size)
+        self._refresh_item_sizes()
+
+    def _refresh_item_sizes(self) -> None:
+        """リスト項目のサイズヒントを再計算して反映する。"""
+
+        item_size = self._list_item_size_hint()
+        for index in range(self._available_list.count()):
+            item = self._available_list.item(index)
+            if item is not None:
+                item.setSizeHint(item_size)
+        self._available_list.updateGeometry()
+        self._available_list.scheduleDelayedItemsLayout()
+        viewport = self._available_list.viewport()
+        if viewport is not None:
+            viewport.update()
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
