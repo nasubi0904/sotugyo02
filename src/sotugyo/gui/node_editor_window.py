@@ -806,6 +806,50 @@ class NodeEditorWindow(QMainWindow):
     # ------------------------------------------------------------------
     # 接続処理
     # ------------------------------------------------------------------
+    def _connect_ports_compat(self, source_port: Port, target_port: Port) -> None:
+        """NodeGraphQt のバージョン差異を吸収してポートを接続する。"""
+
+        connect_ports = getattr(self._graph, "connect_ports", None)
+        try:
+            if callable(connect_ports):
+                connect_ports(source_port, target_port)
+            else:
+                fallback = getattr(source_port, "connect_to", None)
+                if not callable(fallback):  # pragma: no cover - 保険的分岐
+                    raise AttributeError("connect_ports API が利用できません")
+                fallback(target_port)
+        except Exception as exc:  # pragma: no cover - Qt 依存の例外
+            LOGGER.warning(
+                "ポート接続に失敗しました（source=%s, target=%s）: %s",
+                self._describe_port(source_port),
+                self._describe_port(target_port),
+                exc,
+                exc_info=True,
+            )
+            raise
+
+    def _disconnect_ports_compat(self, source_port: Port, target_port: Port) -> None:
+        """NodeGraphQt のバージョン差異を吸収してポートを切断する。"""
+
+        disconnect_ports = getattr(self._graph, "disconnect_ports", None)
+        try:
+            if callable(disconnect_ports):
+                disconnect_ports(source_port, target_port)
+            else:
+                fallback = getattr(source_port, "disconnect_from", None)
+                if not callable(fallback):  # pragma: no cover - 保険的分岐
+                    raise AttributeError("disconnect_ports API が利用できません")
+                fallback(target_port)
+        except Exception as exc:  # pragma: no cover - Qt 依存の例外
+            LOGGER.warning(
+                "ポート切断に失敗しました（source=%s, target=%s）: %s",
+                self._describe_port(source_port),
+                self._describe_port(target_port),
+                exc,
+                exc_info=True,
+            )
+            raise
+
     def _connect_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
         if len(nodes) != 2:
@@ -818,7 +862,7 @@ class NodeEditorWindow(QMainWindow):
         if not source_port or not target_port:
             self._show_info_dialog("接続できるポートが見つかりませんでした。")
             return
-        self._graph.connect_ports(source_port, target_port)
+        self._connect_ports_compat(source_port, target_port)
         self._set_modified(True)
 
     def _disconnect_selected_nodes(self) -> None:
@@ -837,7 +881,7 @@ class NodeEditorWindow(QMainWindow):
         disconnected = False
         for connected_port in list(source_port.connected_ports()):
             if connected_port.node() is target:
-                self._graph.disconnect_ports(source_port, connected_port)
+                self._disconnect_ports_compat(source_port, connected_port)
                 disconnected = True
                 self._set_modified(True)
         if not disconnected:
@@ -881,6 +925,28 @@ class NodeEditorWindow(QMainWindow):
     def _first_input_port(node) -> Optional[Port]:
         inputs = node.input_ports()
         return inputs[0] if inputs else None
+
+    def _describe_port(self, port: Port) -> str:
+        node_label = "不明ノード"
+        node_getter = getattr(port, "node", None)
+        node_obj = None
+        if callable(node_getter):
+            try:
+                node_obj = node_getter()
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                node_obj = None
+        if node_obj is not None:
+            node_label = self._safe_node_name(node_obj)
+        port_label = None
+        name_getter = getattr(port, "name", None)
+        if callable(name_getter):
+            try:
+                port_label = str(name_getter())
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                port_label = None
+        if port_label:
+            return f"{node_label}:{port_label}"
+        return f"{node_label}:{repr(port)}"
 
     def _show_info_dialog(self, message: str) -> None:
         QMessageBox.information(self, "操作案内", message)
@@ -1358,7 +1424,7 @@ class NodeEditorWindow(QMainWindow):
                 )
                 continue
             try:
-                self._graph.connect_ports(source_port, target_port)
+                self._connect_ports_compat(source_port, target_port)
             except Exception as exc:
                 failed_operations.append(
                     f"接続（source={source_label}, target={target_label}）の再現に失敗しました: {exc}"
