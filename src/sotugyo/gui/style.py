@@ -41,6 +41,7 @@ QFrame#inspectorSection {
 QLabel {
     color: #e8eefc;
     font-weight: 450;
+    background-color: transparent;
 }
 QLabel[hint="secondary"] {
     color: #a9b6d8;
