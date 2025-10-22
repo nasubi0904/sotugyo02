@@ -72,7 +72,7 @@ class NodeContentBrowser(QWidget):
     def _setup_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(0)
+        outer_layout.setSpacing(12)
 
         card = QFrame(self)
         card.setObjectName("panelCard")
@@ -118,7 +118,7 @@ class NodeContentBrowser(QWidget):
             1,
         )
 
-        outer_layout.addWidget(card)
+        outer_layout.addWidget(card, 1)
 
     def _configure_list_widget(self, widget: QListWidget) -> None:
         widget.setObjectName("contentList")
@@ -132,6 +132,7 @@ class NodeContentBrowser(QWidget):
         widget.setSpacing(10)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
+        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._apply_icon_size()
 
     def _build_section(
@@ -347,7 +348,13 @@ class NodeEditorWindow(QMainWindow):
     # UI 初期化
     # ------------------------------------------------------------------
     def _init_ui(self) -> None:
-        self.setCentralWidget(self._graph_widget)
+        central = QWidget(self)
+        central.setObjectName("graphCentralContainer")
+        central_layout = QVBoxLayout(central)
+        central_layout.setContentsMargins(16, 16, 16, 16)
+        central_layout.setSpacing(16)
+        central_layout.addWidget(self._graph_widget)
+        self.setCentralWidget(central)
 
         self._side_tabs = QTabWidget(self)
         self._side_tabs.setMinimumWidth(260)
@@ -364,7 +371,13 @@ class NodeEditorWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
-        inspector_dock.setWidget(self._side_tabs)
+        inspector_container = QWidget(inspector_dock)
+        inspector_container.setObjectName("dockContentContainer")
+        inspector_layout = QVBoxLayout(inspector_container)
+        inspector_layout.setContentsMargins(12, 12, 12, 12)
+        inspector_layout.setSpacing(12)
+        inspector_layout.addWidget(self._side_tabs)
+        inspector_dock.setWidget(inspector_container)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -382,7 +395,13 @@ class NodeEditorWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
-        content_dock.setWidget(self._content_browser)
+        content_container = QWidget(content_dock)
+        content_container.setObjectName("dockContentContainer")
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(12)
+        content_layout.addWidget(self._content_browser)
+        content_dock.setWidget(content_container)
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
 

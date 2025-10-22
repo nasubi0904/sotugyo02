@@ -18,8 +18,11 @@ QWidget {
     background-color: #040b18;
     color: #e8eefc;
 }
-QMainWindow, QDialog {
-    background-color: transparent;
+QMainWindow {
+    background-color: #040b18;
+}
+QDialog {
+    background-color: #040b18;
 }
 QDialog#appDialog {
     background: qradialgradient(
@@ -37,6 +40,14 @@ QFrame#inspectorSection {
     background-color: rgba(13, 23, 42, 0.94);
     border: 1px solid rgba(148, 178, 219, 0.25);
     border-radius: 16px;
+}
+QWidget#graphCentralContainer {
+    background-color: rgba(9, 16, 30, 0.96);
+    border: 1px solid rgba(148, 178, 219, 0.18);
+    border-radius: 18px;
+}
+QWidget#dockContentContainer {
+    background-color: transparent;
 }
 QLabel {
     color: #e8eefc;
@@ -241,7 +252,10 @@ QTabBar::tab:hover {
 QDockWidget {
     background-color: rgba(11, 20, 36, 0.96);
     border: 1px solid rgba(148, 178, 219, 0.28);
-    border-radius: 16px;
+    border-radius: 14px;
+}
+QDockWidget QWidget {
+    background-color: transparent;
 }
 QDockWidget::title {
     text-align: left;
