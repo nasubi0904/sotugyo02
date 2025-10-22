@@ -64,6 +64,13 @@ class NodeContentBrowser(QWidget):
     search_submitted = Signal(str)
     back_requested = Signal()
 
+    ICON_SIZE_MIN_LEVEL = 1
+    ICON_SIZE_MAX_LEVEL = 5
+    ICON_SIZE_DEFAULT_LEVEL = 2
+    ICON_SIZE_BASE_PIXELS = 32
+    ICON_SIZE_SCALE_FACTOR = 1.25
+    ICON_SIZE_MIN_PIXELS = 16
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._search_line: QLineEdit = QLineEdit(self)
@@ -71,16 +78,8 @@ class NodeContentBrowser(QWidget):
         self._available_entries: List[Dict[str, str]] = []
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
-        self._icon_size_levels: Dict[int, int] = {
-            1: 24,
-            2: 32,
-            3: 40,
-            4: 48,
-            5: 64,
-        }
-        self._icon_size_default_level: int = 2
-        self._icon_size_level: int = self._icon_size_default_level
-        self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
+        self._icon_size_level: int = self.ICON_SIZE_DEFAULT_LEVEL
+        self._icon_size: int = self._icon_size_for_level(self._icon_size_level)
         self._compact_mode: bool = False
         self._icon_control_container: Optional[QWidget] = None
 
@@ -203,7 +202,9 @@ class NodeContentBrowser(QWidget):
         size_label.setProperty("hint", "secondary")
 
         self._icon_size_slider.setParent(container)
-        self._icon_size_slider.setRange(1, len(self._icon_size_levels))
+        self._icon_size_slider.setRange(
+            self.ICON_SIZE_MIN_LEVEL, self.ICON_SIZE_MAX_LEVEL
+        )
         self._icon_size_slider.setSingleStep(1)
         self._icon_size_slider.setPageStep(1)
         self._icon_size_slider.setValue(self._icon_size_level)
@@ -212,7 +213,9 @@ class NodeContentBrowser(QWidget):
         self._icon_size_slider.setTracking(True)
 
         self._icon_size_spin.setParent(container)
-        self._icon_size_spin.setRange(1, len(self._icon_size_levels))
+        self._icon_size_spin.setRange(
+            self.ICON_SIZE_MIN_LEVEL, self.ICON_SIZE_MAX_LEVEL
+        )
         self._icon_size_spin.setSingleStep(1)
         self._icon_size_spin.setValue(self._icon_size_level)
         self._icon_size_spin.setSuffix(" 段階")
@@ -290,11 +293,11 @@ class NodeContentBrowser(QWidget):
             self.node_type_requested.emit(node_type)
 
     def _on_icon_size_changed(self, value: int) -> None:
-        clamped = max(self._icon_size_spin.minimum(), min(value, self._icon_size_spin.maximum()))
+        clamped = self._clamp_icon_level(value)
         if clamped == self._icon_size_level:
             return
         self._icon_size_level = clamped
-        self._icon_size = self._icon_size_from_level(self._icon_size_level)
+        self._icon_size = self._icon_size_for_level(self._icon_size_level)
         if self._icon_size_slider.value() != clamped:
             self._icon_size_slider.blockSignals(True)
             self._icon_size_slider.setValue(clamped)
@@ -314,23 +317,33 @@ class NodeContentBrowser(QWidget):
             item = self._available_list.item(index)
             if item is not None:
                 item.setSizeHint(item_size)
+        zoom = self._icon_scale_for_level(self._icon_size_level)
         tooltip = (
             f"表示サイズ: {icon_size_value}px"
-            f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
+            f" / {self._icon_size_level} 段階"
+            f" ({self.ICON_SIZE_MIN_LEVEL}〜{self.ICON_SIZE_MAX_LEVEL}段階)"
+            f" / 拡大率: ×{zoom:.2f}"
         )
         self._icon_size_slider.setToolTip(tooltip)
         self._icon_size_spin.setToolTip(tooltip)
-
-    def _icon_size_from_level(self, level: int) -> int:
-        return self._icon_size_levels.get(
-            level,
-            self._icon_size_levels.get(self._icon_size_default_level, 32),
-        )
 
     def _current_icon_size_value(self) -> int:
         """現在のアイコン表示サイズ（ピクセル）を返す。"""
 
         return self._icon_size
+
+    def _icon_size_for_level(self, level: int) -> int:
+        scale = self._icon_scale_for_level(level)
+        pixels = self.ICON_SIZE_BASE_PIXELS * scale
+        return max(self.ICON_SIZE_MIN_PIXELS, int(round(pixels)))
+
+    def _icon_scale_for_level(self, level: int) -> float:
+        clamped = self._clamp_icon_level(level)
+        steps = clamped - self.ICON_SIZE_DEFAULT_LEVEL
+        return self.ICON_SIZE_SCALE_FACTOR ** steps
+
+    def _clamp_icon_level(self, level: int) -> int:
+        return max(self.ICON_SIZE_MIN_LEVEL, min(level, self.ICON_SIZE_MAX_LEVEL))
 
     def _list_item_size_hint(self) -> QSize:
         if self._compact_mode:
