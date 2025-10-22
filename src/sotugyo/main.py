@@ -13,10 +13,10 @@ def _resolve_start_window() -> Type["StartWindow"]:
     """実行形態に応じて `StartWindow` クラスを遅延インポートする。"""
 
     if __package__:
-        from .gui.start_window import StartWindow
+        from .ui.windows.start_window import StartWindow
     else:
         sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-        from sotugyo.gui.start_window import StartWindow
+        from sotugyo.ui.windows.start_window import StartWindow
     return StartWindow
 
 

@@ -22,9 +22,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ..settings.project_settings import ProjectSettings
-from ..settings.project_structure import ProjectStructureReport, validate_project_structure
-from .style import apply_base_style
+from ...domain.projects.settings import ProjectSettings
+from ...domain.projects.structure import ProjectStructureReport, validate_project_structure
+from ..style import apply_base_style
 
 
 class ProjectSettingsDialog(QDialog):
