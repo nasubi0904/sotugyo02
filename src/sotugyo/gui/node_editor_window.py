@@ -64,8 +64,8 @@ class NodeContentBrowser(QWidget):
         self._available_entries: List[Dict[str, str]] = []
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
-        self._icon_size_base: int = 16
-        self._icon_size_level: int = 2
+        self._icon_size_levels: List[int] = [12, 20, 34, 57, 96]
+        self._icon_size_level: int = 3
 
         self._setup_ui()
         self._connect_signals()
@@ -175,7 +175,7 @@ class NodeContentBrowser(QWidget):
         size_label.setProperty("hint", "secondary")
 
         self._icon_size_slider.setParent(container)
-        self._icon_size_slider.setRange(1, 5)
+        self._icon_size_slider.setRange(1, len(self._icon_size_levels))
         self._icon_size_slider.setSingleStep(1)
         self._icon_size_slider.setPageStep(1)
         self._icon_size_slider.setValue(self._icon_size_level)
@@ -184,10 +184,10 @@ class NodeContentBrowser(QWidget):
         self._icon_size_slider.setTracking(True)
 
         self._icon_size_spin.setParent(container)
-        self._icon_size_spin.setRange(1, 5)
+        self._icon_size_spin.setRange(1, len(self._icon_size_levels))
         self._icon_size_spin.setSingleStep(1)
         self._icon_size_spin.setValue(self._icon_size_level)
-        self._icon_size_spin.setSuffix("x")
+        self._icon_size_spin.setSuffix(" 段階")
 
         layout.addWidget(size_label)
         layout.addWidget(self._icon_size_slider, 1)
@@ -277,7 +277,10 @@ class NodeContentBrowser(QWidget):
             item = self._available_list.item(index)
             if item is not None:
                 item.setSizeHint(item_size)
-        tooltip = f"表示倍率: {self._icon_size_level}x / {icon_length}px"
+        tooltip = (
+            f"表示サイズ: {icon_length}px"
+            f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
+        )
         self._icon_size_slider.setToolTip(tooltip)
         self._icon_size_spin.setToolTip(tooltip)
 
@@ -288,7 +291,8 @@ class NodeContentBrowser(QWidget):
         return QSize(width, height)
 
     def _current_icon_size(self) -> int:
-        return self._icon_size_base * self._icon_size_level
+        level_index = max(1, min(self._icon_size_level, len(self._icon_size_levels))) - 1
+        return self._icon_size_levels[level_index]
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
