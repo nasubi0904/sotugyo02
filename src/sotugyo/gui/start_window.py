@@ -98,14 +98,14 @@ class StartWindow(QMainWindow):
         layout.setContentsMargins(32, 32, 32, 32)
         layout.setSpacing(24)
 
-        title = QLabel("Sotugyo パイプラインへようこそ", self)
+        title = QLabel("Sotugyo パイプラインへようこそ", card)
         title.setObjectName("startTitle")
         title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         layout.addWidget(title)
 
         description = QLabel(
-            "プロジェクトとユーザーを選択してノードエディタを開始します。", self
+            "プロジェクトとユーザーを選択してノードエディタを開始します。", card
         )
         description.setObjectName("startDescription")
         description.setWordWrap(True)
@@ -119,46 +119,46 @@ class StartWindow(QMainWindow):
         form.setHorizontalSpacing(16)
         form.setVerticalSpacing(14)
 
-        self._project_combo = QComboBox(self)
+        self._project_combo = QComboBox(card)
         self._project_combo.currentIndexChanged.connect(self._on_project_changed)
-        project_label = QLabel("プロジェクト", self)
+        project_label = QLabel("プロジェクト", card)
         project_label.setObjectName("formLabel")
         form.addRow(project_label, self._project_combo)
 
         project_button_row = QHBoxLayout()
-        create_button = QPushButton("新規プロジェクト...", self)
+        create_button = QPushButton("新規プロジェクト...", card)
         create_button.clicked.connect(self._create_project)
-        refresh_button = QPushButton("再読み込み", self)
+        refresh_button = QPushButton("再読み込み", card)
         refresh_button.clicked.connect(self.refresh_start_state)
         project_button_row.addWidget(create_button)
         project_button_row.addWidget(refresh_button)
-        project_button_label = QLabel("", self)
+        project_button_label = QLabel("", card)
         project_button_label.setObjectName("formLabel")
         form.addRow(project_button_label, project_button_row)
 
-        self._user_combo = QComboBox(self)
+        self._user_combo = QComboBox(card)
         self._user_combo.currentIndexChanged.connect(self._on_user_changed)
-        user_label = QLabel("ユーザー", self)
+        user_label = QLabel("ユーザー", card)
         user_label.setObjectName("formLabel")
         form.addRow(user_label, self._user_combo)
 
         user_button_row = QHBoxLayout()
-        user_settings_button = QPushButton("ユーザー設定...", self)
+        user_settings_button = QPushButton("ユーザー設定...", card)
         user_settings_button.clicked.connect(self._open_user_settings)
         user_button_row.addWidget(user_settings_button)
         user_button_row.addStretch(1)
-        user_button_label = QLabel("", self)
+        user_button_label = QLabel("", card)
         user_button_label.setObjectName("formLabel")
         form.addRow(user_button_label, user_button_row)
 
         layout.addLayout(form)
 
-        self._project_info_label = QLabel("プロジェクト情報がここに表示されます。", self)
+        self._project_info_label = QLabel("プロジェクト情報がここに表示されます。", card)
         self._project_info_label.setObjectName("projectInfoLabel")
         self._project_info_label.setWordWrap(True)
         layout.addWidget(self._project_info_label)
 
-        self._structure_warning_label = QLabel("", self)
+        self._structure_warning_label = QLabel("", card)
         self._structure_warning_label.setObjectName("structureStatusLabel")
         self._structure_warning_label.setWordWrap(True)
         self._structure_warning_label.hide()
@@ -166,7 +166,7 @@ class StartWindow(QMainWindow):
 
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
-        open_button = QPushButton("ノードエディタを開く", self)
+        open_button = QPushButton("ノードエディタを開く", card)
         open_button.setObjectName("primaryActionButton")
         open_button.clicked.connect(self._open_node_editor)
         layout.addWidget(open_button, alignment=Qt.AlignRight)
