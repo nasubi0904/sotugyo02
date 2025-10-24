@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QMenuBar,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -50,12 +51,23 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ..components.nodes import MemoNode, ReviewNode, TaskNode
+from ..components.nodes import (
+    MemoNode,
+    ReviewNode,
+    TaskNode,
+    ToolEnvironmentNode,
+)
 from ...domain.projects.service import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
 from ...domain.users.settings import UserAccount, UserSettingsManager
-from ..dialogs.project_settings_dialog import ProjectSettingsDialog
-from ..dialogs.user_settings_dialog import UserSettingsDialog
+from ...domain.tooling import ToolEnvironmentService
+from ...domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
+from ..dialogs import (
+    ProjectSettingsDialog,
+    ToolEnvironmentManagerDialog,
+    ToolRegistryDialog,
+    UserSettingsDialog,
+)
 from ..style import apply_base_style
 
 
@@ -65,6 +77,7 @@ class NodeContentBrowser(QWidget):
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
     back_requested = Signal()
+    tool_environment_edit_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -85,6 +98,7 @@ class NodeContentBrowser(QWidget):
         self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
         self._compact_mode: bool = False
         self._icon_control_container: Optional[QWidget] = None
+        self._menu_bar: Optional[QMenuBar] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -107,6 +121,10 @@ class NodeContentBrowser(QWidget):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(12)
+
+        menu_bar = self._create_menu_bar(card)
+        if menu_bar is not None:
+            card_layout.addWidget(menu_bar)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -147,6 +165,15 @@ class NodeContentBrowser(QWidget):
         )
 
         outer_layout.addWidget(card, 1)
+
+    def _create_menu_bar(self, parent: QWidget) -> Optional[QMenuBar]:
+        menu_bar = QMenuBar(parent)
+        menu_bar.setNativeMenuBar(False)
+        environment_menu = menu_bar.addMenu("環境")
+        edit_action = environment_menu.addAction("ツール環境の編集...")
+        edit_action.triggered.connect(self.tool_environment_edit_requested.emit)
+        self._menu_bar = menu_bar
+        return menu_bar
 
     def _configure_list_widget(self, widget: QListWidget) -> None:
         widget.setObjectName("contentList")
@@ -452,6 +479,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
+        self._graph.register_node(ToolEnvironmentNode)
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -470,6 +498,9 @@ class NodeEditorWindow(QMainWindow):
         self._current_user_password: Optional[str] = None
         self._project_service = project_service or ProjectService()
         self._user_manager = user_manager or UserSettingsManager()
+        self._tool_service = ToolEnvironmentService()
+        self._registered_tools: Dict[str, RegisteredTool] = {}
+        self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
 
         self._side_tabs: Optional[QTabWidget] = None
         self._detail_name_label: Optional[QLabel] = None
@@ -496,6 +527,7 @@ class NodeEditorWindow(QMainWindow):
         self._setup_graph_signals()
         self._setup_context_menu()
         self._setup_shortcuts()
+        self._refresh_tool_configuration()
         self._initialize_content_browser()
         self._update_selected_node_info()
         self._refresh_node_catalog()
@@ -543,6 +575,9 @@ class NodeEditorWindow(QMainWindow):
         self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
         self._content_browser.search_submitted.connect(self._handle_content_browser_search)
         self._content_browser.back_requested.connect(self._return_to_start)
+        self._content_browser.tool_environment_edit_requested.connect(
+            self._open_tool_environment_manager
+        )
         self._content_browser.setMinimumHeight(160)
 
         content_dock = QDockWidget("コンテンツブラウザ", self)
@@ -600,6 +635,14 @@ class NodeEditorWindow(QMainWindow):
         user_settings_action = QAction("ユーザー設定...", self)
         user_settings_action.triggered.connect(self._open_user_settings)
         user_menu.addAction(user_settings_action)
+
+        tools_menu = menubar.addMenu("Tools")
+        tool_registry_action = QAction("環境設定...", self)
+        tool_registry_action.triggered.connect(self._open_tool_settings)
+        tools_menu.addAction(tool_registry_action)
+        environment_action = QAction("ツール環境の編集...", self)
+        environment_action.triggered.connect(self._open_tool_environment_manager)
+        tools_menu.addAction(environment_action)
 
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
@@ -719,6 +762,18 @@ class NodeEditorWindow(QMainWindow):
             self._refresh_window_title()
             self._notify_start_window_refresh()
 
+    def _open_tool_settings(self) -> None:
+        dialog = ToolRegistryDialog(self._tool_service, self)
+        dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_tool_configuration()
+
+    def _open_tool_environment_manager(self) -> None:
+        dialog = ToolEnvironmentManagerDialog(self._tool_service, self)
+        dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_tool_configuration()
+
     def _setup_graph_signals(self) -> None:
         selection_signal = getattr(self._graph, "selection_changed", None)
         if selection_signal is not None and hasattr(selection_signal, "connect"):
@@ -765,7 +820,40 @@ class NodeEditorWindow(QMainWindow):
     def _initialize_content_browser(self) -> None:
         if self._content_browser is None:
             return
-        self._content_browser.set_available_nodes(self._build_available_node_entries())
+        self._refresh_content_browser_entries()
+
+    def _refresh_tool_configuration(self) -> None:
+        try:
+            tools = self._tool_service.list_tools()
+        except OSError as exc:
+            LOGGER.error("ツール情報の取得に失敗しました: %s", exc, exc_info=True)
+            tools = []
+        try:
+            environments = self._tool_service.list_environments()
+        except OSError as exc:
+            LOGGER.error("環境情報の取得に失敗しました: %s", exc, exc_info=True)
+            environments = []
+
+        self._registered_tools = {tool.tool_id: tool for tool in tools}
+        filtered_envs: Dict[str, ToolEnvironmentDefinition] = {}
+        for environment in environments:
+            if environment.tool_id in self._registered_tools:
+                filtered_envs[environment.environment_id] = environment
+            else:
+                LOGGER.warning(
+                    "ツール %s が存在しないため環境 %s を読み込みから除外しました。",
+                    environment.tool_id,
+                    environment.environment_id,
+                )
+        self._tool_environments = filtered_envs
+        self._refresh_content_browser_entries()
+
+    def _refresh_content_browser_entries(self) -> None:
+        if self._content_browser is None:
+            return
+        self._content_browser.set_available_nodes(
+            self._build_available_node_entries()
+        )
 
     # ------------------------------------------------------------------
     # プロジェクトコンテキスト管理
@@ -823,7 +911,7 @@ class NodeEditorWindow(QMainWindow):
         return True
 
     def _build_available_node_entries(self) -> List[Dict[str, str]]:
-        return [
+        entries: List[Dict[str, str]] = [
             {
                 "type": "sotugyo.demo.TaskNode",
                 "title": TaskNode.NODE_NAME,
@@ -840,6 +928,27 @@ class NodeEditorWindow(QMainWindow):
                 "subtitle": "ノードエディタ上で自由に記述できるメモ",
             },
         ]
+
+        if self._tool_environments:
+            for environment in sorted(
+                self._tool_environments.values(), key=lambda item: item.name
+            ):
+                tool = self._registered_tools.get(environment.tool_id)
+                if tool is not None:
+                    subtitle_parts = [tool.display_name]
+                    if environment.version_label:
+                        subtitle_parts.append(environment.version_label)
+                    subtitle = " / ".join(subtitle_parts)
+                else:
+                    subtitle = "参照先ツールが見つかりません"
+                entries.append(
+                    {
+                        "type": f"tool-environment:{environment.environment_id}",
+                        "title": environment.name,
+                        "subtitle": subtitle,
+                    }
+                )
+        return entries
 
     def _open_graph_context_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
@@ -900,6 +1009,10 @@ class NodeEditorWindow(QMainWindow):
         self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
 
     def _spawn_node_by_type(self, node_type: str) -> None:
+        if node_type.startswith("tool-environment:"):
+            environment_id = node_type.split(":", 1)[1]
+            self._create_tool_environment_node(environment_id)
+            return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
             creator()
@@ -986,7 +1099,29 @@ class NodeEditorWindow(QMainWindow):
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
-    def _create_node(self, node_type: str, display_name: str) -> None:
+    def _create_tool_environment_node(self, environment_id: str) -> None:
+        definition = self._tool_environments.get(environment_id)
+        if definition is None:
+            self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
+            return
+        tool = self._registered_tools.get(definition.tool_id)
+        if tool is None:
+            self._show_warning_dialog("環境が参照するツールが登録されていません。")
+            return
+        node = self._create_node(
+            ToolEnvironmentNode.node_type_identifier(), definition.name
+        )
+        if isinstance(node, ToolEnvironmentNode):
+            node.configure_environment(
+                environment_id=definition.environment_id,
+                environment_name=definition.name,
+                tool_id=tool.tool_id,
+                tool_name=tool.display_name,
+                version_label=definition.version_label,
+                executable_path=str(tool.executable_path),
+            )
+
+    def _create_node(self, node_type: str, display_name: str):
         node = self._graph.create_node(node_type, name=display_name)
         pos_x = (self._node_spawn_offset % 4) * 220
         pos_y = (self._node_spawn_offset // 4) * 180
@@ -1003,6 +1138,7 @@ class NodeEditorWindow(QMainWindow):
             node.set_selected(True)
         self._on_selection_changed()
         self._refresh_node_catalog()
+        return node
 
     def _delete_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
