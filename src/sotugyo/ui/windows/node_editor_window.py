@@ -62,6 +62,8 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_TIMELINE_UNIT = 320.0
+
 from ..components.nodes import (
     MemoNode,
     ReviewNode,
@@ -108,7 +110,7 @@ class TimelineSnapManager:
         self,
         graph: TimelineNodeGraph,
         *,
-        base_unit: float = 160.0,
+        base_unit: float = DEFAULT_TIMELINE_UNIT,
         origin_x: float = 0.0,
         should_snap=None,
         modified_callback=None,
@@ -275,7 +277,7 @@ class TimelineGridOverlay(QObject):
         super().__init__(view)
         self._view = view
         self._scene = getattr(view, "scene", lambda: None)()
-        self._column_width = 160.0
+        self._column_width = DEFAULT_TIMELINE_UNIT
         self._origin_x = 0.0
         self._start_date = date.today()
         self._columns: Dict[int, Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]] = {}
@@ -1145,7 +1147,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        self._timeline_base_unit = 160.0
+        self._timeline_base_unit = DEFAULT_TIMELINE_UNIT
         self._timeline_column_units = 1
         self._timeline_origin_x = 0.0
         self._timeline_start_date = date.today()
@@ -2858,6 +2860,7 @@ class NodeEditorWindow(QMainWindow):
             1 for node in self._known_nodes if self._node_type_identifier(node) == MemoNode.node_type_identifier()
         )
         self._rebuild_timeline_reference()
+        self._apply_timeline_constraints_to_nodes(self._known_nodes)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
