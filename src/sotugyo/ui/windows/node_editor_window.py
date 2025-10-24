@@ -400,6 +400,7 @@ class NodeEditorWindow(QMainWindow):
                 subtitle=record.subtitle,
                 genre=record.genre,
                 keywords=record.keywords,
+                icon_path=record.icon_path,
             )
             for record in records
         ]

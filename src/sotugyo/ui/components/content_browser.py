@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QFileInfo
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QFileIconProvider,
     QSizePolicy,
     QSlider,
     QSpinBox,
@@ -46,6 +47,7 @@ class NodeCatalogEntry:
     subtitle: str
     genre: str
     keywords: Tuple[str, ...] = ()
+    icon_path: Optional[str] = None
 
     def searchable_text(self) -> str:
         parts = [self.title, self.subtitle, self.node_type, *self.keywords]
@@ -143,7 +145,8 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
-        self._icon_cache: Dict[Tuple[str, int], QIcon] = {}
+        self._icon_cache: Dict[Tuple[str, str, int], QIcon] = {}
+        self._file_icon_provider: QFileIconProvider = QFileIconProvider()
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
@@ -721,15 +724,33 @@ class NodeContentBrowser(QWidget):
 
     def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
         icon_size = self._current_icon_size_value()
-        key = (entry.node_type, icon_size)
-        cached = self._icon_cache.get(key)
+        cache_key = (entry.node_type, entry.icon_path or "", icon_size)
+        cached = self._icon_cache.get(cache_key)
         if cached is not None:
             return cached
 
+        if entry.icon_path:
+            icon = self._load_icon_from_path(entry.icon_path, icon_size)
+            if icon is not None:
+                self._icon_cache[cache_key] = icon
+                return icon
+
         pixmap = self._create_entry_pixmap(entry)
         icon = QIcon(pixmap)
-        self._icon_cache[key] = icon
+        self._icon_cache[cache_key] = icon
         return icon
+
+    def _load_icon_from_path(self, path: str, size: int) -> Optional[QIcon]:
+        file_info = QFileInfo(path)
+        if not file_info.exists():
+            return None
+        icon = self._file_icon_provider.icon(file_info)
+        if icon.isNull():
+            return None
+        pixmap = icon.pixmap(QSize(size, size))
+        if pixmap.isNull():
+            return None
+        return QIcon(pixmap)
 
     def _create_entry_pixmap(self, entry: NodeCatalogEntry) -> QPixmap:
         icon_size = self._current_icon_size_value()
