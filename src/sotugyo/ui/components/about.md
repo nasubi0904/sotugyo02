@@ -2,7 +2,12 @@
 
 このディレクトリには NodeGraphQt で使用するカスタムノードなど、UI 部品のロジックを配置します。
 
-- `nodes.py` でデモ用ノード (`BaseDemoNode`, `TaskNode`, `ReviewNode`) およびツール環境ノード (`ToolEnvironmentNode`) を定義し、ノードエディタで利用できるようにしています。
+- `nodes/` ディレクトリでノードを種類ごとに分割し、
+  - `demo.py` にデモ用ノード (`BaseDemoNode`, `TaskNode`, `ReviewNode`) を、
+  - `memo.py` にメモ専用ノード (`MemoNode`) を、
+  - `tool_environment.py` にツール環境ノード (`ToolEnvironmentNode`) を定義します。
+- `content_browser.py` はノードカタログの UI を提供します。
+- `timeline/` にはタイムライン表示関連のコンポーネントをまとめます。
 
 ## 編集時の指針
 - NodeGraphQt の識別子 (`__identifier__`) やポート構成を変更する際は、既存ワークスペースとの互換性に注意する。

@@ -1,23 +1,12 @@
-"""ノードエディタで利用するカスタムノード定義。"""
+"""メモノード関連の実装。"""
 
 from __future__ import annotations
 
 from typing import ClassVar, Optional
 
 from PySide6.QtCore import QPointF, Qt, QRectF
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QPainter,
-    QPainterPath,
-    QTextOption,
-    QUndoCommand,
-)
-from PySide6.QtWidgets import (
-    QGraphicsItem,
-    QSizePolicy,
-    QTextEdit,
-)
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextOption, QUndoCommand
+from PySide6.QtWidgets import QGraphicsItem, QSizePolicy, QTextEdit
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
@@ -126,7 +115,7 @@ class MemoNodeResizeHandle(QGraphicsItem):
 
     HANDLE_SIZE: ClassVar[float] = 18.0
 
-    def __init__(self, node: "MemoNode") -> None:
+    def __init__(self, node: MemoNode) -> None:  # type: ignore[name-defined]
         super().__init__(node.view)
         self._node = node
         self._block_update = False
@@ -215,7 +204,7 @@ class _MemoNodeResizeCommand(QUndoCommand):
 
     def __init__(
         self,
-        node: "MemoNode",
+        node: MemoNode,  # type: ignore[name-defined]
         old_size: tuple[float, float],
         new_size: tuple[float, float],
     ) -> None:
@@ -237,34 +226,6 @@ class _MemoNodeResizeCommand(QUndoCommand):
         if graph is not None:
             graph.property_changed.emit(self._node, "width", final_width)
             graph.property_changed.emit(self._node, "height", final_height)
-
-
-class BaseDemoNode(BaseNode):
-    """デモ用の基本ノードクラス。
-
-    単一の入力ポートと出力ポートを提供し、
-    ノード同士の接続や切断をシンプルに試せる構成にする。
-    """
-
-    __identifier__: ClassVar[str] = "sotugyo.demo"
-    NODE_NAME: ClassVar[str] = "BaseDemoNode"
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_input("入力")
-        self.add_output("出力")
-
-
-class TaskNode(BaseDemoNode):
-    """タスク処理を表すデモノード。"""
-
-    NODE_NAME: ClassVar[str] = "タスクノード"
-
-
-class ReviewNode(BaseDemoNode):
-    """レビュー工程を表すデモノード。"""
-
-    NODE_NAME: ClassVar[str] = "レビュー ノード"
 
 
 class MemoNode(BaseNode):
@@ -297,7 +258,6 @@ class MemoNode(BaseNode):
         self._apply_font_size(self.DEFAULT_FONT_SIZE)
         self.set_property("width", 320, push_undo=False)
         self.set_property("height", 240, push_undo=False)
-        # 既存より少し暗めのベージュトーンに設定し、視認性を保ちつつ背景との差を付ける。
         self.set_color(238, 231, 200)
         if hasattr(self.view, "setZValue"):
             self.view.setZValue(-1000)
@@ -370,8 +330,14 @@ class MemoNode(BaseNode):
         width = max(width, self.minimum_width())
         height = max(height, self.minimum_height())
         if self._text_widget is not None:
-            content_width = max(width - self._width_padding, self._text_widget.minimum_content_width)
-            content_height = max(height - self._height_padding, self._text_widget.minimum_content_height)
+            content_width = max(
+                width - self._width_padding,
+                self._text_widget.minimum_content_width,
+            )
+            content_height = max(
+                height - self._height_padding,
+                self._text_widget.minimum_content_height,
+            )
             self._text_widget.resize_contents(content_width, content_height)
         self.view.draw_node()
         self._update_size_padding()
@@ -412,98 +378,4 @@ class MemoNode(BaseNode):
         self._height_padding = max(0.0, float(self.view.height) - rect.height())
 
 
-class ToolEnvironmentNode(BaseNode):
-    """登録済みツール環境を表すノード。"""
-
-    __identifier__: ClassVar[str] = "sotugyo.tooling"
-    NODE_NAME: ClassVar[str] = "ツール環境"
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.add_input("前段")
-        self.add_output("起動")
-        self.create_property(
-            "environment_id",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="環境定義の識別子",
-        )
-        self.create_property(
-            "tool_id",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="参照しているツールの識別子",
-        )
-        self.create_property(
-            "tool_name",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="ツール名",
-        )
-        self.create_property(
-            "version_label",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="使用するバージョンの表示名",
-        )
-        self.create_property(
-            "executable_path",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="実行ファイルのパス",
-        )
-        self.set_property("width", 260, push_undo=False)
-        self.set_property("height", 180, push_undo=False)
-        self.set_color(80, 130, 190)
-
-    @classmethod
-    def node_type_identifier(cls) -> str:
-        return f"{cls.__identifier__}.{cls.__name__}"
-
-    def configure_environment(
-        self,
-        *,
-        environment_id: str,
-        environment_name: str,
-        tool_id: str,
-        tool_name: str,
-        version_label: str,
-        executable_path: str,
-    ) -> None:
-        self.set_name(environment_name)
-        self.set_property("environment_id", environment_id, push_undo=False)
-        self.set_property("tool_id", tool_id, push_undo=False)
-        self.set_property("tool_name", tool_name, push_undo=False)
-        self.set_property("version_label", version_label, push_undo=False)
-        self.set_property("executable_path", executable_path, push_undo=False)
-        self._update_summary()
-
-    def set_property(self, name, value, push_undo: bool = True):  # type: ignore[override]
-        super().set_property(name, value, push_undo=push_undo)
-        if name in {"tool_name", "version_label", "executable_path"}:
-            self._update_summary()
-
-    def _update_summary(self) -> None:
-        try:
-            tool_name = str(self.get_property("tool_name"))
-        except Exception:
-            tool_name = ""
-        try:
-            version_label = str(self.get_property("version_label"))
-        except Exception:
-            version_label = ""
-        try:
-            executable_path = str(self.get_property("executable_path"))
-        except Exception:
-            executable_path = ""
-        summary_lines = []
-        if tool_name:
-            summary_lines.append(tool_name)
-        if version_label:
-            summary_lines.append(f"Version: {version_label}")
-        if executable_path:
-            summary_lines.append(executable_path)
-        tooltip = "\n".join(summary_lines) if summary_lines else "ツール環境"
-        view = getattr(self, "view", None)
-        if view is not None and hasattr(view, "setToolTip"):
-            view.setToolTip(tooltip)
+__all__ = ["MemoNode", "MemoTextWidget", "MemoNodeResizeHandle"]
