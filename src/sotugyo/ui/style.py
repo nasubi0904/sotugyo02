@@ -266,7 +266,19 @@ QListWidget#contentList {
     padding: 4px 6px;
 }
 QListWidget#contentList::item {
-    padding: 4px;
+    padding: 6px;
+    border: 1px solid rgba(148, 178, 219, 0.32);
+    border-radius: 14px;
+    background-color: rgba(15, 25, 44, 0.32);
+}
+QListWidget#contentList::item:hover {
+    background-color: rgba(99, 163, 255, 0.18);
+    border-color: rgba(99, 163, 255, 0.55);
+}
+QListWidget#contentList::item:selected {
+    background-color: rgba(99, 163, 255, 0.3);
+    border-color: rgba(99, 163, 255, 0.85);
+    color: #f8fbff;
 }
 QListWidget::item:selected {
     background-color: rgba(99, 163, 255, 0.28);
@@ -661,7 +673,19 @@ QListWidget#contentList {
     padding: 4px 6px;
 }
 QListWidget#contentList::item {
-    padding: 4px;
+    padding: 6px;
+    border: 1px solid rgba(148, 163, 184, 0.36);
+    border-radius: 14px;
+    background-color: rgba(241, 245, 249, 0.6);
+}
+QListWidget#contentList::item:hover {
+    background-color: rgba(59, 130, 246, 0.16);
+    border-color: rgba(59, 130, 246, 0.5);
+}
+QListWidget#contentList::item:selected {
+    background-color: rgba(59, 130, 246, 0.22);
+    border-color: rgba(59, 130, 246, 0.75);
+    color: #0f172a;
 }
 QListWidget::item:selected {
     background-color: rgba(59, 130, 246, 0.2);
