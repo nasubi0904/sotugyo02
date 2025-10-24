@@ -103,6 +103,7 @@ class BrowserLayoutProfile:
     grid_columns: int
     section_spacing: int
     card_padding: Tuple[int, int, int, int]
+    section_padding: Tuple[int, int, int, int]
 
 
 class NodeContentBrowser(QWidget):
@@ -138,6 +139,7 @@ class NodeContentBrowser(QWidget):
         self._outer_layout: Optional[QVBoxLayout] = None
         self._card_frame: Optional[QFrame] = None
         self._card_layout: Optional[QVBoxLayout] = None
+        self._section_frames: List[QFrame] = []
         self._control_header: Optional[QWidget] = None
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
@@ -152,6 +154,7 @@ class NodeContentBrowser(QWidget):
                 grid_columns=5,
                 section_spacing=16,
                 card_padding=(24, 24, 24, 24),
+                section_padding=(16, 16, 16, 16),
             ),
             BrowserLayoutProfile(
                 min_width=860,
@@ -162,6 +165,7 @@ class NodeContentBrowser(QWidget):
                 grid_columns=4,
                 section_spacing=16,
                 card_padding=(20, 20, 20, 20),
+                section_padding=(16, 16, 16, 16),
             ),
             BrowserLayoutProfile(
                 min_width=660,
@@ -172,6 +176,7 @@ class NodeContentBrowser(QWidget):
                 grid_columns=3,
                 section_spacing=14,
                 card_padding=(20, 20, 20, 20),
+                section_padding=(14, 14, 14, 14),
             ),
             BrowserLayoutProfile(
                 min_width=520,
@@ -182,6 +187,7 @@ class NodeContentBrowser(QWidget):
                 grid_columns=2,
                 section_spacing=12,
                 card_padding=(18, 18, 18, 18),
+                section_padding=(12, 12, 12, 12),
             ),
             BrowserLayoutProfile(
                 min_width=0,
@@ -192,6 +198,7 @@ class NodeContentBrowser(QWidget):
                 grid_columns=1,
                 section_spacing=10,
                 card_padding=(16, 16, 16, 16),
+                section_padding=(10, 10, 10, 10),
             ),
         ]
         self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
@@ -327,7 +334,8 @@ class NodeContentBrowser(QWidget):
         frame = QFrame(self)
         frame.setObjectName("inspectorSection")
         frame_layout = QVBoxLayout(frame)
-        frame_layout.setContentsMargins(16, 16, 16, 16)
+        padding = getattr(self._current_profile, "section_padding", (16, 16, 16, 16))
+        frame_layout.setContentsMargins(*padding)
         frame_layout.setSpacing(self._current_profile.section_spacing)
 
         header_layout = QHBoxLayout()
@@ -344,6 +352,8 @@ class NodeContentBrowser(QWidget):
 
         frame_layout.addLayout(header_layout)
         frame_layout.addWidget(widget, 1)
+
+        self._section_frames.append(frame)
 
         return frame
 
@@ -730,6 +740,14 @@ class NodeContentBrowser(QWidget):
             self._card_layout.setSpacing(profile.section_spacing)
         if self._outer_layout is not None:
             self._outer_layout.setSpacing(profile.section_spacing)
+        if self._section_frames:
+            padding = getattr(profile, "section_padding", (16, 16, 16, 16))
+            for section in self._section_frames:
+                layout = section.layout()
+                if layout is None:
+                    continue
+                layout.setContentsMargins(*padding)
+                layout.setSpacing(profile.section_spacing)
 
         self._refresh_item_sizes()
         self._update_summary_label()
