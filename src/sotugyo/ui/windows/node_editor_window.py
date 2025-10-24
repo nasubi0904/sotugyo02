@@ -6,55 +6,35 @@ import json
 import logging
 import shutil
 import uuid
-from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
-    QColor,
     QCloseEvent,
-    QFont,
-    QFontMetrics,
-    QColor,
-    QIcon,
-    QPen,
     QKeySequence,
-    QPainter,
-    QPen,
-    QPixmap,
     QResizeEvent,
     QShortcut,
     QShowEvent,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QBoxLayout,
-    QComboBox,
     QDialog,
     QDockWidget,
-    QGraphicsLineItem,
-    QGraphicsSimpleTextItem,
-    QFrame,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QListView,
-    QListWidget,
-    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
     QPushButton,
-    QSlider,
     QSpinBox,
-    QSpacerItem,
     QStyle,
     QTextEdit,
     QSizePolicy,
@@ -64,23 +44,32 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from NodeGraphQt import NodeGraph, Port
+from NodeGraphQt import Port
 
 
 LOGGER = logging.getLogger(__name__)
 
-DEFAULT_TIMELINE_UNIT = 320.0
-
+from ..components.content_browser import NodeCatalogEntry, NodeContentBrowser
 from ..components.nodes import (
     MemoNode,
     ReviewNode,
     TaskNode,
     ToolEnvironmentNode,
 )
+from ..components.timeline import (
+    TimelineGridOverlay,
+    TimelineNodeGraph,
+    TimelineSnapController,
+)
 from ...domain.projects.service import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
+from ...domain.projects.timeline import DEFAULT_TIMELINE_UNIT, TimelineSnapSettings
 from ...domain.users.settings import UserAccount, UserSettingsManager
-from ...domain.tooling import ToolEnvironmentService
+from ...domain.tooling.coordinator import (
+    NodeCatalogRecord,
+    NodeEditorCoordinator,
+    ToolEnvironmentSnapshot,
+)
 from ...domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
 from ..dialogs import (
     ProjectSettingsDialog,
@@ -90,1113 +79,6 @@ from ..dialogs import (
 )
 from ..style import apply_base_style
 
-
-class TimelineNodeGraph(NodeGraph):
-    """ノード移動前にタイムライン制約を適用するための NodeGraph 拡張。"""
-
-    def __init__(self, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        self._timeline_move_handler = None
-
-    def set_timeline_move_handler(self, handler) -> None:
-        self._timeline_move_handler = handler
-
-    def _on_nodes_moved(self, node_data):
-        if self._timeline_move_handler is not None:
-            try:
-                self._timeline_move_handler(node_data)
-            except Exception:  # pragma: no cover - Qt 依存の例外
-                LOGGER.debug("タイムライン制約の適用に失敗", exc_info=True)
-        super()._on_nodes_moved(node_data)
-
-
-class TimelineSnapManager:
-    """ノードの位置・幅をタイムライン枠にスナップさせる管理クラス。"""
-
-    def __init__(
-        self,
-        graph: TimelineNodeGraph,
-        *,
-        base_unit: float = DEFAULT_TIMELINE_UNIT,
-        origin_x: float = 0.0,
-        should_snap=None,
-        modified_callback=None,
-    ) -> None:
-        self._graph = graph
-        self._base_unit = max(1.0, float(base_unit))
-        self._origin_x = float(origin_x)
-        self._column_units = 1
-        self._column_width = self._base_unit
-        self._should_snap = should_snap or (lambda node: True)
-        self._modified_callback = modified_callback
-        self._processing = False
-
-    @property
-    def column_width(self) -> float:
-        return self._column_width
-
-    @property
-    def origin_x(self) -> float:
-        return self._origin_x
-
-    def set_origin_x(self, value: float) -> None:
-        self._origin_x = float(value)
-
-    def set_column_units(self, units: int) -> bool:
-        normalized = max(1, int(units))
-        if normalized == self._column_units:
-            return False
-        self._column_units = normalized
-        self._column_width = self._base_unit * self._column_units
-        return True
-
-    def handle_nodes_moved(self, node_data) -> None:
-        if self._processing:
-            return
-        changed = False
-        for node_view in node_data.keys():
-            node = self._graph.get_node_by_id(getattr(node_view, "id", None))
-            if node is None or not self._should_snap(node):
-                continue
-            if self._snap_node_position(node):
-                changed = True
-        if changed and callable(self._modified_callback):
-            self._modified_callback(True)
-
-    def handle_property_changed(self, node, prop_name: str, value: object) -> bool:
-        if self._processing or not self._should_snap(node):
-            return False
-        if prop_name != "width":
-            return False
-        width = self._to_float(value)
-        if width is None:
-            return False
-        changed = self._snap_node_width(node, width_override=width)
-        if changed and callable(self._modified_callback):
-            self._modified_callback(True)
-        return changed
-
-    def snap_nodes(self, nodes: Iterable) -> bool:
-        if self._processing:
-            return False
-        changed = False
-        for node in nodes:
-            if not self._should_snap(node):
-                continue
-            if self._snap_node_position(node):
-                changed = True
-            if self._snap_node_width(node):
-                changed = True
-        if changed and callable(self._modified_callback):
-            self._modified_callback(True)
-        return changed
-
-    def _snap_node_position(self, node) -> bool:
-        pos_getter = getattr(node, "pos", None)
-        if not callable(pos_getter):
-            return False
-        try:
-            pos = pos_getter()
-        except Exception:  # pragma: no cover - NodeGraph 依存
-            return False
-        if not isinstance(pos, (list, tuple)) or len(pos) < 2:
-            return False
-        try:
-            current_x = float(pos[0])
-            current_y = float(pos[1])
-        except (TypeError, ValueError):
-            return False
-        target_x = self._snap_to_grid(current_x)
-        if abs(target_x - current_x) < 0.5:
-            return False
-        self._apply_node_position(node, target_x, current_y)
-        return True
-
-    def _snap_node_width(self, node, *, width_override: Optional[float] = None) -> bool:
-        width_value = width_override
-        if width_value is None:
-            view = getattr(node, "view", None)
-            width_value = self._to_float(getattr(view, "width", None))
-        if width_value is None:
-            return False
-        target_width = self._snap_width(width_value)
-        if abs(target_width - width_value) < 0.5:
-            return False
-        self._apply_node_width(node, target_width)
-        return True
-
-    def _snap_to_grid(self, value: float) -> float:
-        if self._column_width <= 0:
-            return value
-        relative = (value - self._origin_x) / self._column_width
-        index = round(relative)
-        return self._origin_x + index * self._column_width
-
-    def _snap_width(self, width: float) -> float:
-        units = max(1, round(width / self._column_width))
-        return self._column_width * units
-
-    def _apply_node_position(self, node, target_x: float, target_y: float) -> None:
-        self._processing = True
-        try:
-            model = getattr(node, "model", None)
-            if model is not None:
-                model.set_property("pos", [target_x, target_y])
-            view = getattr(node, "view", None)
-            if view is not None:
-                setattr(view, "xy_pos", [target_x, target_y])
-                move = getattr(view, "setPos", None)
-                if callable(move):
-                    move(target_x, target_y)
-        finally:
-            self._processing = False
-
-    def _apply_node_width(self, node, target_width: float) -> None:
-        self._processing = True
-        try:
-            model = getattr(node, "model", None)
-            if model is not None:
-                model.set_property("width", target_width)
-            view = getattr(node, "view", None)
-            if view is not None:
-                setattr(view, "width", target_width)
-                redraw = getattr(view, "draw_node", None)
-                if callable(redraw):
-                    redraw()
-                updater = getattr(view, "update", None)
-                if callable(updater):
-                    updater()
-        finally:
-            self._processing = False
-
-    @staticmethod
-    def _to_float(value: object) -> Optional[float]:
-        try:
-            return float(value)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
-            return None
-
-
-class TimelineGridOverlay(QObject):
-    """ノードエディタ上に日付枠線を描画するオーバーレイ。"""
-
-    def __init__(self, view) -> None:
-        super().__init__(view)
-        self._view = view
-        self._scene = getattr(view, "scene", lambda: None)()
-        self._column_width = DEFAULT_TIMELINE_UNIT
-        self._origin_x = 0.0
-        self._start_date = date.today()
-        self._columns: Dict[int, Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]] = {}
-        self._last_visible_rect = None
-        viewport = getattr(view, "viewport", None)
-        if callable(viewport):
-            vp = viewport()
-            if vp is not None:
-                vp.installEventFilter(self)
-
-    def eventFilter(self, obj, event):  # pragma: no cover - Qt 依存
-        if event is not None and event.type() in {QEvent.Paint, QEvent.Resize, QEvent.Wheel}:
-            self.update_overlay()
-        return False
-
-    def set_column_width(self, width: float) -> None:
-        self._column_width = max(1.0, float(width))
-        self.update_overlay(force=True)
-
-    def set_origin_x(self, value: float) -> None:
-        self._origin_x = float(value)
-        self.update_overlay(force=True)
-
-    def set_start_date(self, start: date) -> None:
-        self._start_date = start
-        self.update_overlay(force=True)
-
-    def update_overlay(self, *, force: bool = False) -> None:
-        if self._scene is None or self._column_width <= 0:
-            return
-        rect = self._visible_scene_rect()
-        if rect is None:
-            return
-        if not force and self._last_visible_rect is not None:
-            if (
-                abs(rect.left() - self._last_visible_rect.left()) < 0.5
-                and abs(rect.right() - self._last_visible_rect.right()) < 0.5
-                and abs(rect.top() - self._last_visible_rect.top()) < 0.5
-                and abs(rect.bottom() - self._last_visible_rect.bottom()) < 0.5
-            ):
-                return
-        self._last_visible_rect = rect
-        self._refresh_columns(rect)
-
-    def _visible_scene_rect(self):
-        viewport = getattr(self._view, "viewport", None)
-        if not callable(viewport):
-            return None
-        vp = viewport()
-        if vp is None:
-            return None
-        mapper = getattr(self._view, "mapToScene", None)
-        if not callable(mapper):
-            return None
-        mapped = mapper(vp.rect())
-        return mapped.boundingRect() if hasattr(mapped, "boundingRect") else None
-
-    def _refresh_columns(self, visible_rect) -> None:
-        left = visible_rect.left()
-        right = visible_rect.right()
-        top = visible_rect.top()
-        bottom = visible_rect.bottom()
-        span = max(1, int((right - left) / self._column_width) + 4)
-        start_index = int((left - self._origin_x) / self._column_width) - 2
-        needed = set(range(start_index, start_index + span))
-        for index, items in list(self._columns.items()):
-            visible = index in needed
-            for item in items:
-                item.setVisible(visible)
-        for index in needed:
-            line_item, text_item = self._ensure_column(index)
-            position_x = self._origin_x + index * self._column_width
-            line_item.setLine(position_x, top, position_x, bottom)
-            label = self._format_label(index)
-            text_item.setText(label)
-            text_item.setVisible(True)
-            line_item.setVisible(True)
-            rect = text_item.boundingRect()
-            label_x = position_x + (self._column_width - rect.width()) / 2
-            label_y = top + 6.0
-            text_item.setPos(label_x, label_y)
-
-    def _ensure_column(self, index: int) -> Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]:
-        if index in self._columns:
-            return self._columns[index]
-        line = QGraphicsLineItem()
-        line.setZValue(-10000)
-        pen = QPen(QColor(200, 200, 200, 120))
-        pen.setCosmetic(True)
-        line.setPen(pen)
-        text = QGraphicsSimpleTextItem()
-        text.setBrush(QColor(230, 230, 230, 220))
-        text.setZValue(10000)
-        text.setFlag(QGraphicsSimpleTextItem.ItemIgnoresTransformations, True)
-        if self._scene is not None:
-            self._scene.addItem(line)
-            self._scene.addItem(text)
-        self._columns[index] = (line, text)
-        return line, text
-
-    def _format_label(self, index: int) -> str:
-        try:
-            target = self._start_date + timedelta(days=index)
-            return target.strftime("%m/%d")
-        except Exception:  # pragma: no cover - 日付演算例外
-            return f"{index:+d}"
-
-@dataclass(frozen=True)
-class NodeCatalogEntry:
-    """コンテンツブラウザに表示するノード情報。"""
-
-    node_type: str
-    title: str
-    subtitle: str
-    genre: str
-    keywords: Tuple[str, ...] = ()
-
-    def searchable_text(self) -> str:
-        parts = [self.title, self.subtitle, self.node_type, *self.keywords]
-        return "\n".join(part.lower() for part in parts if part)
-
-
-@dataclass(frozen=True)
-class BrowserLayoutProfile:
-    """コンテンツブラウザのレイアウト設定。"""
-
-    min_width: int
-    view_mode: QListView.ViewMode
-    flow: QListView.Flow
-    wrapping: bool
-    compact: bool
-    grid_columns: int
-    section_spacing: int
-    card_padding: Tuple[int, int, int, int]
-    section_padding: Tuple[int, int, int, int]
-
-
-class NodeContentBrowser(QWidget):
-    """ノード追加と検索をまとめたコンテンツブラウザ風ウィジェット。"""
-
-    node_type_requested = Signal(str)
-    search_submitted = Signal(str)
-    back_requested = Signal()
-    tool_environment_edit_requested = Signal()
-
-    def __init__(self, parent: Optional[QWidget] = None) -> None:
-        super().__init__(parent)
-        self._search_line: QLineEdit = QLineEdit(self)
-        self._genre_combo: Optional[QComboBox] = None
-        self._available_list: QListWidget = QListWidget(self)
-        self._catalog_entries: List[NodeCatalogEntry] = []
-        self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
-        self._icon_size_spin: QSpinBox = QSpinBox(self)
-        self._icon_size_levels: Dict[int, int] = {
-            1: 24,
-            2: 32,
-            3: 40,
-            4: 48,
-            5: 64,
-            6: 80,
-        }
-        self._icon_size_default_level: int = 3
-        self._icon_size_level: int = self._icon_size_default_level
-        self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
-        self._compact_mode: bool = False
-        self._icon_control_container: Optional[QWidget] = None
-        self._menu_bar: Optional[QMenuBar] = None
-        self._outer_layout: Optional[QVBoxLayout] = None
-        self._card_frame: Optional[QFrame] = None
-        self._card_layout: Optional[QVBoxLayout] = None
-        self._section_frames: List[QFrame] = []
-        self._control_header: Optional[QWidget] = None
-        self._control_header_layout: Optional[QBoxLayout] = None
-        self._control_header_spacer: Optional[QSpacerItem] = None
-        self._result_summary_label: Optional[QLabel] = None
-        self._icon_cache: Dict[str, QIcon] = {}
-        self._layout_profiles: List[BrowserLayoutProfile] = [
-            BrowserLayoutProfile(
-                min_width=1080,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
-                compact=False,
-                grid_columns=5,
-                section_spacing=16,
-                card_padding=(24, 24, 24, 24),
-                section_padding=(16, 16, 16, 16),
-            ),
-            BrowserLayoutProfile(
-                min_width=860,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
-                compact=False,
-                grid_columns=4,
-                section_spacing=16,
-                card_padding=(20, 20, 20, 20),
-                section_padding=(16, 16, 16, 16),
-            ),
-            BrowserLayoutProfile(
-                min_width=660,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
-                compact=False,
-                grid_columns=3,
-                section_spacing=14,
-                card_padding=(20, 20, 20, 20),
-                section_padding=(14, 14, 14, 14),
-            ),
-            BrowserLayoutProfile(
-                min_width=520,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
-                compact=False,
-                grid_columns=2,
-                section_spacing=12,
-                card_padding=(18, 18, 18, 18),
-                section_padding=(12, 12, 12, 12),
-            ),
-            BrowserLayoutProfile(
-                min_width=0,
-                view_mode=QListWidget.ListMode,
-                flow=QListView.TopToBottom,
-                wrapping=False,
-                compact=True,
-                grid_columns=1,
-                section_spacing=10,
-                card_padding=(16, 16, 16, 16),
-                section_padding=(10, 10, 10, 10),
-            ),
-        ]
-        self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
-        self._total_entry_count: int = 0
-        self._visible_entry_count: int = 0
-        self._current_genre: Optional[str] = None
-
-        self._setup_ui()
-        self._connect_signals()
-        self._update_layout_for_size(self.size())
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: D401
-        """ウィジェットのリサイズイベントを処理する。"""
-
-        super().resizeEvent(event)
-        if event is not None:
-            self._update_layout_for_size(event.size())
-
-    def _setup_ui(self) -> None:
-        outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(12)
-        self._outer_layout = outer_layout
-
-        card = QFrame(self)
-        card.setObjectName("panelCard")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(20, 20, 20, 20)
-        card_layout.setSpacing(12)
-        self._card_frame = card
-        self._card_layout = card_layout
-
-        menu_bar = self._create_menu_bar(card)
-        if menu_bar is not None:
-            card_layout.addWidget(menu_bar)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
-
-        title_label = QLabel("コンテンツブラウザ", card)
-        title_label.setObjectName("panelTitle")
-        header_layout.addWidget(title_label)
-        header_layout.addStretch(1)
-
-        back_button = QPushButton("スタート画面に戻る", card)
-        back_button.clicked.connect(self.back_requested.emit)
-        header_layout.addWidget(back_button)
-
-        card_layout.addLayout(header_layout)
-
-        search_layout = QHBoxLayout()
-        search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(8)
-
-        self._search_line.setPlaceholderText("ノードを検索")
-        self._search_line.setClearButtonEnabled(True)
-        search_layout.addWidget(self._search_line, 1)
-
-        genre_label = QLabel("ジャンル", card)
-        genre_label.setProperty("hint", "secondary")
-        search_layout.addWidget(genre_label)
-
-        genre_combo = QComboBox(card)
-        genre_combo.setObjectName("genreFilterCombo")
-        genre_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        genre_combo.setMinimumContentsLength(6)
-        genre_combo.addItem("すべて", None)
-        self._genre_combo = genre_combo
-        search_layout.addWidget(genre_combo)
-
-        card_layout.addLayout(search_layout)
-
-        self._configure_list_widget(self._available_list)
-
-        icon_control = self._create_icon_size_control(card)
-        summary_widget = self._create_result_summary(card)
-        header_container = QWidget(card)
-        header_container_layout = QHBoxLayout(header_container)
-        header_container_layout.setContentsMargins(0, 0, 0, 0)
-        header_container_layout.setSpacing(8)
-        header_container_layout.addWidget(summary_widget)
-        spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
-        header_container_layout.addItem(spacer)
-        header_container_layout.addWidget(icon_control)
-        self._control_header = header_container
-        self._control_header_layout = header_container_layout
-        self._control_header_spacer = spacer
-
-        card_layout.addWidget(
-            self._build_section(
-                "追加可能ノード",
-                self._available_list,
-                header_widget=header_container,
-            ),
-            1,
-        )
-
-        outer_layout.addWidget(card, 1)
-
-    def _create_menu_bar(self, parent: QWidget) -> Optional[QMenuBar]:
-        menu_bar = QMenuBar(parent)
-        menu_bar.setNativeMenuBar(False)
-        environment_menu = menu_bar.addMenu("環境")
-        edit_action = environment_menu.addAction("ツール環境の編集...")
-        edit_action.triggered.connect(self.tool_environment_edit_requested.emit)
-        self._menu_bar = menu_bar
-        return menu_bar
-
-    def _configure_list_widget(self, widget: QListWidget) -> None:
-        widget.setObjectName("contentList")
-        widget.setViewMode(QListWidget.IconMode)
-        widget.setMovement(QListWidget.Static)
-        widget.setResizeMode(QListWidget.Adjust)
-        widget.setWrapping(True)
-        widget.setWordWrap(True)
-        widget.setTextElideMode(Qt.TextElideMode.ElideNone)
-        widget.setIconSize(
-            QSize(self._current_icon_size_value(), self._current_icon_size_value())
-        )
-        widget.setSpacing(16)
-        widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        widget.setUniformItemSizes(False)
-        widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._apply_icon_size()
-
-    def _build_section(
-        self,
-        title: str,
-        widget: QListWidget,
-        header_widget: Optional[QWidget] = None,
-    ) -> QWidget:
-        frame = QFrame(self)
-        frame.setObjectName("inspectorSection")
-        frame_layout = QVBoxLayout(frame)
-        padding = getattr(self._current_profile, "section_padding", (16, 16, 16, 16))
-        frame_layout.setContentsMargins(*padding)
-        frame_layout.setSpacing(self._current_profile.section_spacing)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(6)
-
-        label = QLabel(title, frame)
-        label.setObjectName("panelTitle")
-        header_layout.addWidget(label)
-
-        if header_widget is not None:
-            header_layout.addStretch(1)
-            header_layout.addWidget(header_widget)
-
-        frame_layout.addLayout(header_layout)
-        frame_layout.addWidget(widget, 1)
-
-        self._section_frames.append(frame)
-
-        return frame
-
-    def _create_icon_size_control(self, parent: QWidget) -> QWidget:
-        container = QWidget(parent)
-        self._icon_control_container = container
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
-
-        size_label = QLabel("アイコンサイズ", container)
-        size_label.setProperty("hint", "secondary")
-
-        self._icon_size_slider.setParent(container)
-        self._icon_size_slider.setRange(1, len(self._icon_size_levels))
-        self._icon_size_slider.setSingleStep(1)
-        self._icon_size_slider.setPageStep(1)
-        self._icon_size_slider.setValue(self._icon_size_level)
-        self._icon_size_slider.setTickInterval(1)
-        self._icon_size_slider.setTickPosition(QSlider.TicksBelow)
-        self._icon_size_slider.setTracking(True)
-
-        self._icon_size_spin.setParent(container)
-        self._icon_size_spin.setRange(1, len(self._icon_size_levels))
-        self._icon_size_spin.setSingleStep(1)
-        self._icon_size_spin.setValue(self._icon_size_level)
-        self._icon_size_spin.setSuffix(" 段階")
-        self._icon_size_spin.setFixedWidth(84)
-
-        layout.addWidget(size_label)
-        layout.addWidget(self._icon_size_slider, 1)
-        layout.addWidget(self._icon_size_spin)
-
-        return container
-
-    def _create_result_summary(self, parent: QWidget) -> QWidget:
-        container = QWidget(parent)
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        caption = QLabel("表示件数", container)
-        caption.setProperty("hint", "secondary")
-
-        summary = QLabel("0 件", container)
-        summary.setObjectName("contentSummaryLabel")
-        summary.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._result_summary_label = summary
-
-        layout.addWidget(caption)
-        layout.addWidget(summary)
-
-        return container
-
-    def _connect_signals(self) -> None:
-        self._search_line.textChanged.connect(self._apply_filter)
-        self._search_line.returnPressed.connect(self._on_search_submitted)
-        self._available_list.itemActivated.connect(self._on_available_item_activated)
-        self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
-        self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
-        if self._genre_combo is not None:
-            self._genre_combo.currentIndexChanged.connect(self._on_genre_changed)
-
-    def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
-        catalog_entries: List[NodeCatalogEntry] = []
-        for entry in entries:
-            node_type = str(entry.get("type", "") or "")
-            title = str(entry.get("title", "") or "")
-            subtitle = str(entry.get("subtitle", "") or "")
-            genre_value = entry.get("genre")
-            genre = str(genre_value).strip() if isinstance(genre_value, str) else ""
-            if not genre:
-                genre = self._guess_genre(node_type)
-            keywords: Tuple[str, ...] = ()
-            raw_keywords = entry.get("keywords")
-            if isinstance(raw_keywords, str):
-                keywords = tuple(
-                    part.strip()
-                    for part in raw_keywords.split()
-                    if part and part.strip()
-                )
-            elif isinstance(raw_keywords, IterableABC):
-                keywords = tuple(
-                    str(part).strip()
-                    for part in raw_keywords
-                    if part and str(part).strip()
-                )
-            catalog_entries.append(
-                NodeCatalogEntry(
-                    node_type=node_type,
-                    title=title,
-                    subtitle=subtitle,
-                    genre=genre,
-                    keywords=keywords,
-                )
-            )
-
-        self._catalog_entries = catalog_entries
-        self._total_entry_count = len(catalog_entries)
-        self._available_list.clear()
-        self._icon_cache.clear()
-
-        alignment = Qt.AlignLeft | Qt.AlignTop
-        item_size = self._list_item_size_hint()
-        for entry in catalog_entries:
-            item = QListWidgetItem(self._format_entry_text(entry))
-            item.setData(Qt.UserRole, entry.node_type)
-            item.setData(Qt.UserRole + 1, entry.searchable_text())
-            item.setData(Qt.UserRole + 2, entry.genre)
-            item.setToolTip(entry.node_type)
-            item.setTextAlignment(alignment)
-            item.setSizeHint(item_size)
-            item.setIcon(self._icon_for_entry(entry))
-            self._available_list.addItem(item)
-
-        self._populate_genre_options()
-        self._apply_icon_size()
-        self._update_item_texts()
-        self._apply_filter()
-
-    def _populate_genre_options(self) -> None:
-        if self._genre_combo is None:
-            return
-        previous = self._current_genre
-        genres = sorted({entry.genre for entry in self._catalog_entries if entry.genre})
-        self._genre_combo.blockSignals(True)
-        self._genre_combo.clear()
-        self._genre_combo.addItem("すべて", None)
-        target_index = 0
-        for genre in genres:
-            self._genre_combo.addItem(genre, genre)
-            if previous and genre == previous:
-                target_index = self._genre_combo.count() - 1
-        if target_index >= self._genre_combo.count():
-            target_index = 0
-        if target_index == 0:
-            previous = None
-        self._genre_combo.setCurrentIndex(target_index)
-        self._genre_combo.blockSignals(False)
-        self._current_genre = previous
-        tooltip_lines = ["ジャンルで一覧を絞り込みます。"]
-        if genres:
-            tooltip_lines.append("登録ジャンル: " + ", ".join(genres))
-        self._genre_combo.setToolTip("\n".join(tooltip_lines))
-
-    def _guess_genre(self, node_type: str) -> str:
-        normalized = node_type.strip()
-        if normalized.startswith("tool-environment:") or normalized.startswith(
-            "sotugyo.tooling"
-        ):
-            return "ツール環境"
-        if normalized.startswith("sotugyo.demo."):
-            return "ワークフロー"
-        if normalized.startswith("sotugyo.memo."):
-            return "メモ"
-        return "その他"
-
-    def _on_genre_changed(self, index: int) -> None:
-        if self._genre_combo is None:
-            return
-        data = self._genre_combo.itemData(index)
-        self._current_genre = data if isinstance(data, str) and data else None
-        self._apply_filter()
-
-    def _genre_total_count(self, genre: Optional[str]) -> int:
-        if genre is None:
-            return self._total_entry_count
-        return sum(1 for entry in self._catalog_entries if entry.genre == genre)
-
-    def focus_search(self) -> None:
-        self._search_line.setFocus()
-        self._search_line.selectAll()
-
-    def current_search_text(self) -> str:
-        return self._search_line.text()
-
-    def first_visible_available_type(self) -> Optional[str]:
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is not None and not item.isHidden():
-                data = item.data(Qt.UserRole)
-                if isinstance(data, str):
-                    return data
-        return None
-
-    def _apply_filter(self) -> None:
-        keyword = self._search_line.text().strip().lower()
-        selected_genre = self._current_genre
-        visible_count = 0
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
-            entry = self._catalog_entries[index] if index < len(self._catalog_entries) else None
-            search_text = item.data(Qt.UserRole + 1)
-            if not isinstance(search_text, str):
-                search_text = entry.searchable_text() if entry else item.text().lower()
-            matches_keyword = not keyword or keyword in search_text
-            matches_genre = True
-            if selected_genre:
-                genre_value = item.data(Qt.UserRole + 2)
-                if not isinstance(genre_value, str):
-                    genre_value = entry.genre if entry else ""
-                matches_genre = genre_value == selected_genre
-            is_hidden = not (matches_keyword and matches_genre)
-            item.setHidden(is_hidden)
-            if not is_hidden:
-                visible_count += 1
-        self._visible_entry_count = visible_count
-        self._update_summary_label(visible_count)
-
-    def _on_search_submitted(self) -> None:
-        self.search_submitted.emit(self._search_line.text())
-
-    def _on_available_item_activated(self, item: QListWidgetItem) -> None:
-        if item is None:
-            return
-        node_type = item.data(Qt.UserRole)
-        if isinstance(node_type, str):
-            self.node_type_requested.emit(node_type)
-
-    def _on_icon_size_changed(self, value: int) -> None:
-        clamped = max(self._icon_size_spin.minimum(), min(value, self._icon_size_spin.maximum()))
-        if clamped == self._icon_size_level:
-            return
-        self._icon_size_level = clamped
-        self._icon_size = self._icon_size_from_level(self._icon_size_level)
-        if self._icon_size_slider.value() != clamped:
-            self._icon_size_slider.blockSignals(True)
-            self._icon_size_slider.setValue(clamped)
-            self._icon_size_slider.blockSignals(False)
-        if self._icon_size_spin.value() != clamped:
-            self._icon_size_spin.blockSignals(True)
-            self._icon_size_spin.setValue(clamped)
-            self._icon_size_spin.blockSignals(False)
-        self._apply_icon_size()
-
-    def _apply_icon_size(self) -> None:
-        icon_size_value = self._current_icon_size_value()
-        icon_size = QSize(icon_size_value, icon_size_value)
-        self._available_list.setIconSize(icon_size)
-        self._refresh_item_sizes()
-        tooltip = (
-            f"表示サイズ: {icon_size_value}px"
-            f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
-        )
-        self._icon_size_slider.setToolTip(tooltip)
-        self._icon_size_spin.setToolTip(tooltip)
-        if self._result_summary_label is not None and self._visible_entry_count:
-            self._update_summary_label()
-
-    def _icon_size_from_level(self, level: int) -> int:
-        return self._icon_size_levels.get(
-            level,
-            self._icon_size_levels.get(self._icon_size_default_level, 32),
-        )
-
-    def _current_icon_size_value(self) -> int:
-        """現在のアイコン表示サイズ（ピクセル）を返す。"""
-
-        return self._icon_size
-
-    def _list_item_size_hint(self) -> QSize:
-        font: QFontMetrics = self._available_list.fontMetrics()
-        icon_size = self._current_icon_size_value()
-        viewport = self._available_list.viewport()
-        viewport_width = viewport.width() if viewport is not None else 0
-        if viewport_width <= 0:
-            viewport_width = max(self.width() - 40, icon_size + 64)
-
-        line_spacing = font.lineSpacing()
-        leading = font.leading()
-        profile = self._current_profile
-
-        if profile.compact:
-            vertical_padding = max(10, leading + 6)
-            text_lines = 2
-            text_height = line_spacing * text_lines
-            height = max(icon_size + vertical_padding, text_height + vertical_padding)
-            width = max(220, viewport_width)
-            return QSize(width, height)
-
-        horizontal_gap = self._available_list.spacing()
-        columns = max(1, profile.grid_columns)
-        if viewport_width > 0 and profile.view_mode == QListWidget.IconMode:
-            total_spacing = horizontal_gap * max(columns - 1, 0)
-            usable_width = max(icon_size + 64, viewport_width - total_spacing)
-            width = max(icon_size + 72, usable_width // columns)
-        else:
-            width = max(icon_size + 72, viewport_width)
-
-        title_width = font.horizontalAdvance("M" * 18)
-        width = max(width, title_width + icon_size // 2)
-
-        vertical_padding = max(18, leading + 14)
-        text_lines = 2
-        text_height = line_spacing * text_lines
-        height = max(icon_size + vertical_padding, text_height + vertical_padding)
-        return QSize(width, height)
-
-    def _update_layout_for_size(self, size: QSize) -> None:
-        """ウィジェット幅に応じてレイアウトモードを切り替える。"""
-
-        width = size.width() if size is not None else self.width()
-        profile = self._select_layout_profile(width)
-        if profile != self._current_profile:
-            self._apply_profile(profile)
-
-        self._apply_icon_size()
-        self._refresh_item_sizes()
-        self._update_item_texts()
-        self._adjust_control_header(width)
-
-    def _format_entry_text(self, entry: NodeCatalogEntry) -> str:
-        """エントリー情報を表示用文字列に整形する。"""
-
-        title = entry.title.strip()
-        subtitle = entry.subtitle.strip()
-        node_type = entry.node_type.strip()
-
-        if self._compact_mode:
-            parts: List[str] = []
-            if title:
-                parts.append(title)
-            if subtitle:
-                parts.append(subtitle)
-            if not parts and node_type:
-                parts.append(node_type)
-            return " – ".join(parts) if len(parts) > 1 else (parts[0] if parts else "")
-
-        lines = [text for text in (title, subtitle) if text]
-        if not lines and node_type:
-            lines.append(node_type)
-        return "\n".join(lines)
-
-    def _update_item_texts(self) -> None:
-        """現在表示中の項目テキストを再整形する。"""
-
-        for index, entry in enumerate(self._catalog_entries):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
-            item.setText(self._format_entry_text(entry))
-        self._refresh_item_sizes()
-
-    def _refresh_item_sizes(self) -> None:
-        """リスト項目のサイズヒントを再計算して反映する。"""
-
-        item_size = self._list_item_size_hint()
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is not None:
-                item.setSizeHint(item_size)
-        self._available_list.updateGeometry()
-        self._available_list.scheduleDelayedItemsLayout()
-        viewport = self._available_list.viewport()
-        if viewport is not None:
-            viewport.update()
-        if self._available_list.viewMode() == QListWidget.IconMode:
-            self._available_list.setGridSize(item_size)
-
-    def _select_layout_profile(self, width: int) -> BrowserLayoutProfile:
-        for profile in self._layout_profiles:
-            if width >= profile.min_width:
-                return profile
-        return self._layout_profiles[-1]
-
-    def _apply_profile(self, profile: BrowserLayoutProfile) -> None:
-        self._current_profile = profile
-        self._compact_mode = profile.compact
-
-        self._available_list.setViewMode(profile.view_mode)
-        self._available_list.setFlow(profile.flow)
-        self._available_list.setWrapping(profile.wrapping)
-        self._available_list.setSpacing(12 if profile.compact else 16)
-        self._available_list.setWordWrap(not profile.compact)
-
-        if self._icon_control_container is not None:
-            self._icon_control_container.setVisible(profile.view_mode == QListWidget.IconMode)
-        if self._control_header is not None:
-            self._control_header.setVisible(True)
-
-        if self._card_layout is not None:
-            left, top, right, bottom = profile.card_padding
-            self._card_layout.setContentsMargins(left, top, right, bottom)
-            self._card_layout.setSpacing(profile.section_spacing)
-        if self._outer_layout is not None:
-            self._outer_layout.setSpacing(profile.section_spacing)
-        if self._section_frames:
-            padding = getattr(profile, "section_padding", (16, 16, 16, 16))
-            for section in self._section_frames:
-                layout = section.layout()
-                if layout is None:
-                    continue
-                layout.setContentsMargins(*padding)
-                layout.setSpacing(profile.section_spacing)
-
-        self._refresh_item_sizes()
-        self._update_summary_label()
-        self._adjust_control_header(self.width())
-
-    def _adjust_control_header(self, width: int) -> None:
-        if self._control_header_layout is None:
-            return
-        is_vertical = width < 720 or self._compact_mode
-        target_direction = (
-            QBoxLayout.TopToBottom if is_vertical else QBoxLayout.LeftToRight
-        )
-        if self._control_header_layout.direction() != target_direction:
-            self._control_header_layout.setDirection(target_direction)
-        if self._control_header_spacer is not None:
-            if is_vertical:
-                self._control_header_spacer.changeSize(
-                    0,
-                    0,
-                    QSizePolicy.Minimum,
-                    QSizePolicy.Minimum,
-                )
-            else:
-                self._control_header_spacer.changeSize(
-                    0,
-                    0,
-                    QSizePolicy.Expanding,
-                    QSizePolicy.Minimum,
-                )
-        if self._icon_control_container is not None:
-            alignment = Qt.AlignLeft if is_vertical else Qt.AlignRight
-            self._control_header_layout.setAlignment(
-                self._icon_control_container,
-                alignment,
-            )
-        if self._control_header_layout.spacing() != (4 if is_vertical else 8):
-            self._control_header_layout.setSpacing(4 if is_vertical else 8)
-        if self._control_header is not None:
-            self._control_header.updateGeometry()
-        self._control_header_layout.invalidate()
-
-    def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
-        key = entry.node_type
-        cached = self._icon_cache.get(key)
-        if cached is not None:
-            return cached
-
-        pixmap = self._create_entry_pixmap(entry)
-        icon = QIcon(pixmap)
-        self._icon_cache[key] = icon
-        return icon
-
-    def _create_entry_pixmap(self, entry: NodeCatalogEntry) -> QPixmap:
-        base_size = max(self._icon_size_levels.values(), default=80)
-        # 余裕を持った描画サイズを確保し、高解像度のアイコンを生成する。
-        pixmap_size = int(base_size * 1.6)
-        pixmap = QPixmap(pixmap_size, pixmap_size)
-        pixmap.fill(Qt.transparent)
-
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-
-        rect_margin = max(6, pixmap_size // 12)
-        rect = pixmap.rect().adjusted(rect_margin, rect_margin, -rect_margin, -rect_margin)
-
-        fill_color = self._genre_color(entry.genre)
-        painter.setBrush(fill_color)
-
-        border_color = QColor(fill_color)
-        border_color = border_color.darker(125)
-        border_color.setAlpha(255)
-        border_pen = QPen(border_color)
-        border_pen.setWidth(max(2, pixmap_size // 24))
-        painter.setPen(border_pen)
-        corner_radius = max(6, pixmap_size // 16)
-        painter.drawRoundedRect(rect, corner_radius, corner_radius)
-
-        title_source = entry.title or entry.subtitle or entry.node_type
-        label_text = self._icon_label_text(title_source)
-        if label_text:
-            text_color = QColor(255, 255, 255)
-            painter.setPen(text_color)
-            font = QFont()
-            font.setBold(True)
-            font.setPointSizeF(pixmap_size * 0.28)
-            painter.setFont(font)
-            painter.drawText(rect, Qt.AlignCenter, label_text)
-
-        painter.end()
-        return pixmap
-
-    def _genre_color(self, genre: str) -> QColor:
-        palette = {
-            "ツール環境": QColor(14, 165, 233),
-            "ワークフロー": QColor(34, 197, 94),
-            "メモ": QColor(249, 115, 22),
-        }
-        color = palette.get(genre)
-        if color is None:
-            color = QColor(99, 102, 241)
-        return color
-
-    def _icon_label_text(self, source_text: str) -> str:
-        for char in source_text:
-            if char.isalnum():
-                return char.upper()
-            if char.strip():
-                return char
-        return ""
-
-    def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
-        if self._result_summary_label is None:
-            return
-        if visible_count is None:
-            visible_count = sum(
-                0
-                if item is None or item.isHidden()
-                else 1
-                for item in (
-                    self._available_list.item(i)
-                    for i in range(self._available_list.count())
-                )
-            )
-        self._visible_entry_count = visible_count
-        if self._current_genre:
-            total = self._genre_total_count(self._current_genre)
-            text = f"{visible_count} 件 / {total} 件（ジャンル: {self._current_genre}）"
-        else:
-            text = f"{visible_count} 件 / 全 {self._total_entry_count} 件"
-        self._result_summary_label.setText(text)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -1232,7 +114,7 @@ class NodeEditorWindow(QMainWindow):
         self._timeline_start_date = date.today()
         self._timeline_reference_date: Optional[date] = self._timeline_start_date
         self._timeline_overlay: Optional[TimelineGridOverlay] = None
-        self._timeline_snap_manager: Optional[TimelineSnapManager] = None
+        self._timeline_snap_controller: Optional[TimelineSnapController] = None
         self._timeline_width_spin: Optional[QSpinBox] = None
 
         self._node_spawn_offset = 0
@@ -1247,9 +129,13 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
-        self._project_service = project_service or ProjectService()
-        self._user_manager = user_manager or UserSettingsManager()
-        self._tool_service = ToolEnvironmentService()
+        self._coordinator = NodeEditorCoordinator(
+            project_service=project_service,
+            user_manager=user_manager,
+        )
+        self._project_service = self._coordinator.project_service
+        self._user_manager = self._coordinator.user_manager
+        self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
         self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
 
@@ -1276,15 +162,19 @@ class NodeEditorWindow(QMainWindow):
         self._align_inputs_action: Optional[QAction] = None
         self._align_outputs_action: Optional[QAction] = None
 
-        self._timeline_snap_manager = TimelineSnapManager(
-            self._graph,
+        snap_settings = TimelineSnapSettings(
             base_unit=self._timeline_base_unit,
+            column_units=self._timeline_column_units,
             origin_x=self._timeline_origin_x,
+        )
+        self._timeline_snap_controller = TimelineSnapController(
+            self._graph,
+            settings=snap_settings,
             should_snap=self._should_snap_node,
             modified_callback=self._set_modified,
         )
         self._graph.set_timeline_move_handler(
-            self._timeline_snap_manager.handle_nodes_moved
+            self._timeline_snap_controller.handle_nodes_moved
         )
         self._timeline_overlay = TimelineGridOverlay(self._graph_widget)
         self._update_timeline_overlay_settings()
@@ -1604,13 +494,13 @@ class NodeEditorWindow(QMainWindow):
             self._notify_start_window_refresh()
 
     def _open_tool_settings(self) -> None:
-        dialog = ToolRegistryDialog(self._tool_service, self)
+        dialog = ToolRegistryDialog(self._coordinator.tool_service, self)
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
 
     def _open_tool_environment_manager(self) -> None:
-        dialog = ToolEnvironmentManagerDialog(self._tool_service, self)
+        dialog = ToolEnvironmentManagerDialog(self._coordinator.tool_service, self)
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
@@ -1664,37 +554,29 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_content_browser_entries()
 
     def _refresh_tool_configuration(self) -> None:
-        try:
-            tools = self._tool_service.list_tools()
-        except OSError as exc:
-            LOGGER.error("ツール情報の取得に失敗しました: %s", exc, exc_info=True)
-            tools = []
-        try:
-            environments = self._tool_service.list_environments()
-        except OSError as exc:
-            LOGGER.error("環境情報の取得に失敗しました: %s", exc, exc_info=True)
-            environments = []
-
-        self._registered_tools = {tool.tool_id: tool for tool in tools}
-        filtered_envs: Dict[str, ToolEnvironmentDefinition] = {}
-        for environment in environments:
-            if environment.tool_id in self._registered_tools:
-                filtered_envs[environment.environment_id] = environment
-            else:
-                LOGGER.warning(
-                    "ツール %s が存在しないため環境 %s を読み込みから除外しました。",
-                    environment.tool_id,
-                    environment.environment_id,
-                )
-        self._tool_environments = filtered_envs
+        snapshot = self._coordinator.load_tool_snapshot()
+        self._tool_snapshot = snapshot
+        self._registered_tools = dict(snapshot.tools)
+        self._tool_environments = dict(snapshot.environments)
         self._refresh_content_browser_entries()
 
     def _refresh_content_browser_entries(self) -> None:
         if self._content_browser is None:
             return
-        self._content_browser.set_available_nodes(
-            self._build_available_node_entries()
-        )
+        records = self._build_available_node_records()
+        if self._tool_snapshot is not None:
+            records = self._coordinator.extend_catalog(records, self._tool_snapshot)
+        entries = [
+            NodeCatalogEntry(
+                node_type=record.node_type,
+                title=record.title,
+                subtitle=record.subtitle,
+                genre=record.genre,
+                keywords=record.keywords,
+            )
+            for record in records
+        ]
+        self._content_browser.set_catalog_entries(entries)
 
     # ------------------------------------------------------------------
     # プロジェクトコンテキスト管理
@@ -1751,56 +633,31 @@ class NodeEditorWindow(QMainWindow):
         self._notify_start_window_refresh()
         return True
 
-    def _build_available_node_entries(self) -> List[Dict[str, str]]:
-        entries: List[Dict[str, str]] = [
-            {
-                "type": "sotugyo.demo.TaskNode",
-                "title": TaskNode.NODE_NAME,
-                "subtitle": "工程を構成するタスクノード",
-                "genre": "ワークフロー",
-                "keywords": ["task", "workflow", "工程"],
-            },
-            {
-                "type": "sotugyo.demo.ReviewNode",
-                "title": ReviewNode.NODE_NAME,
-                "subtitle": "成果物を検証するレビューノード",
-                "genre": "ワークフロー",
-                "keywords": ["review", "チェック", "検証"],
-            },
-            {
-                "type": MemoNode.node_type_identifier(),
-                "title": MemoNode.NODE_NAME,
-                "subtitle": "ノードエディタ上で自由に記述できるメモ",
-                "genre": "メモ",
-                "keywords": ["note", "メモ", "記録"],
-            },
+    def _build_available_node_records(self) -> List[NodeCatalogRecord]:
+        records: List[NodeCatalogRecord] = [
+            NodeCatalogRecord(
+                node_type="sotugyo.demo.TaskNode",
+                title=TaskNode.NODE_NAME,
+                subtitle="工程を構成するタスクノード",
+                genre="ワークフロー",
+                keywords=("task", "workflow", "工程"),
+            ),
+            NodeCatalogRecord(
+                node_type="sotugyo.demo.ReviewNode",
+                title=ReviewNode.NODE_NAME,
+                subtitle="成果物を検証するレビューノード",
+                genre="ワークフロー",
+                keywords=("review", "チェック", "検証"),
+            ),
+            NodeCatalogRecord(
+                node_type=MemoNode.node_type_identifier(),
+                title=MemoNode.NODE_NAME,
+                subtitle="ノードエディタ上で自由に記述できるメモ",
+                genre="メモ",
+                keywords=("note", "メモ", "記録"),
+            ),
         ]
-
-        if self._tool_environments:
-            for environment in sorted(
-                self._tool_environments.values(), key=lambda item: item.name
-            ):
-                tool = self._registered_tools.get(environment.tool_id)
-                if tool is not None:
-                    subtitle_parts = [tool.display_name]
-                    if environment.version_label:
-                        subtitle_parts.append(environment.version_label)
-                    subtitle = " / ".join(subtitle_parts)
-                else:
-                    subtitle = "参照先ツールが見つかりません"
-                entries.append(
-                    {
-                        "type": f"tool-environment:{environment.environment_id}",
-                        "title": environment.name,
-                        "subtitle": subtitle,
-                        "genre": "ツール環境",
-                        "keywords": [
-                            environment.environment_id,
-                            tool.display_name if tool is not None else "",
-                        ],
-                    }
-                )
-        return entries
+        return records
 
     def _open_graph_context_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
@@ -1939,25 +796,26 @@ class NodeEditorWindow(QMainWindow):
             self._node_metadata.pop(node, None)
 
     def _on_graph_property_changed_timeline(self, node, prop_name: str, value: object) -> None:
-        if self._timeline_snap_manager is None:
+        if self._timeline_snap_controller is None:
             return
-        if self._timeline_snap_manager.handle_property_changed(node, prop_name, value):
+        if self._timeline_snap_controller.handle_property_changed(node, prop_name, value):
             self._update_timeline_overlay_settings()
 
     def _on_timeline_width_units_changed(self, value: int) -> None:
-        if self._timeline_snap_manager is None:
+        if self._timeline_snap_controller is None:
             return
-        if not self._timeline_snap_manager.set_column_units(value):
+        if not self._timeline_snap_controller.set_column_units(value):
             return
         self._timeline_column_units = max(1, int(value))
         self._update_timeline_overlay_settings()
-        self._timeline_snap_manager.snap_nodes(self._collect_all_nodes())
+        self._timeline_snap_controller.snap_nodes(self._collect_all_nodes())
 
     def _update_timeline_overlay_settings(self) -> None:
-        if self._timeline_overlay is None or self._timeline_snap_manager is None:
+        if self._timeline_overlay is None or self._timeline_snap_controller is None:
             return
-        self._timeline_overlay.set_column_width(self._timeline_snap_manager.column_width)
-        self._timeline_overlay.set_origin_x(self._timeline_snap_manager.origin_x)
+        self._timeline_snap_controller.set_origin_x(self._timeline_origin_x)
+        self._timeline_overlay.set_column_width(self._timeline_snap_controller.column_width)
+        self._timeline_overlay.set_origin_x(self._timeline_snap_controller.settings.origin_x)
         self._timeline_overlay.set_start_date(self._timeline_start_date)
 
     def _consider_timeline_date(self, assigned_at: Optional[str]) -> None:
@@ -1994,9 +852,9 @@ class NodeEditorWindow(QMainWindow):
             return None
 
     def _apply_timeline_constraints_to_nodes(self, nodes: Iterable) -> None:
-        if self._timeline_snap_manager is None:
+        if self._timeline_snap_controller is None:
             return
-        if self._timeline_snap_manager.snap_nodes(nodes):
+        if self._timeline_snap_controller.snap_nodes(nodes):
             self._update_timeline_overlay_settings()
 
     def _create_task_node(self) -> None:
