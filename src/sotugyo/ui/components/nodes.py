@@ -105,15 +105,17 @@ class MemoTextWidget(NodeBaseWidget):
         self._apply_explicit_size(target_width, target_height)
 
     def _apply_explicit_size(self, width: float, height: float) -> None:
+        min_width = float(self.MIN_CONTENT_WIDTH)
+        min_height = float(self.MIN_CONTENT_HEIGHT)
         container = self.widget()
         if container is not None:
-            container.setMinimumSize(width, height)
+            container.setMinimumSize(min_width, min_height)
             container.setMaximumSize(width, height)
             container.resize(width, height)
-        self.setMinimumSize(width, height)
+        self.setMinimumSize(min_width, min_height)
         self.setMaximumSize(width, height)
         self.setPreferredSize(width, height)
-        self._editor.setMinimumSize(width, height)
+        self._editor.setMinimumSize(min_width, min_height)
         self._editor.setMaximumSize(width, height)
         self._editor.resize(width, height)
         self.update()
