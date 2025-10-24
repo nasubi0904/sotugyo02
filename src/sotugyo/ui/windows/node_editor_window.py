@@ -875,6 +875,8 @@ class NodeEditorWindow(QMainWindow):
         }
         self._inspector_dock: Optional[QDockWidget] = None
         self._content_dock: Optional[QDockWidget] = None
+        self._align_inputs_button: Optional[QPushButton] = None
+        self._align_outputs_button: Optional[QPushButton] = None
 
         self._init_ui()
         self._create_menus()
@@ -1071,6 +1073,24 @@ class NodeEditorWindow(QMainWindow):
         layout.addLayout(memo_font_layout)
 
         self._set_memo_controls_enabled(False)
+
+        align_label = QLabel("接続ノード整列", widget)
+        align_label.setObjectName("panelTitle")
+        layout.addWidget(align_label)
+
+        self._align_inputs_button = QPushButton(
+            "入力側ノードを整列", widget
+        )
+        self._align_inputs_button.clicked.connect(self._align_input_nodes)
+        self._align_inputs_button.setEnabled(False)
+        layout.addWidget(self._align_inputs_button)
+
+        self._align_outputs_button = QPushButton(
+            "出力側ノードを整列", widget
+        )
+        self._align_outputs_button.clicked.connect(self._align_output_nodes)
+        self._align_outputs_button.setEnabled(False)
+        layout.addWidget(self._align_outputs_button)
 
         layout.addStretch(1)
 
@@ -1752,6 +1772,7 @@ class NodeEditorWindow(QMainWindow):
             if self._rename_button is not None:
                 self._rename_button.setEnabled(False)
             self._update_memo_controls(None)
+            self._update_alignment_controls(None)
             return
 
         name = node.name() if hasattr(node, "name") else str(node)
@@ -1788,6 +1809,7 @@ class NodeEditorWindow(QMainWindow):
             self._rename_button.setEnabled(True)
 
         self._update_memo_controls(node)
+        self._update_alignment_controls(node)
 
     def _apply_node_rename(self) -> None:
         if self._current_node is None or self._rename_input is None:
@@ -1847,6 +1869,146 @@ class NodeEditorWindow(QMainWindow):
             self._memo_text_edit.setEnabled(enabled)
         if self._memo_font_spin is not None:
             self._memo_font_spin.setEnabled(enabled)
+
+    def _update_alignment_controls(self, node) -> None:
+        input_nodes = self._collect_connected_nodes(node, direction="inputs")
+        output_nodes = self._collect_connected_nodes(node, direction="outputs")
+        if self._align_inputs_button is not None:
+            self._align_inputs_button.setEnabled(bool(input_nodes))
+        if self._align_outputs_button is not None:
+            self._align_outputs_button.setEnabled(bool(output_nodes))
+
+    def _align_input_nodes(self) -> None:
+        if self._current_node is None:
+            self._show_info_dialog("整列するノードを選択してください。")
+            return
+        self._align_connected_nodes(self._current_node, direction="inputs")
+
+    def _align_output_nodes(self) -> None:
+        if self._current_node is None:
+            self._show_info_dialog("整列するノードを選択してください。")
+            return
+        self._align_connected_nodes(self._current_node, direction="outputs")
+
+    def _collect_connected_nodes(self, node, *, direction: str) -> List:
+        if node is None:
+            return []
+        ports_func_name = "input_ports" if direction == "inputs" else "output_ports"
+        ports_getter = getattr(node, ports_func_name, None)
+        if not callable(ports_getter):
+            return []
+        connected_nodes: List = []
+        try:
+            ports = list(ports_getter())
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            return []
+        for port in ports:
+            connected_ports = getattr(port, "connected_ports", None)
+            if not callable(connected_ports):
+                continue
+            try:
+                links = list(connected_ports())
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                continue
+            for link in links:
+                node_getter = getattr(link, "node", None)
+                if not callable(node_getter):
+                    continue
+                try:
+                    other = node_getter()
+                except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                    continue
+                if other is None or other is node:
+                    continue
+                if other not in connected_nodes:
+                    connected_nodes.append(other)
+        return connected_nodes
+
+    def _align_connected_nodes(self, node, *, direction: str) -> None:
+        connected_nodes = self._collect_connected_nodes(node, direction=direction)
+        if not connected_nodes:
+            self._show_info_dialog("接続されているノードが見つかりません。")
+            return
+
+        try:
+            base_x, base_y = node.pos()
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            self._show_warning_dialog("ノード位置を取得できませんでした。")
+            return
+
+        spacing = self._estimate_node_spacing(connected_nodes)
+        horizontal_offset = self._estimate_horizontal_offset(node, connected_nodes)
+
+        sorted_nodes = sorted(connected_nodes, key=lambda n: self._safe_node_pos(n)[1])
+        count = len(sorted_nodes)
+        start_y = base_y - spacing * (count - 1) / 2
+
+        updated = False
+        for index, target in enumerate(sorted_nodes):
+            target_x = (
+                base_x - horizontal_offset
+                if direction == "inputs"
+                else base_x + horizontal_offset
+            )
+            target_y = start_y + spacing * index
+            if self._move_node_if_needed(target, target_x, target_y):
+                updated = True
+
+        if updated:
+            self._set_modified(True)
+
+    def _estimate_node_spacing(self, nodes: List) -> float:
+        default_spacing = 160.0
+        heights: List[float] = []
+        for node in nodes:
+            height = self._read_numeric_property(node, "height")
+            if height is not None:
+                heights.append(float(height))
+        if not heights:
+            return default_spacing
+        average_height = sum(heights) / len(heights)
+        return max(default_spacing, average_height + 40.0)
+
+    def _estimate_horizontal_offset(self, base_node, connected_nodes: List) -> float:
+        base_width = self._read_numeric_property(base_node, "width") or 240
+        connected_widths = [
+            self._read_numeric_property(node, "width") or 240 for node in connected_nodes
+        ]
+        max_connected = max(connected_widths) if connected_widths else 240
+        return base_width / 2 + max_connected / 2 + 120
+
+    def _read_numeric_property(self, node, name: str) -> Optional[float]:
+        getter = getattr(node, "get_property", None)
+        if not callable(getter):
+            return None
+        try:
+            value = getter(name)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            return None
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+    def _safe_node_pos(self, node) -> Tuple[float, float]:
+        try:
+            pos = node.pos()
+            if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                return float(pos[0]), float(pos[1])
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            pass
+        return 0.0, 0.0
+
+    def _move_node_if_needed(self, node, pos_x: float, pos_y: float) -> bool:
+        current_x, current_y = self._safe_node_pos(node)
+        if abs(current_x - pos_x) < 1e-3 and abs(current_y - pos_y) < 1e-3:
+            return False
+        try:
+            node.set_pos(pos_x, pos_y)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("ノード位置の更新に失敗しました", exc_info=True)
+            return False
+        return True
 
     def _update_memo_controls(self, node) -> None:
         if self._memo_text_edit is None or self._memo_font_spin is None:
