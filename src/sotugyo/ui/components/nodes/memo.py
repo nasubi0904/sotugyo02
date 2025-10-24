@@ -5,7 +5,15 @@ from __future__ import annotations
 from typing import ClassVar, Optional
 
 from PySide6.QtCore import QPointF, Qt, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextOption, QUndoCommand
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QTextCursor,
+    QTextOption,
+    QUndoCommand,
+)
 from PySide6.QtWidgets import QGraphicsItem, QSizePolicy, QTextEdit
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
@@ -67,9 +75,27 @@ class MemoTextWidget(NodeBaseWidget):
         return self._editor.toPlainText()
 
     def set_value(self, text: str = "") -> None:
+        normalized = "" if text is None else str(text)
+        if self._editor.toPlainText() == normalized:
+            return
+        cursor = self._editor.textCursor()
+        position = cursor.position()
+        anchor = cursor.anchor()
+        text_length = len(normalized)
+        position = max(0, min(position, text_length))
+        anchor = max(0, min(anchor, text_length))
         self._block_signal = True
-        self._editor.setPlainText(text or "")
-        self._block_signal = False
+        try:
+            self._editor.setPlainText(normalized)
+        finally:
+            self._block_signal = False
+        restored = self._editor.textCursor()
+        restored.setPosition(anchor)
+        if anchor != position:
+            restored.setPosition(position, QTextCursor.KeepAnchor)
+        else:
+            restored.setPosition(position)
+        self._editor.setTextCursor(restored)
 
     def set_font_point_size(self, size: int) -> None:
         font = QFont(self._editor.font())
