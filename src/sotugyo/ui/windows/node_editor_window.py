@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
@@ -71,6 +72,20 @@ from ..dialogs import (
 from ..style import apply_base_style
 
 
+@dataclass(frozen=True)
+class BrowserLayoutProfile:
+    """コンテンツブラウザのレイアウト設定。"""
+
+    min_width: int
+    view_mode: QListView.ViewMode
+    flow: QListView.Flow
+    wrapping: bool
+    compact: bool
+    grid_columns: int
+    section_spacing: int
+    card_padding: Tuple[int, int, int, int]
+
+
 class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ風ウィジェット。"""
 
@@ -92,13 +107,74 @@ class NodeContentBrowser(QWidget):
             3: 40,
             4: 48,
             5: 64,
+            6: 80,
         }
-        self._icon_size_default_level: int = 2
+        self._icon_size_default_level: int = 3
         self._icon_size_level: int = self._icon_size_default_level
         self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
         self._compact_mode: bool = False
         self._icon_control_container: Optional[QWidget] = None
         self._menu_bar: Optional[QMenuBar] = None
+        self._outer_layout: Optional[QVBoxLayout] = None
+        self._card_frame: Optional[QFrame] = None
+        self._card_layout: Optional[QVBoxLayout] = None
+        self._control_header: Optional[QWidget] = None
+        self._result_summary_label: Optional[QLabel] = None
+        self._layout_profiles: List[BrowserLayoutProfile] = [
+            BrowserLayoutProfile(
+                min_width=1080,
+                view_mode=QListWidget.IconMode,
+                flow=QListView.LeftToRight,
+                wrapping=True,
+                compact=False,
+                grid_columns=5,
+                section_spacing=16,
+                card_padding=(24, 24, 24, 24),
+            ),
+            BrowserLayoutProfile(
+                min_width=860,
+                view_mode=QListWidget.IconMode,
+                flow=QListView.LeftToRight,
+                wrapping=True,
+                compact=False,
+                grid_columns=4,
+                section_spacing=16,
+                card_padding=(20, 20, 20, 20),
+            ),
+            BrowserLayoutProfile(
+                min_width=660,
+                view_mode=QListWidget.IconMode,
+                flow=QListView.LeftToRight,
+                wrapping=True,
+                compact=False,
+                grid_columns=3,
+                section_spacing=14,
+                card_padding=(20, 20, 20, 20),
+            ),
+            BrowserLayoutProfile(
+                min_width=520,
+                view_mode=QListWidget.IconMode,
+                flow=QListView.LeftToRight,
+                wrapping=True,
+                compact=False,
+                grid_columns=2,
+                section_spacing=12,
+                card_padding=(18, 18, 18, 18),
+            ),
+            BrowserLayoutProfile(
+                min_width=0,
+                view_mode=QListWidget.ListMode,
+                flow=QListView.TopToBottom,
+                wrapping=False,
+                compact=True,
+                grid_columns=1,
+                section_spacing=10,
+                card_padding=(16, 16, 16, 16),
+            ),
+        ]
+        self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
+        self._total_entry_count: int = 0
+        self._visible_entry_count: int = 0
 
         self._setup_ui()
         self._connect_signals()
@@ -115,12 +191,15 @@ class NodeContentBrowser(QWidget):
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(12)
+        self._outer_layout = outer_layout
 
         card = QFrame(self)
         card.setObjectName("panelCard")
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 20, 20, 20)
         card_layout.setSpacing(12)
+        self._card_frame = card
+        self._card_layout = card_layout
 
         menu_bar = self._create_menu_bar(card)
         if menu_bar is not None:
@@ -154,12 +233,21 @@ class NodeContentBrowser(QWidget):
         self._configure_list_widget(self._available_list)
 
         icon_control = self._create_icon_size_control(card)
+        summary_widget = self._create_result_summary(card)
+        header_container = QWidget(card)
+        header_container_layout = QHBoxLayout(header_container)
+        header_container_layout.setContentsMargins(0, 0, 0, 0)
+        header_container_layout.setSpacing(8)
+        header_container_layout.addWidget(summary_widget)
+        header_container_layout.addStretch(1)
+        header_container_layout.addWidget(icon_control)
+        self._control_header = header_container
 
         card_layout.addWidget(
             self._build_section(
                 "追加可能ノード",
                 self._available_list,
-                header_widget=icon_control,
+                header_widget=header_container,
             ),
             1,
         )
@@ -186,7 +274,7 @@ class NodeContentBrowser(QWidget):
         widget.setIconSize(
             QSize(self._current_icon_size_value(), self._current_icon_size_value())
         )
-        widget.setSpacing(12)
+        widget.setSpacing(16)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -202,7 +290,7 @@ class NodeContentBrowser(QWidget):
         frame.setObjectName("inspectorSection")
         frame_layout = QVBoxLayout(frame)
         frame_layout.setContentsMargins(16, 16, 16, 16)
-        frame_layout.setSpacing(10)
+        frame_layout.setSpacing(self._current_profile.section_spacing)
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
@@ -252,6 +340,25 @@ class NodeContentBrowser(QWidget):
 
         return container
 
+    def _create_result_summary(self, parent: QWidget) -> QWidget:
+        container = QWidget(parent)
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        caption = QLabel("表示件数", container)
+        caption.setProperty("hint", "secondary")
+
+        summary = QLabel("0 件", container)
+        summary.setObjectName("contentSummaryLabel")
+        summary.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._result_summary_label = summary
+
+        layout.addWidget(caption)
+        layout.addWidget(summary)
+
+        return container
+
     def _connect_signals(self) -> None:
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
@@ -261,6 +368,7 @@ class NodeContentBrowser(QWidget):
 
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
+        self._total_entry_count = len(entries)
         self._available_list.clear()
         alignment = Qt.AlignLeft | Qt.AlignTop
         for entry in entries:
@@ -280,6 +388,7 @@ class NodeContentBrowser(QWidget):
         self._apply_filter()
         self._apply_icon_size()
         self._update_item_texts()
+        self._update_summary_label()
 
     def focus_search(self) -> None:
         self._search_line.setFocus()
@@ -299,6 +408,7 @@ class NodeContentBrowser(QWidget):
 
     def _apply_filter(self) -> None:
         keyword = self._search_line.text().strip().lower()
+        visible_count = 0
         for index in range(self._available_list.count()):
             item = self._available_list.item(index)
             if item is None:
@@ -306,7 +416,12 @@ class NodeContentBrowser(QWidget):
             search_text = item.data(Qt.UserRole + 1)
             if not isinstance(search_text, str):
                 search_text = item.text().lower()
-            item.setHidden(bool(keyword) and keyword not in search_text)
+            is_hidden = bool(keyword) and keyword not in search_text
+            item.setHidden(is_hidden)
+            if not is_hidden:
+                visible_count += 1
+        self._visible_entry_count = visible_count
+        self._update_summary_label(visible_count)
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
@@ -345,6 +460,8 @@ class NodeContentBrowser(QWidget):
         )
         self._icon_size_slider.setToolTip(tooltip)
         self._icon_size_spin.setToolTip(tooltip)
+        if self._result_summary_label is not None and self._visible_entry_count:
+            self._update_summary_label()
 
     def _icon_size_from_level(self, level: int) -> int:
         return self._icon_size_levels.get(
@@ -367,20 +484,30 @@ class NodeContentBrowser(QWidget):
 
         line_spacing = font.lineSpacing()
         leading = font.leading()
+        profile = self._current_profile
 
-        if self._compact_mode:
-            vertical_padding = max(12, leading + 8)
+        if profile.compact:
+            vertical_padding = max(10, leading + 6)
             text_lines = 2
             text_height = line_spacing * text_lines
             height = max(icon_size + vertical_padding, text_height + vertical_padding)
-            width = max(100, viewport_width)
+            width = max(220, viewport_width)
             return QSize(width, height)
 
-        vertical_padding = max(20, leading + 16)
+        horizontal_gap = self._available_list.spacing()
+        columns = max(1, profile.grid_columns)
+        if viewport_width > 0 and profile.view_mode == QListWidget.IconMode:
+            total_spacing = horizontal_gap * max(columns - 1, 0)
+            usable_width = max(icon_size + 64, viewport_width - total_spacing)
+            width = max(icon_size + 72, usable_width // columns)
+        else:
+            width = max(icon_size + 72, viewport_width)
+
+        title_width = font.horizontalAdvance("M" * 18)
+        width = max(width, title_width + icon_size // 2)
+
+        vertical_padding = max(18, leading + 14)
         text_lines = 2
-        text_block_width = font.horizontalAdvance("M" * 16)
-        min_width = icon_size + font.averageCharWidth() * 8 + 32
-        width = max(min_width, min(viewport_width, text_block_width + 32))
         text_height = line_spacing * text_lines
         height = max(icon_size + vertical_padding, text_height + vertical_padding)
         return QSize(width, height)
@@ -389,23 +516,9 @@ class NodeContentBrowser(QWidget):
         """ウィジェット幅に応じてレイアウトモードを切り替える。"""
 
         width = size.width() if size is not None else self.width()
-        compact_threshold = 520
-        compact_mode = width < compact_threshold
-        mode_changed = compact_mode != self._compact_mode
-        self._compact_mode = compact_mode
-
-        if self._icon_control_container is not None:
-            self._icon_control_container.setVisible(not self._compact_mode)
-
-        if mode_changed:
-            if self._compact_mode:
-                self._available_list.setViewMode(QListWidget.ListMode)
-                self._available_list.setFlow(QListView.TopToBottom)
-                self._available_list.setWrapping(False)
-            else:
-                self._available_list.setViewMode(QListWidget.IconMode)
-                self._available_list.setFlow(QListView.LeftToRight)
-                self._available_list.setWrapping(True)
+        profile = self._select_layout_profile(width)
+        if profile != self._current_profile:
+            self._apply_profile(profile)
 
         self._apply_icon_size()
         self._refresh_item_sizes()
@@ -456,6 +569,51 @@ class NodeContentBrowser(QWidget):
         viewport = self._available_list.viewport()
         if viewport is not None:
             viewport.update()
+        if self._available_list.viewMode() == QListWidget.IconMode:
+            self._available_list.setGridSize(item_size)
+
+    def _select_layout_profile(self, width: int) -> BrowserLayoutProfile:
+        for profile in self._layout_profiles:
+            if width >= profile.min_width:
+                return profile
+        return self._layout_profiles[-1]
+
+    def _apply_profile(self, profile: BrowserLayoutProfile) -> None:
+        self._current_profile = profile
+        self._compact_mode = profile.compact
+
+        self._available_list.setViewMode(profile.view_mode)
+        self._available_list.setFlow(profile.flow)
+        self._available_list.setWrapping(profile.wrapping)
+        self._available_list.setSpacing(12 if profile.compact else 16)
+        self._available_list.setWordWrap(not profile.compact)
+
+        if self._icon_control_container is not None:
+            self._icon_control_container.setVisible(profile.view_mode == QListWidget.IconMode)
+        if self._control_header is not None:
+            self._control_header.setVisible(True)
+
+        if self._card_layout is not None:
+            left, top, right, bottom = profile.card_padding
+            self._card_layout.setContentsMargins(left, top, right, bottom)
+            self._card_layout.setSpacing(profile.section_spacing)
+        if self._outer_layout is not None:
+            self._outer_layout.setSpacing(profile.section_spacing)
+
+        self._refresh_item_sizes()
+        self._update_summary_label()
+
+    def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
+        if visible_count is None:
+            visible_count = self._visible_entry_count or sum(
+                0 if item is None or item.isHidden() else 1
+                for item in (self._available_list.item(i) for i in range(self._available_list.count()))
+            )
+            self._visible_entry_count = visible_count
+        if self._result_summary_label is None:
+            return
+        total = self._total_entry_count
+        self._result_summary_label.setText(f"{visible_count} 件 / 全 {total} 件")
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
