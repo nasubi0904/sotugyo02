@@ -15,11 +15,16 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QCloseEvent,
+    QFont,
     QFontMetrics,
     QColor,
     QPen,
     QKeySequence,
+    QPainter,
+    QPen,
+    QPixmap,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -53,6 +58,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QSizePolicy,
     QTabWidget,
+    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -453,6 +459,7 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
+        self._icon_cache: Dict[str, QIcon] = {}
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
@@ -763,6 +770,7 @@ class NodeContentBrowser(QWidget):
         self._catalog_entries = catalog_entries
         self._total_entry_count = len(catalog_entries)
         self._available_list.clear()
+        self._icon_cache.clear()
 
         alignment = Qt.AlignLeft | Qt.AlignTop
         item_size = self._list_item_size_hint()
@@ -774,6 +782,7 @@ class NodeContentBrowser(QWidget):
             item.setToolTip(entry.node_type)
             item.setTextAlignment(alignment)
             item.setSizeHint(item_size)
+            item.setIcon(self._icon_for_entry(entry))
             self._available_list.addItem(item)
 
         self._populate_genre_options()
@@ -1098,6 +1107,75 @@ class NodeContentBrowser(QWidget):
             self._control_header.updateGeometry()
         self._control_header_layout.invalidate()
 
+    def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
+        key = entry.node_type
+        cached = self._icon_cache.get(key)
+        if cached is not None:
+            return cached
+
+        pixmap = self._create_entry_pixmap(entry)
+        icon = QIcon(pixmap)
+        self._icon_cache[key] = icon
+        return icon
+
+    def _create_entry_pixmap(self, entry: NodeCatalogEntry) -> QPixmap:
+        base_size = max(self._icon_size_levels.values(), default=80)
+        # 余裕を持った描画サイズを確保し、高解像度のアイコンを生成する。
+        pixmap_size = int(base_size * 1.6)
+        pixmap = QPixmap(pixmap_size, pixmap_size)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect_margin = max(6, pixmap_size // 12)
+        rect = pixmap.rect().adjusted(rect_margin, rect_margin, -rect_margin, -rect_margin)
+
+        fill_color = self._genre_color(entry.genre)
+        painter.setBrush(fill_color)
+
+        border_color = QColor(fill_color)
+        border_color = border_color.darker(125)
+        border_color.setAlpha(255)
+        border_pen = QPen(border_color)
+        border_pen.setWidth(max(2, pixmap_size // 24))
+        painter.setPen(border_pen)
+        corner_radius = max(6, pixmap_size // 16)
+        painter.drawRoundedRect(rect, corner_radius, corner_radius)
+
+        title_source = entry.title or entry.subtitle or entry.node_type
+        label_text = self._icon_label_text(title_source)
+        if label_text:
+            text_color = QColor(255, 255, 255)
+            painter.setPen(text_color)
+            font = QFont()
+            font.setBold(True)
+            font.setPointSizeF(pixmap_size * 0.28)
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignCenter, label_text)
+
+        painter.end()
+        return pixmap
+
+    def _genre_color(self, genre: str) -> QColor:
+        palette = {
+            "ツール環境": QColor(14, 165, 233),
+            "ワークフロー": QColor(34, 197, 94),
+            "メモ": QColor(249, 115, 22),
+        }
+        color = palette.get(genre)
+        if color is None:
+            color = QColor(99, 102, 241)
+        return color
+
+    def _icon_label_text(self, source_text: str) -> str:
+        for char in source_text:
+            if char.isalnum():
+                return char.upper()
+            if char.strip():
+                return char
+        return ""
+
     def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
         if self._result_summary_label is None:
             return
@@ -1193,8 +1271,9 @@ class NodeEditorWindow(QMainWindow):
         }
         self._inspector_dock: Optional[QDockWidget] = None
         self._content_dock: Optional[QDockWidget] = None
-        self._align_inputs_button: Optional[QToolButton] = None
-        self._align_outputs_button: Optional[QToolButton] = None
+        self._alignment_toolbar: Optional[QToolBar] = None
+        self._align_inputs_action: Optional[QAction] = None
+        self._align_outputs_action: Optional[QAction] = None
 
         self._timeline_snap_manager = TimelineSnapManager(
             self._graph,
@@ -1241,9 +1320,12 @@ class NodeEditorWindow(QMainWindow):
         central_layout = QHBoxLayout(central)
         central_layout.setContentsMargins(16, 16, 16, 16)
         central_layout.setSpacing(16)
-        central_layout.addWidget(self._build_graph_toolbar())
         central_layout.addWidget(self._graph_widget, 1)
         self.setCentralWidget(central)
+
+        alignment_toolbar = self._create_alignment_toolbar()
+        self.addToolBar(Qt.LeftToolBarArea, alignment_toolbar)
+        self._alignment_toolbar = alignment_toolbar
 
         self._side_tabs = QTabWidget(self)
         self._side_tabs.setMinimumWidth(260)
@@ -1348,6 +1430,8 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._inspector_dock.toggleViewAction())
         if self._content_dock is not None:
             view_menu.addAction(self._content_dock.toggleViewAction())
+        if self._alignment_toolbar is not None:
+            view_menu.addAction(self._alignment_toolbar.toggleViewAction())
 
     def _build_detail_tab(self) -> QWidget:
         widget = QFrame(self)
@@ -1414,34 +1498,34 @@ class NodeEditorWindow(QMainWindow):
 
         return widget
 
-    def _build_graph_toolbar(self) -> QWidget:
-        toolbar_frame = QFrame(self)
-        toolbar_frame.setObjectName("graphSideToolbar")
-        toolbar_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        toolbar_frame.setMinimumWidth(56)
+    def _create_alignment_toolbar(self) -> QToolBar:
+        toolbar = QToolBar("ノード整列", self)
+        toolbar.setObjectName("AlignmentToolBar")
+        toolbar.setOrientation(Qt.Vertical)
+        toolbar.setIconSize(QSize(24, 24))
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        toolbar.setAllowedAreas(Qt.LeftToolBarArea | Qt.RightToolBarArea)
+        toolbar.setMovable(True)
+        toolbar.setFloatable(True)
+        toolbar.setMinimumWidth(72)
+        layout = toolbar.layout()
+        if layout is not None:
+            layout.setSpacing(12)
+            layout.setContentsMargins(12, 16, 12, 16)
 
-        layout = QVBoxLayout(toolbar_frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        layout.setAlignment(Qt.AlignTop)
-
-        self._align_inputs_button = QToolButton(toolbar_frame)
-        self._align_inputs_button.setObjectName("alignInputsButton")
-        self._align_inputs_button.setIcon(
-            self.style().standardIcon(QStyle.SP_ArrowBack)
+        align_inputs_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.SP_ArrowBack), "入力側整列"
         )
-        self._align_inputs_button.setIconSize(QSize(24, 24))
-        self._align_inputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self._align_inputs_button.setAutoRaise(True)
-        self._align_inputs_button.setToolTip("入力側ノードを整列")
-        self._align_inputs_button.setEnabled(False)
-        self._align_inputs_button.clicked.connect(self._align_input_nodes)
-        layout.addWidget(self._align_inputs_button)
+        align_inputs_action.setToolTip("入力側ノードを整列")
+        align_inputs_action.setEnabled(False)
+        align_inputs_action.triggered.connect(self._align_input_nodes)
+        self._align_inputs_action = align_inputs_action
+        inputs_button = toolbar.widgetForAction(align_inputs_action)
+        if isinstance(inputs_button, QToolButton):
+            inputs_button.setAutoRaise(False)
 
-        self._align_outputs_button = QToolButton(toolbar_frame)
-        self._align_outputs_button.setObjectName("alignOutputsButton")
-        self._align_outputs_button.setIcon(
-            self.style().standardIcon(QStyle.SP_ArrowForward)
+        align_outputs_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.SP_ArrowForward), "出力側整列"
         )
         self._align_outputs_button.setIconSize(QSize(24, 24))
         self._align_outputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -1467,7 +1551,7 @@ class NodeEditorWindow(QMainWindow):
 
         layout.addStretch(1)
 
-        return toolbar_frame
+        return toolbar
 
     def _open_project_settings(self) -> None:
         if self._current_project_root is None:
@@ -2312,10 +2396,10 @@ class NodeEditorWindow(QMainWindow):
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
-        if self._align_inputs_button is not None:
-            self._align_inputs_button.setEnabled(bool(input_nodes))
-        if self._align_outputs_button is not None:
-            self._align_outputs_button.setEnabled(bool(output_nodes))
+        if self._align_inputs_action is not None:
+            self._align_inputs_action.setEnabled(bool(input_nodes))
+        if self._align_outputs_action is not None:
+            self._align_outputs_action.setEnabled(bool(output_nodes))
 
     def _align_input_nodes(self) -> None:
         if self._current_node is None:

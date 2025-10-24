@@ -201,6 +201,29 @@ QPushButton:disabled {
     border: 1px solid rgba(118, 146, 212, 0.18);
     color: rgba(230, 234, 245, 0.4);
 }
+QToolButton {
+    background-color: rgba(37, 55, 90, 0.82);
+    border: 1px solid rgba(118, 146, 212, 0.32);
+    border-radius: 12px;
+    color: #f0f4ff;
+    padding: 8px;
+    margin: 0;
+}
+QToolButton:hover {
+    background-color: rgba(99, 163, 255, 0.26);
+    border: 1px solid rgba(99, 163, 255, 0.6);
+}
+QToolButton:pressed,
+QToolButton:checked {
+    background-color: rgba(37, 99, 235, 0.72);
+    border: 1px solid rgba(99, 163, 255, 0.75);
+    color: #f8fbff;
+}
+QToolButton:disabled {
+    background-color: rgba(37, 55, 90, 0.38);
+    border: 1px solid rgba(118, 146, 212, 0.18);
+    color: rgba(232, 238, 252, 0.38);
+}
 QPushButton#primaryActionButton {
     background-color: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
@@ -313,6 +336,24 @@ QToolTip {
     border: 1px solid rgba(77, 99, 143, 0.3);
     padding: 8px 12px;
     border-radius: 10px;
+}
+QToolBar {
+    background-color: rgba(13, 23, 42, 0.94);
+    border: 1px solid rgba(148, 178, 219, 0.28);
+    border-radius: 16px;
+    padding: 10px;
+}
+QToolBar::separator {
+    background: rgba(148, 178, 219, 0.22);
+    width: 1px;
+    margin: 10px 4px;
+}
+QToolBar::handle:horizontal,
+QToolBar::handle:vertical {
+    background: rgba(99, 163, 255, 0.18);
+    border: 1px solid rgba(99, 163, 255, 0.28);
+    border-radius: 6px;
+    margin: 6px 4px;
 }
 QScrollBar:horizontal, QScrollBar:vertical {
     background: transparent;
@@ -555,6 +596,29 @@ QPushButton:disabled {
     border: 1px solid rgba(148, 163, 184, 0.25);
     color: rgba(148, 163, 184, 0.6);
 }
+QToolButton {
+    background-color: rgba(226, 232, 240, 0.78);
+    border: 1px solid rgba(148, 163, 184, 0.4);
+    border-radius: 12px;
+    color: #0f172a;
+    padding: 8px;
+    margin: 0;
+}
+QToolButton:hover {
+    background-color: rgba(59, 130, 246, 0.22);
+    border: 1px solid rgba(59, 130, 246, 0.5);
+}
+QToolButton:pressed,
+QToolButton:checked {
+    background-color: rgba(37, 99, 235, 0.78);
+    border: 1px solid rgba(37, 99, 235, 0.78);
+    color: #f8fafc;
+}
+QToolButton:disabled {
+    background-color: rgba(148, 163, 184, 0.24);
+    border: 1px solid rgba(148, 163, 184, 0.28);
+    color: rgba(30, 41, 59, 0.35);
+}
 QPushButton#primaryActionButton {
     background-color: qlineargradient(
         x1: 0, y1: 0, x2: 1, y2: 0,
@@ -660,6 +724,24 @@ QMenu::item {
 }
 QMenu::item:selected {
     background-color: rgba(59, 130, 246, 0.18);
+}
+QToolBar {
+    background-color: rgba(241, 245, 249, 0.94);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    border-radius: 16px;
+    padding: 10px;
+}
+QToolBar::separator {
+    background: rgba(148, 163, 184, 0.4);
+    width: 1px;
+    margin: 10px 4px;
+}
+QToolBar::handle:horizontal,
+QToolBar::handle:vertical {
+    background: rgba(59, 130, 246, 0.22);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    border-radius: 6px;
+    margin: 6px 4px;
 }
 QToolTip {
     color: #0f172a;
