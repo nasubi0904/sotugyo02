@@ -3,13 +3,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 
 __all__ = [
     "DEFAULT_TIMELINE_UNIT",
+    "TimelineAxis",
     "TimelineSnapSettings",
     "calculate_snap_position",
     "calculate_snap_width",
 ]
+
+
+class TimelineAxis(str, Enum):
+    """タイムラインの進行方向を表す。"""
+
+    HORIZONTAL = "horizontal"
+    VERTICAL = "vertical"
 
 DEFAULT_TIMELINE_UNIT: float = 320.0
 
@@ -21,6 +30,18 @@ class TimelineSnapSettings:
     base_unit: float = DEFAULT_TIMELINE_UNIT
     column_units: int = 1
     origin_x: float = 0.0
+    axis: TimelineAxis = TimelineAxis.HORIZONTAL
+
+    def __post_init__(self) -> None:
+        axis = self.axis
+        if isinstance(axis, TimelineAxis):
+            normalized = axis
+        else:
+            try:
+                normalized = TimelineAxis(str(axis))
+            except ValueError:
+                normalized = TimelineAxis.HORIZONTAL
+        object.__setattr__(self, "axis", normalized)
 
     @property
     def column_width(self) -> float:

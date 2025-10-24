@@ -35,7 +35,7 @@ from PySide6.QtWidgets import (
 )
 from NodeGraphQt import NodeGraph
 
-from ....domain.projects.timeline import DEFAULT_TIMELINE_UNIT
+from ....domain.projects.timeline import DEFAULT_TIMELINE_UNIT, TimelineAxis
 
 LOGGER = logging.getLogger(__name__)
 
@@ -74,7 +74,8 @@ class LayerUpdateContext:
     visible_scene_rect: QRectF
     viewport_rect: QRect
     top_scene_y: float
-    column_width_px: float
+    left_scene_x: float
+    axis_unit_px: float
     transform: QTransform
     theme: "ThemeProvider"
     today: date
@@ -91,11 +92,15 @@ class DateMapper:
         column_width: float = DEFAULT_TIMELINE_UNIT,
         column_units: int = 1,
         origin_x: float = 0.0,
+        orientation: TimelineAxis = TimelineAxis.HORIZONTAL,
     ) -> None:
         self._start_date = start_date or date.today()
         self._column_width = max(1.0, float(column_width))
         self._column_units = max(1, int(column_units))
-        self._origin_x = float(origin_x)
+        self._origin = float(origin_x)
+        self._orientation = (
+            orientation if isinstance(orientation, TimelineAxis) else TimelineAxis(orientation)
+        )
 
     @property
     def start_date(self) -> date:
@@ -111,7 +116,15 @@ class DateMapper:
 
     @property
     def origin_x(self) -> float:
-        return self._origin_x
+        return self._origin
+
+    @property
+    def origin_y(self) -> float:
+        return self._origin
+
+    @property
+    def orientation(self) -> TimelineAxis:
+        return self._orientation
 
     def set_start_date(self, value: date) -> bool:
         if value == self._start_date:
@@ -135,9 +148,19 @@ class DateMapper:
 
     def set_origin_x(self, value: float) -> bool:
         normalized = float(value)
-        if math.isclose(normalized, self._origin_x):
+        if math.isclose(normalized, self._origin):
             return False
-        self._origin_x = normalized
+        self._origin = normalized
+        return True
+
+    def set_origin_y(self, value: float) -> bool:
+        return self.set_origin_x(value)
+
+    def set_orientation(self, value: TimelineAxis) -> bool:
+        normalized = value if isinstance(value, TimelineAxis) else TimelineAxis(value)
+        if normalized == self._orientation:
+            return False
+        self._orientation = normalized
         return True
 
     def date_to_index(self, value: date) -> float:
@@ -148,18 +171,30 @@ class DateMapper:
         return self._start_date + timedelta(days=index * self._column_units)
 
     def index_to_x(self, index: float) -> float:
-        return self._origin_x + index * self._column_width
+        return self._origin + index * self._column_width
+
+    def index_to_y(self, index: float) -> float:
+        return self.index_to_x(index)
 
     def date_to_x(self, value: date) -> float:
         return self.index_to_x(self.date_to_index(value))
 
+    def date_to_y(self, value: date) -> float:
+        return self.index_to_y(self.date_to_index(value))
+
     def x_to_index(self, value: float) -> float:
-        return (float(value) - self._origin_x) / self._column_width
+        return (float(value) - self._origin) / self._column_width
+
+    def y_to_index(self, value: float) -> float:
+        return self.x_to_index(value)
 
     def x_to_date(self, value: float) -> date:
         index = self.x_to_index(value)
         nearest_index = int(round(index))
         return self.index_to_date(nearest_index)
+
+    def y_to_date(self, value: float) -> date:
+        return self.x_to_date(value)
 
     def index_at_x(self, value: float) -> float:
         return self.x_to_index(value)
@@ -169,6 +204,12 @@ class DateMapper:
 
     def date_at_x(self, value: float) -> date:
         return self.x_to_date(value)
+
+    def index_at_y(self, value: float) -> float:
+        return self.y_to_index(value)
+
+    def date_at_y(self, value: float) -> date:
+        return self.y_to_date(value)
 
 
 class VisibleRectProvider(QObject):
@@ -430,6 +471,9 @@ class GridTileLayer(_BaseLayer):
     def _on_theme_changed(self) -> None:
         self._last_signature = None
 
+    def clear_cache(self) -> None:
+        self._last_signature = None
+
     def update(self, context: LayerUpdateContext) -> None:  # pragma: no cover - NodeGraphQt 依存
         if context.visible_scene_rect is None or context.viewport_rect is None:
             return
@@ -456,10 +500,14 @@ class GridTileLayer(_BaseLayer):
     def _iter_required_indexes(self, context: LayerUpdateContext) -> Iterable[int]:
         mapper = context.date_mapper
         rect = context.visible_scene_rect
-        left_index = math.floor(mapper.index_at_x(rect.left()))
-        right_index = math.ceil(mapper.index_at_x(rect.right()))
-        start = int(left_index) - self.PADDING
-        end = int(right_index) + self.PADDING
+        if mapper.orientation == TimelineAxis.HORIZONTAL:
+            min_index = math.floor(mapper.index_at_x(rect.left()))
+            max_index = math.ceil(mapper.index_at_x(rect.right()))
+        else:
+            min_index = math.floor(mapper.index_at_y(rect.top()))
+            max_index = math.ceil(mapper.index_at_y(rect.bottom()))
+        start = int(min_index) - self.PADDING
+        end = int(max_index) + self.PADDING
         return range(start, end + 1)
 
     def _render_background_pixmap(self, context: LayerUpdateContext, view) -> Optional[QPixmap]:
@@ -474,6 +522,8 @@ class GridTileLayer(_BaseLayer):
             indexes[-1] if indexes else None,
             round(rect.left(), 3),
             round(rect.right(), 3),
+            round(rect.top(), 3),
+            round(rect.bottom(), 3),
             round(mapper.column_width, 3),
             mapper.column_units,
             mapper.start_date.toordinal(),
@@ -482,6 +532,7 @@ class GridTileLayer(_BaseLayer):
             height,
             round(context.transform.m11(), 5),
             round(context.transform.m22(), 5),
+            mapper.orientation.value,
         )
         if signature == self._last_signature:
             return None
@@ -492,46 +543,93 @@ class GridTileLayer(_BaseLayer):
 
         painter = QPainter(image)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
-        scene_top = rect.top()
         full_rect = QRect(0, 0, width, height)
-
-        for index in indexes:
-            left_scene = mapper.index_to_x(index)
-            right_scene = mapper.index_to_x(index + 1)
-            left_point = view.mapFromScene(QPointF(left_scene, scene_top))
-            right_point = view.mapFromScene(QPointF(right_scene, scene_top))
-            left_x = left_point.x()
-            right_x = right_point.x()
-            if right_x < left_x:
-                left_x, right_x = right_x, left_x
-            column_left = int(math.floor(left_x))
-            column_right = int(math.ceil(right_x))
-            column_width = max(1, column_right - column_left)
-            target_date = mapper.date_at_index(index)
-            is_weekend = target_date.weekday() >= 5
-            is_today = target_date == context.today
-            fill_rect = QRect(column_left, 0, column_width, height).intersected(full_rect)
-            if not fill_rect.isEmpty():
-                painter.fillRect(
-                    fill_rect,
-                    self._theme.background_brush(
-                        is_today=is_today,
-                        is_weekend=is_weekend,
-                        is_even=index % 2 == 0,
-                    ),
+        if mapper.orientation == TimelineAxis.HORIZONTAL:
+            scene_top = rect.top()
+            for index in indexes:
+                left_scene = mapper.index_to_x(index)
+                right_scene = mapper.index_to_x(index + 1)
+                left_point = view.mapFromScene(QPointF(left_scene, scene_top))
+                right_point = view.mapFromScene(QPointF(right_scene, scene_top))
+                left_x = left_point.x()
+                right_x = right_point.x()
+                if right_x < left_x:
+                    left_x, right_x = right_x, left_x
+                column_left = int(math.floor(left_x))
+                column_right = int(math.ceil(right_x))
+                column_width = max(1, column_right - column_left)
+                target_date = mapper.date_at_index(index)
+                is_weekend = target_date.weekday() >= 5
+                is_today = target_date == context.today
+                fill_rect = QRect(column_left, 0, column_width, height).intersected(full_rect)
+                if not fill_rect.isEmpty():
+                    painter.fillRect(
+                        fill_rect,
+                        self._theme.background_brush(
+                            is_today=is_today,
+                            is_weekend=is_weekend,
+                            is_even=index % 2 == 0,
+                        ),
+                    )
+                line_x = max(0, min(width - 1, column_left))
+                painter.setPen(
+                    self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend)
                 )
-            line_x = max(0, min(width - 1, column_left))
-            painter.setPen(self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend))
-            painter.drawLine(line_x, 0, line_x, height)
-
-        if indexes:
-            last_index = indexes[-1] + 1
-            right_scene = mapper.index_to_x(last_index)
-            right_point = view.mapFromScene(QPointF(right_scene, scene_top))
-            line_x = int(round(right_point.x()))
-            if 0 <= line_x <= width:
-                painter.setPen(self._theme.grid_pen(is_today=False, is_weekend=False))
                 painter.drawLine(line_x, 0, line_x, height)
+
+            if indexes:
+                last_index = indexes[-1] + 1
+                right_scene = mapper.index_to_x(last_index)
+                right_point = view.mapFromScene(QPointF(right_scene, scene_top))
+                line_x = int(round(right_point.x()))
+                if 0 <= line_x <= width:
+                    painter.setPen(
+                        self._theme.grid_pen(is_today=False, is_weekend=False)
+                    )
+                    painter.drawLine(line_x, 0, line_x, height)
+        else:
+            scene_left = rect.left()
+            for index in indexes:
+                top_scene = mapper.index_to_y(index)
+                bottom_scene = mapper.index_to_y(index + 1)
+                top_point = view.mapFromScene(QPointF(scene_left, top_scene))
+                bottom_point = view.mapFromScene(QPointF(scene_left, bottom_scene))
+                top_y = top_point.y()
+                bottom_y = bottom_point.y()
+                if bottom_y < top_y:
+                    top_y, bottom_y = bottom_y, top_y
+                row_top = int(math.floor(top_y))
+                row_bottom = int(math.ceil(bottom_y))
+                row_height = max(1, row_bottom - row_top)
+                target_date = mapper.date_at_index(index)
+                is_weekend = target_date.weekday() >= 5
+                is_today = target_date == context.today
+                fill_rect = QRect(0, row_top, width, row_height).intersected(full_rect)
+                if not fill_rect.isEmpty():
+                    painter.fillRect(
+                        fill_rect,
+                        self._theme.background_brush(
+                            is_today=is_today,
+                            is_weekend=is_weekend,
+                            is_even=index % 2 == 0,
+                        ),
+                    )
+                line_y = max(0, min(height - 1, row_top))
+                painter.setPen(
+                    self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend)
+                )
+                painter.drawLine(0, line_y, width, line_y)
+
+            if indexes:
+                last_index = indexes[-1] + 1
+                bottom_scene = mapper.index_to_y(last_index)
+                bottom_point = view.mapFromScene(QPointF(scene_left, bottom_scene))
+                line_y = int(round(bottom_point.y()))
+                if 0 <= line_y <= height:
+                    painter.setPen(
+                        self._theme.grid_pen(is_today=False, is_weekend=False)
+                    )
+                    painter.drawLine(0, line_y, width, line_y)
 
         painter.end()
         return QPixmap.fromImage(image)
@@ -556,17 +654,21 @@ class AxisLabelLayer(_BaseLayer):
             return
         if context.visible_scene_rect is None or context.viewport_rect is None:
             return
-        column_width_px = max(1.0, context.column_width_px)
-        step = max(1, int(math.ceil(self.MIN_LABEL_SPACING / column_width_px)))
+        axis_unit_px = max(1.0, context.axis_unit_px)
+        step = max(1, int(math.ceil(self.MIN_LABEL_SPACING / axis_unit_px)))
         mapper = context.date_mapper
         rect = context.visible_scene_rect
-        raw_start = int(math.floor(mapper.index_at_x(rect.left()))) - 1
+        if mapper.orientation == TimelineAxis.HORIZONTAL:
+            raw_start = int(math.floor(mapper.index_at_x(rect.left()))) - 1
+            end_index = int(math.ceil(mapper.index_at_x(rect.right()))) + 1
+        else:
+            raw_start = int(math.floor(mapper.index_at_y(rect.top()))) - 1
+            end_index = int(math.ceil(mapper.index_at_y(rect.bottom()))) + 1
         if step > 1:
             adjusted_start = raw_start - (raw_start % step)
         else:
             adjusted_start = raw_start
-        end = int(math.ceil(mapper.index_at_x(rect.right()))) + 1
-        indexes = list(range(adjusted_start, end + 1, step))
+        indexes = list(range(adjusted_start, end_index + 1, step))
         current_keys = set(self._labels.keys())
         required_keys = set(indexes)
         for index in current_keys - required_keys:
@@ -604,8 +706,14 @@ class AxisLabelLayer(_BaseLayer):
         label_item.setBrush(
             self._theme.label_brush(is_today=is_today, is_weekend=is_weekend)
         )
-        x = mapper.index_to_x(index)
-        label_item.setPos(x, context.top_scene_y)
+        if mapper.orientation == TimelineAxis.HORIZONTAL:
+            x = mapper.index_to_x(index)
+            label_item.setPos(x, context.top_scene_y)
+        else:
+            y = mapper.index_to_y(index)
+            bounding = label_item.boundingRect()
+            offset_y = bounding.height() / 2.0
+            label_item.setPos(context.left_scene_x, y - offset_y)
 
 
 class MarkerLayer(_BaseLayer):
@@ -623,16 +731,21 @@ class MarkerLayer(_BaseLayer):
         if self._scene is None or context.visible_scene_rect is None:
             return
         mapper = context.date_mapper
-        today_x = mapper.date_to_x(context.today)
         rect = context.visible_scene_rect
+        if mapper.orientation == TimelineAxis.HORIZONTAL:
+            today_pos = mapper.date_to_x(context.today)
+            line_args = (today_pos, rect.top(), today_pos, rect.bottom())
+        else:
+            today_pos = mapper.date_to_y(context.today)
+            line_args = (rect.left(), today_pos, rect.right(), today_pos)
         if self._line is None:
-            self._line = QGraphicsLineItem(today_x, rect.top(), today_x, rect.bottom())
+            self._line = QGraphicsLineItem(*line_args)
             self._line.setPen(self._theme.today_marker_pen())
             self._line.setZValue(10)
             self._line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
             self._scene.addItem(self._line)
         else:
-            self._line.setLine(today_x, rect.top(), today_x, rect.bottom())
+            self._line.setLine(*line_args)
             self._line.setPen(self._theme.today_marker_pen())
 
 
@@ -652,11 +765,11 @@ class TimelineGridOverlay(QObject):
 
     LABEL_VIEW_MARGIN = 6  # ピクセル
 
-    def __init__(self, view) -> None:
+    def __init__(self, view, *, axis: TimelineAxis = TimelineAxis.HORIZONTAL) -> None:
         super().__init__(view)
         self._view = None
         self._scene = None
-        self._date_mapper = DateMapper()
+        self._date_mapper = DateMapper(orientation=axis)
         self._theme = ThemeProvider()
         self._formatter = LabelFormatter()
         self._grid_layer: Optional[GridTileLayer] = None
@@ -702,6 +815,16 @@ class TimelineGridOverlay(QObject):
         self._theme = theme
         self._apply_theme()
 
+    @property
+    def axis(self) -> TimelineAxis:
+        return self._date_mapper.orientation
+
+    def set_axis_orientation(self, axis: TimelineAxis) -> None:
+        if self._date_mapper.set_orientation(axis):
+            if self._grid_layer is not None:
+                self._grid_layer.clear_cache()
+            self._scheduler.request(force=True)
+
     def set_scene_background_color(
         self, color: Union[QColor, Tuple[int, int, int], Tuple[int, int, int, int]]
     ) -> None:
@@ -716,6 +839,9 @@ class TimelineGridOverlay(QObject):
     def set_origin_x(self, value: float) -> None:
         if self._date_mapper.set_origin_x(value):
             self._scheduler.request(axis=True)
+
+    def set_origin_y(self, value: float) -> None:
+        self.set_origin_x(value)
 
     def set_column_width(self, width: float) -> None:
         if self._date_mapper.set_column_width(width):
@@ -738,13 +864,34 @@ class TimelineGridOverlay(QObject):
         else:
             self._scheduler.request(geometry=True)
 
-    def get_snap_x(self, value: Union[date, int, float]) -> float:
+    def get_snap_coordinate(self, value: Union[date, int, float]) -> float:
+        mapper = self._date_mapper
         if isinstance(value, date):
-            return self._date_mapper.date_to_x(value)
-        return self._date_mapper.index_to_x(float(value))
+            return (
+                mapper.date_to_x(value)
+                if mapper.orientation == TimelineAxis.HORIZONTAL
+                else mapper.date_to_y(value)
+            )
+        numeric = float(value)
+        return (
+            mapper.index_to_x(numeric)
+            if mapper.orientation == TimelineAxis.HORIZONTAL
+            else mapper.index_to_y(numeric)
+        )
 
-    def get_snap_date(self, x: float) -> date:
-        return self._date_mapper.date_at_x(x)
+    def get_snap_x(self, value: Union[date, int, float]) -> float:
+        return self.get_snap_coordinate(value)
+
+    def get_snap_y(self, value: Union[date, int, float]) -> float:
+        return self.get_snap_coordinate(value)
+
+    def get_snap_date(self, value: float) -> date:
+        mapper = self._date_mapper
+        return (
+            mapper.date_at_x(value)
+            if mapper.orientation == TimelineAxis.HORIZONTAL
+            else mapper.date_at_y(value)
+        )
 
     # --- 内部処理 -----------------------------------------------------------
     def _on_view_changed(self) -> None:
@@ -767,19 +914,24 @@ class TimelineGridOverlay(QObject):
         ):
             return
         transform = self._view.transform() if hasattr(self._view, "transform") else QTransform()
-        column_width_px = abs(transform.m11()) * self._date_mapper.column_width
-        top_scene_point = (
-            self._view.mapToScene(QPoint(0, self.LABEL_VIEW_MARGIN))
-            if hasattr(self._view, "mapToScene")
-            else QPointF(0.0, visible_rect.top())
-        )
+        if self._date_mapper.orientation == TimelineAxis.HORIZONTAL:
+            axis_unit_px = abs(transform.m11()) * self._date_mapper.column_width
+        else:
+            axis_unit_px = abs(transform.m22()) * self._date_mapper.column_width
+        if hasattr(self._view, "mapToScene"):
+            top_scene_point = self._view.mapToScene(QPoint(0, self.LABEL_VIEW_MARGIN))
+            left_scene_point = self._view.mapToScene(QPoint(self.LABEL_VIEW_MARGIN, 0))
+        else:
+            top_scene_point = QPointF(visible_rect.left(), visible_rect.top())
+            left_scene_point = QPointF(visible_rect.left(), visible_rect.top())
         self._today = date.today()
         context = LayerUpdateContext(
             date_mapper=self._date_mapper,
             visible_scene_rect=visible_rect,
             viewport_rect=viewport_rect,
             top_scene_y=top_scene_point.y(),
-            column_width_px=column_width_px,
+            left_scene_x=left_scene_point.x(),
+            axis_unit_px=axis_unit_px,
             transform=transform,
             theme=self._theme,
             today=self._today,
