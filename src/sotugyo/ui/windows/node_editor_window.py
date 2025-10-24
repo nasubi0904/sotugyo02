@@ -23,6 +23,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QDialog,
     QDockWidget,
     QFrame,
@@ -41,6 +42,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSpinBox,
+    QSpacerItem,
     QTextEdit,
     QSizePolicy,
     QTabWidget,
@@ -119,6 +121,8 @@ class NodeContentBrowser(QWidget):
         self._card_frame: Optional[QFrame] = None
         self._card_layout: Optional[QVBoxLayout] = None
         self._control_header: Optional[QWidget] = None
+        self._control_header_layout: Optional[QBoxLayout] = None
+        self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
@@ -239,9 +243,12 @@ class NodeContentBrowser(QWidget):
         header_container_layout.setContentsMargins(0, 0, 0, 0)
         header_container_layout.setSpacing(8)
         header_container_layout.addWidget(summary_widget)
-        header_container_layout.addStretch(1)
+        spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
+        header_container_layout.addItem(spacer)
         header_container_layout.addWidget(icon_control)
         self._control_header = header_container
+        self._control_header_layout = header_container_layout
+        self._control_header_spacer = spacer
 
         card_layout.addWidget(
             self._build_section(
@@ -333,6 +340,7 @@ class NodeContentBrowser(QWidget):
         self._icon_size_spin.setSingleStep(1)
         self._icon_size_spin.setValue(self._icon_size_level)
         self._icon_size_spin.setSuffix(" 段階")
+        self._icon_size_spin.setFixedWidth(84)
 
         layout.addWidget(size_label)
         layout.addWidget(self._icon_size_slider, 1)
@@ -364,7 +372,7 @@ class NodeContentBrowser(QWidget):
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_list.itemActivated.connect(self._on_available_item_activated)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
-        self._icon_size_spin.valueChanged.connect(self._on_icon_size_changed)
+        self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
 
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
         self._available_entries = entries
@@ -523,6 +531,7 @@ class NodeContentBrowser(QWidget):
         self._apply_icon_size()
         self._refresh_item_sizes()
         self._update_item_texts()
+        self._adjust_control_header(width)
 
     def _format_entry_text(self, entry: Mapping[str, str]) -> str:
         """エントリー情報を表示用文字列に整形する。"""
@@ -602,6 +611,43 @@ class NodeContentBrowser(QWidget):
 
         self._refresh_item_sizes()
         self._update_summary_label()
+        self._adjust_control_header(self.width())
+
+    def _adjust_control_header(self, width: int) -> None:
+        if self._control_header_layout is None:
+            return
+        is_vertical = width < 720 or self._compact_mode
+        target_direction = (
+            QBoxLayout.TopToBottom if is_vertical else QBoxLayout.LeftToRight
+        )
+        if self._control_header_layout.direction() != target_direction:
+            self._control_header_layout.setDirection(target_direction)
+        if self._control_header_spacer is not None:
+            if is_vertical:
+                self._control_header_spacer.changeSize(
+                    0,
+                    0,
+                    QSizePolicy.Minimum,
+                    QSizePolicy.Minimum,
+                )
+            else:
+                self._control_header_spacer.changeSize(
+                    0,
+                    0,
+                    QSizePolicy.Expanding,
+                    QSizePolicy.Minimum,
+                )
+        if self._icon_control_container is not None:
+            alignment = Qt.AlignLeft if is_vertical else Qt.AlignRight
+            self._control_header_layout.setAlignment(
+                self._icon_control_container,
+                alignment,
+            )
+        if self._control_header_layout.spacing() != (4 if is_vertical else 8):
+            self._control_header_layout.setSpacing(4 if is_vertical else 8)
+        if self._control_header is not None:
+            self._control_header.updateGeometry()
+        self._control_header_layout.invalidate()
 
     def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
         if visible_count is None:
