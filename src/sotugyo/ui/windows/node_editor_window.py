@@ -1527,29 +1527,34 @@ class NodeEditorWindow(QMainWindow):
         align_outputs_action = toolbar.addAction(
             self.style().standardIcon(QStyle.SP_ArrowForward), "出力側整列"
         )
-        self._align_outputs_button.setIconSize(QSize(24, 24))
-        self._align_outputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self._align_outputs_button.setAutoRaise(True)
-        self._align_outputs_button.setToolTip("出力側ノードを整列")
-        self._align_outputs_button.setEnabled(False)
-        self._align_outputs_button.clicked.connect(self._align_output_nodes)
-        layout.addWidget(self._align_outputs_button)
+        align_outputs_action.setToolTip("出力側ノードを整列")
+        align_outputs_action.setEnabled(False)
+        align_outputs_action.triggered.connect(self._align_output_nodes)
+        self._align_outputs_action = align_outputs_action
+        outputs_button = toolbar.widgetForAction(align_outputs_action)
+        if isinstance(outputs_button, QToolButton):
+            outputs_button.setAutoRaise(False)
 
-        width_label = QLabel("枠幅", toolbar_frame)
+        width_label = QLabel("枠幅", toolbar)
         width_label.setObjectName("timelineWidthLabel")
         width_label.setAlignment(Qt.AlignHCenter)
-        layout.addWidget(width_label)
+        if layout is not None:
+            layout.addWidget(width_label)
+        else:
+            toolbar.addWidget(width_label)
 
-        self._timeline_width_spin = QSpinBox(toolbar_frame)
+        self._timeline_width_spin = QSpinBox(toolbar)
         self._timeline_width_spin.setRange(1, 12)
         self._timeline_width_spin.setValue(self._timeline_column_units)
         self._timeline_width_spin.setToolTip("1枠の幅をノード幅の倍数で設定")
         self._timeline_width_spin.valueChanged.connect(
             self._on_timeline_width_units_changed
         )
-        layout.addWidget(self._timeline_width_spin)
-
-        layout.addStretch(1)
+        if layout is not None:
+            layout.addWidget(self._timeline_width_spin)
+            layout.addStretch(1)
+        else:
+            toolbar.addWidget(self._timeline_width_spin)
 
         return toolbar
 
