@@ -8,7 +8,7 @@ import shutil
 import uuid
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QPoint, Qt, Signal
@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QWidget,
 )
-from NodeGraphQt import Port
+from NodeGraphQt import NodeGraph, Port
 
 
 LOGGER = logging.getLogger(__name__)
@@ -43,18 +43,8 @@ from ..components.nodes import (
     TaskNode,
     ToolEnvironmentNode,
 )
-from ..components.timeline import (
-    TimelineGridOverlay,
-    TimelineNodeGraph,
-    TimelineSnapController,
-)
 from ...domain.projects.service import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
-from ...domain.projects.timeline import (
-    DEFAULT_TIMELINE_UNIT,
-    TimelineAxis,
-    TimelineSnapSettings,
-)
 from ...domain.users.settings import UserAccount, UserSettingsManager
 from ...domain.tooling.coordinator import (
     NodeCatalogRecord,
@@ -93,7 +83,7 @@ class NodeEditorWindow(QMainWindow):
         self.resize(960, 600)
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
-        self._graph = TimelineNodeGraph()
+        self._graph = NodeGraph()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -101,14 +91,6 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
-        self._timeline_base_unit = DEFAULT_TIMELINE_UNIT
-        self._timeline_column_units = 1
-        self._timeline_origin_y = 0.0
-        self._timeline_start_date = date.today()
-        self._timeline_reference_date: Optional[date] = self._timeline_start_date
-        self._timeline_overlay: Optional[TimelineGridOverlay] = None
-        self._timeline_snap_controller: Optional[TimelineSnapController] = None
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -142,27 +124,6 @@ class NodeEditorWindow(QMainWindow):
         self._content_dock: Optional[NodeContentBrowserDock] = None
         self._alignment_toolbar: Optional[TimelineAlignmentToolBar] = None
 
-        snap_settings = TimelineSnapSettings(
-            base_unit=self._timeline_base_unit,
-            column_units=self._timeline_column_units,
-            origin_x=self._timeline_origin_y,
-            axis=TimelineAxis.VERTICAL,
-        )
-        self._timeline_snap_controller = TimelineSnapController(
-            self._graph,
-            settings=snap_settings,
-            should_snap=self._should_snap_node,
-            modified_callback=self._set_modified,
-        )
-        self._timeline_snap_controller.set_axis_orientation(TimelineAxis.VERTICAL)
-        self._graph.set_timeline_move_handler(
-            self._timeline_snap_controller.handle_nodes_moved
-        )
-        self._timeline_overlay = TimelineGridOverlay(
-            self._graph_widget, axis=TimelineAxis.VERTICAL
-        )
-        self._update_timeline_overlay_settings()
-
         self._init_ui()
         self._create_menus()
         self._setup_graph_signals()
@@ -174,10 +135,6 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_node_catalog()
         self._set_modified(False)
         apply_base_style(self)
-
-        property_signal = getattr(self._graph, "property_changed", None)
-        if property_signal is not None and hasattr(property_signal, "connect"):
-            property_signal.connect(self._on_graph_property_changed_timeline)
 
     def showEvent(self, event: QShowEvent) -> None:
         """ウィンドウ表示時に全画面状態を維持する。"""
@@ -198,14 +155,9 @@ class NodeEditorWindow(QMainWindow):
         central_layout.addWidget(self._graph_widget, 1)
         self.setCentralWidget(central)
 
-        alignment_toolbar = TimelineAlignmentToolBar(
-            self, initial_units=self._timeline_column_units
-        )
+        alignment_toolbar = TimelineAlignmentToolBar(self)
         alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
         alignment_toolbar.align_outputs_requested.connect(self._align_output_nodes)
-        alignment_toolbar.timeline_width_changed.connect(
-            self._on_timeline_width_units_changed
-        )
         self.addToolBar(Qt.LeftToolBarArea, alignment_toolbar)
         self._alignment_toolbar = alignment_toolbar
 
@@ -622,81 +574,11 @@ class NodeEditorWindow(QMainWindow):
                 or previous_assigned_at != normalized_assigned_at
             )
 
-        if normalized_assigned_at:
-            self._consider_timeline_date(normalized_assigned_at)
-
         return normalized_uuid, normalized_assigned_at, metadata_changed
 
     def _remove_node_metadata(self, nodes: Iterable) -> None:
         for node in nodes:
             self._node_metadata.pop(node, None)
-
-    def _on_graph_property_changed_timeline(self, node, prop_name: str, value: object) -> None:
-        if self._timeline_snap_controller is None:
-            return
-        if self._timeline_snap_controller.handle_property_changed(node, prop_name, value):
-            self._update_timeline_overlay_settings()
-
-    def _on_timeline_width_units_changed(self, value: int) -> None:
-        if self._timeline_snap_controller is None:
-            return
-        if not self._timeline_snap_controller.set_column_units(value):
-            return
-        self._timeline_column_units = max(1, int(value))
-        if self._alignment_toolbar is not None:
-            self._alignment_toolbar.set_timeline_units(self._timeline_column_units)
-        self._update_timeline_overlay_settings()
-        self._timeline_snap_controller.snap_nodes(self._collect_all_nodes())
-
-    def _update_timeline_overlay_settings(self) -> None:
-        if self._timeline_overlay is None or self._timeline_snap_controller is None:
-            return
-        self._timeline_snap_controller.set_origin_y(self._timeline_origin_y)
-        snap_settings = self._timeline_snap_controller.settings
-        self._timeline_overlay.set_axis_orientation(TimelineAxis.VERTICAL)
-        self._timeline_overlay.set_column_width(self._timeline_snap_controller.column_width)
-        self._timeline_overlay.set_column_units(snap_settings.normalized_column_units)
-        self._timeline_overlay.set_origin_x(snap_settings.origin_x)
-        self._timeline_overlay.set_start_date(self._timeline_start_date)
-
-    def _consider_timeline_date(self, assigned_at: Optional[str]) -> None:
-        candidate = self._parse_assigned_date(assigned_at)
-        if candidate is None:
-            return
-        if self._timeline_reference_date is None or candidate < self._timeline_reference_date:
-            self._timeline_reference_date = candidate
-            self._timeline_start_date = candidate
-            self._update_timeline_overlay_settings()
-
-    def _rebuild_timeline_reference(self) -> None:
-        earliest: Optional[date] = None
-        for metadata in self._node_metadata.values():
-            assigned = metadata.get("uuid_assigned_at")
-            candidate = self._parse_assigned_date(assigned)
-            if candidate is None:
-                continue
-            if earliest is None or candidate < earliest:
-                earliest = candidate
-        if earliest is None:
-            earliest = date.today()
-        self._timeline_reference_date = earliest
-        self._timeline_start_date = earliest
-        self._update_timeline_overlay_settings()
-
-    @staticmethod
-    def _parse_assigned_date(value: Optional[str]) -> Optional[date]:
-        if not value:
-            return None
-        try:
-            return datetime.strptime(value, "%Y-%m-%d").date()
-        except ValueError:
-            return None
-
-    def _apply_timeline_constraints_to_nodes(self, nodes: Iterable) -> None:
-        if self._timeline_snap_controller is None:
-            return
-        if self._timeline_snap_controller.snap_nodes(nodes):
-            self._update_timeline_overlay_settings()
 
     def _create_task_node(self) -> None:
         self._task_count += 1
@@ -744,7 +626,6 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
-        self._apply_timeline_constraints_to_nodes([node])
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -764,7 +645,6 @@ class NodeEditorWindow(QMainWindow):
         self._graph.delete_nodes(nodes)
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
         self._remove_node_metadata(nodes)
-        self._rebuild_timeline_reference()
         self._on_selection_changed()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -1154,7 +1034,6 @@ class NodeEditorWindow(QMainWindow):
                 updated = True
 
         if updated:
-            self._apply_timeline_constraints_to_nodes(sorted_nodes)
             self._set_modified(True)
 
     def _estimate_node_spacing(self, nodes: List) -> float:
@@ -1237,9 +1116,6 @@ class NodeEditorWindow(QMainWindow):
             return False
         return self._node_type_identifier(node) == MemoNode.node_type_identifier()
 
-    def _should_snap_node(self, node) -> bool:
-        return node is not None and not self._is_memo_node(node)
-
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
             return
@@ -1315,7 +1191,6 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
-        self._rebuild_timeline_reference()
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             try:
@@ -1612,9 +1487,6 @@ class NodeEditorWindow(QMainWindow):
         self._memo_count = sum(
             1 for node in self._known_nodes if self._node_type_identifier(node) == MemoNode.node_type_identifier()
         )
-        self._rebuild_timeline_reference()
-        self._apply_timeline_constraints_to_nodes(self._known_nodes)
-
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             clear_selection()

@@ -7,7 +7,7 @@
   - `memo.py` にメモ専用ノード (`MemoNode`) を、
   - `tool_environment.py` にツール環境ノード (`ToolEnvironmentNode`) を定義します。
 - `content_browser.py` はノードカタログの UI を提供します。
-- `timeline/` にはタイムライン表示関連のコンポーネントをまとめます。
+- 以前存在した `timeline/` 配下のタイムライン表示・スナップ関連コンポーネントは撤去済みです。
 
 ## 編集時の指針
 - NodeGraphQt の識別子 (`__identifier__`) やポート構成を変更する際は、既存ワークスペースとの互換性に注意する。
