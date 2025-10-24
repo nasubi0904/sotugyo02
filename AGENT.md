@@ -75,8 +75,12 @@ AI エージェントは担当タスクに紐づくジャンルのディレク�
 ## 開発環境情報
 - `pip list` の結果（2025-10-21 時点）
   - NodeGraphQt 0.6.43
+  - OdenGraphQt 0.7.4
+  - packaging 25.0
+  - pip 25.2 / setuptools 80.9.0 / wheel 0.45.1
   - PySide6 6.10.0 / PySide6_Addons 6.10.0 / PySide6_Essentials 6.10.0
   - Qt.py 1.4.8
+  - QtPy 2.4.3
   - shiboken6 6.10.0
   - types-pyside2 5.15.2.1.7
-  - pip 25.2 / setuptools 80.9.0 / wheel 0.45.1
+  - typing_extensions 4.15.0
