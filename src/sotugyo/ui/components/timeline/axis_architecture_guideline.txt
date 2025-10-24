@@ -1,0 +1,66 @@
+ノードエディタの軸表示を安定させるためのアーキテクチャ指針。
+
+単一の“真実”を定義する
+・時間軸の唯一の情報源として DateMapper を置く。
+・入力: start_date / column_width / column_units / origin_x。
+・提供: date→x、x→date、index（列番号）→x、x→index。
+・このモジュール以外で日付とピクセル（シーン座標）を相互変換しない。
+
+座標系の整理（3レイヤ）
+・Time Domain（日付・列インデックス）
+・Scene Space（QGraphicsScene の x,y）
+・Viewport Space（QGraphicsView の可視矩形・ピクセル）
+・どのモジュールがどの座標を扱うかを明示し、境界で DateMapper を通す。
+
+レイヤ構成（描画の責務を分離）
+・GridTileLayer：背景の縦帯（列ごとの塗り）と主副ライン。
+・AxisLabelLayer：日付ラベル（常にビューポート上端に整列）。
+・TodayMarkerLayer：今日/現在時刻などの強調。
+・各レイヤは「参照は DateMapper」「範囲は VisibleRectProvider」からだけ取得。
+
+可視範囲の管理とバーチャライゼーション
+・VisibleRectProvider が「現在の可視シーン矩形」を唯一の形で提供。
+・GridTileLayer は可視範囲左右に N 列ぶん余白を持ってタイルを生成・再利用（プール）。
+・縦方向（Y）は“固定の巨大値”ではなく、常に可視範囲 top～bottom に合わせる。
+・AxisLabelLayer は列の X はシーン座標、Y は常に「可視矩形トップ＋マージン」で配置。
+
+イベント集約（更新トリガの設計）
+・購読するイベント：resize、wheel、pan（マウスドラッグ）、水平/垂直スクロールバーの valueChanged、transformChanged（ズーム）。
+・UpdateScheduler を挟み、短時間に来るイベントは 1 フレームに集約（デバウンス）。
+・各レイヤは “可視矩形が変わったか/列幅・起点が変わったか” の差分でのみ更新。
+
+不変条件（Invariants）
+・列境界は常に index と column_width で決まる。
+・ラベルの横位置は列の x に従い、縦位置は“ビューポート上端＋一定マージン”。
+・ペンは cosmetic（ズームしても太さ一定）。
+・背景タイルは「可視範囲全面」を覆う（切れ目を作らない）。
+・DateMapper を通さずに UI 側で日付/座標を計算しない。
+
+start_date と origin_x の整合ポリシー
+・「日付だけ差し替えて、見えている境界は動かさない」か、
+・「start_date を変えたら境界も動く」か、どちらかを仕様として固定。
+・前者を選ぶ場合、start_date 変更時に origin_x を自動補正する。
+・どちらを採用するかを Axis API のドキュメントに明記。
+
+週・月など複数スケール対応
+・column_units > 1（週・月）時は、1 日刻みのサブグリッド責務を SubGridLayer に切り出す。
+・背景色のテーマは ThemeProvider で一元管理（平日/週末/祝日/今日など）。
+・LabelFormatter は粒度（1日/1週/1月）に応じて表示文字列を切り替える。
+
+入出力 API の最小面
+・set_start_date(date)、set_origin_x(float)、set_column_width(float)、set_units(int)。
+・set_view(QGraphicsView) は内部でスクロールバー/transform の購読を完了させる。
+・update(force=False) は外部からも呼べるが、原則はスケジューラ主導。
+・get_snap_x(date or index)、get_snap_date(x) を公開（ツール側のスナップに利用）。
+
+パフォーマンスと安定性
+・QGraphicsItem は極力再利用（生成破棄を避ける）。
+・アイテムはマウス入力を受けない（ヒットテスト負荷を下げる）。
+・フォント・ペン・ブラシはキャッシュ。
+・更新時は “必要な列インデックスの集合” を差分計算し、追加/更新/解放を最小化。
+
+代替描画方針の選択肢（将来の拡張）
+・Foreground/Overlay ペイントでラベルだけを直接ビューポートに描く方式。
+・メリット：ラベルの“常に上端”が簡単、ズームやパンに強い。
+・デメリット：ヒットテスト不可、選択やツールチップが必要なら不向き。
+・要件に応じて AxisLabelLayer を “Scene Items 方式” と “Overlay 描画方式” の二系統から選べるように抽象化。
