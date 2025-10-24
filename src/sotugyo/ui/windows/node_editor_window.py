@@ -814,8 +814,10 @@ class NodeEditorWindow(QMainWindow):
         if self._timeline_overlay is None or self._timeline_snap_controller is None:
             return
         self._timeline_snap_controller.set_origin_x(self._timeline_origin_x)
+        snap_settings = self._timeline_snap_controller.settings
         self._timeline_overlay.set_column_width(self._timeline_snap_controller.column_width)
-        self._timeline_overlay.set_origin_x(self._timeline_snap_controller.settings.origin_x)
+        self._timeline_overlay.set_column_units(snap_settings.normalized_column_units)
+        self._timeline_overlay.set_origin_x(snap_settings.origin_x)
         self._timeline_overlay.set_start_date(self._timeline_start_date)
 
     def _consider_timeline_date(self, assigned_at: Optional[str]) -> None:

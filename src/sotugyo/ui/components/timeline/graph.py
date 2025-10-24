@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from typing import Callable, Dict, Optional, Tuple
 
-from PySide6.QtCore import QEvent, QObject
-from PySide6.QtWidgets import QGraphicsLineItem, QGraphicsSimpleTextItem
+from PySide6.QtCore import QEvent, QObject, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPen
+from PySide6.QtWidgets import (
+    QGraphicsItem,
+    QGraphicsLineItem,
+    QGraphicsRectItem,
+    QGraphicsSimpleTextItem,
+)
 from NodeGraphQt import NodeGraph
 
 from ....domain.projects.timeline import DEFAULT_TIMELINE_UNIT
@@ -39,15 +45,24 @@ class TimelineNodeGraph(NodeGraph):
 class TimelineGridOverlay(QObject):
     """ノードエディタ上に日付枠線を描画するオーバーレイ。"""
 
+    _WEEKDAY_LABELS = ["月", "火", "水", "木", "金", "土", "日"]
+
     def __init__(self, view) -> None:
         super().__init__(view)
         self._view = view
         self._scene = getattr(view, "scene", lambda: None)()
         self._column_width = DEFAULT_TIMELINE_UNIT
+        self._column_units = 1
         self._origin_x = 0.0
         self._start_date = date.today()
-        self._columns: Dict[int, Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]] = {}
+        self._today = date.today()
+        self._columns: Dict[
+            int, Tuple[QGraphicsRectItem, QGraphicsLineItem, QGraphicsSimpleTextItem]
+        ] = {}
         self._last_visible_rect = None
+        self._label_font = QFont()
+        self._label_font.setPointSize(9)
+        self._label_font.setWeight(QFont.Weight.DemiBold)
         viewport = getattr(view, "viewport", None)
         if callable(viewport):
             vp = viewport()
@@ -63,12 +78,20 @@ class TimelineGridOverlay(QObject):
         self._column_width = max(1.0, float(width))
         self.update_overlay(force=True)
 
+    def set_column_units(self, units: int) -> None:
+        normalized = max(1, int(units))
+        if normalized == self._column_units:
+            return
+        self._column_units = normalized
+        self.update_overlay(force=True)
+
     def set_origin_x(self, value: float) -> None:
         self._origin_x = float(value)
         self.update_overlay(force=True)
 
     def set_start_date(self, start: date) -> None:
         self._start_date = start
+        self._today = date.today()
         self.update_overlay(force=True)
 
     def update_overlay(self, *, force: bool = False) -> None:
@@ -110,7 +133,8 @@ class TimelineGridOverlay(QObject):
             return
         for index in list(self._columns.keys()):
             if index not in indexes:
-                line, label = self._columns.pop(index)
+                background, line, label = self._columns.pop(index)
+                self._scene.removeItem(background)
                 self._scene.removeItem(line)
                 self._scene.removeItem(label)
         for index in indexes:
@@ -121,21 +145,102 @@ class TimelineGridOverlay(QObject):
 
     def _create_column(self, index: int) -> None:  # pragma: no cover - NodeGraphQt 依存
         position = self._origin_x + index * self._column_width
+        background = QGraphicsRectItem(position, -10000, self._column_width, 20000)
+        background.setPen(QPen(Qt.PenStyle.NoPen))
+        background.setBrush(self._background_brush(index))
+        background.setZValue(-200)
+        background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
         line = QGraphicsLineItem(position, -10000, position, 10000)
+        pen = self._line_pen(index)
+        pen.setCosmetic(True)
+        line.setPen(pen)
+        line.setZValue(-150)
+        line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+
         label = QGraphicsSimpleTextItem(self._format_label(index))
-        label.setPos(position + 6, -36)
+        label.setFont(self._label_font)
+        label.setBrush(self._label_brush(index))
+        label.setPos(position + 12, -54)
+        label.setZValue(-50)
+        label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        label.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+            True,
+        )
         if self._scene is not None:
+            self._scene.addItem(background)
             self._scene.addItem(line)
             self._scene.addItem(label)
-        self._columns[index] = (line, label)
+        self._columns[index] = (background, line, label)
 
     def _update_column(self, index: int) -> None:  # pragma: no cover - NodeGraphQt 依存
-        line, label = self._columns[index]
+        background, line, label = self._columns[index]
         position = self._origin_x + index * self._column_width
+        background.setRect(position, -10000, self._column_width, 20000)
+        background.setBrush(self._background_brush(index))
+        background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         line.setLine(position, -10000, position, 10000)
+        pen = self._line_pen(index)
+        pen.setCosmetic(True)
+        line.setPen(pen)
+        line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         label.setText(self._format_label(index))
-        label.setPos(position + 6, -36)
+        label.setBrush(self._label_brush(index))
+        label.setPos(position + 12, -54)
+        label.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
     def _format_label(self, index: int) -> str:
-        target_date = self._start_date + date.resolution * index
-        return target_date.strftime("%m/%d")
+        target_date = self._date_for_index(index)
+        weekday = self._weekday_label(target_date)
+        if self._column_units <= 1:
+            return target_date.strftime(f"%Y/%m/%d ({weekday})")
+        end_date = target_date + timedelta(days=self._column_units - 1)
+        return "{}〜{} ({}始まり)".format(
+            target_date.strftime("%Y/%m/%d"),
+            end_date.strftime("%m/%d"),
+            weekday,
+        )
+
+    def _date_for_index(self, index: int) -> date:
+        return self._start_date + timedelta(days=index * self._column_units)
+
+    def _weekday_label(self, target_date: date) -> str:
+        return self._WEEKDAY_LABELS[target_date.weekday() % len(self._WEEKDAY_LABELS)]
+
+    def _background_brush(self, index: int) -> QBrush:
+        target_date = self._date_for_index(index)
+        if target_date == self._today:
+            color = QColor(68, 104, 182, 120)
+        elif target_date.weekday() >= 5:
+            color = QColor(128, 78, 78, 100)
+        elif index % 2 == 0:
+            color = QColor(24, 36, 64, 110)
+        else:
+            color = QColor(16, 28, 52, 90)
+        return QBrush(color)
+
+    def _line_pen(self, index: int) -> QPen:
+        target_date = self._date_for_index(index)
+        if target_date == self._today:
+            color = QColor(113, 178, 255, 220)
+            width = 2.0
+        elif target_date.weekday() >= 5:
+            color = QColor(231, 140, 140, 160)
+            width = 1.5
+        else:
+            color = QColor(118, 146, 212, 160)
+            width = 1.2
+        pen = QPen(color)
+        pen.setWidthF(width)
+        return pen
+
+    def _label_brush(self, index: int) -> QBrush:
+        target_date = self._date_for_index(index)
+        if target_date == self._today:
+            color = QColor(140, 192, 255)
+        elif target_date.weekday() >= 5:
+            color = QColor(255, 196, 160)
+        else:
+            color = QColor(198, 210, 239)
+        return QBrush(color)
