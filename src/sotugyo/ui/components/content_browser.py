@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -29,7 +29,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenuBar,
     QPushButton,
-    QSize,
     QSizePolicy,
     QSlider,
     QSpinBox,
