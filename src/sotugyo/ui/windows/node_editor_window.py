@@ -49,6 +49,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QSizePolicy,
     QTabWidget,
+    QToolBar,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -877,8 +878,9 @@ class NodeEditorWindow(QMainWindow):
         }
         self._inspector_dock: Optional[QDockWidget] = None
         self._content_dock: Optional[QDockWidget] = None
-        self._align_inputs_button: Optional[QToolButton] = None
-        self._align_outputs_button: Optional[QToolButton] = None
+        self._alignment_toolbar: Optional[QToolBar] = None
+        self._align_inputs_action: Optional[QAction] = None
+        self._align_outputs_action: Optional[QAction] = None
 
         self._init_ui()
         self._create_menus()
@@ -908,9 +910,12 @@ class NodeEditorWindow(QMainWindow):
         central_layout = QHBoxLayout(central)
         central_layout.setContentsMargins(16, 16, 16, 16)
         central_layout.setSpacing(16)
-        central_layout.addWidget(self._build_graph_toolbar())
         central_layout.addWidget(self._graph_widget, 1)
         self.setCentralWidget(central)
+
+        alignment_toolbar = self._create_alignment_toolbar()
+        self.addToolBar(Qt.LeftToolBarArea, alignment_toolbar)
+        self._alignment_toolbar = alignment_toolbar
 
         self._side_tabs = QTabWidget(self)
         self._side_tabs.setMinimumWidth(260)
@@ -1015,6 +1020,8 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._inspector_dock.toggleViewAction())
         if self._content_dock is not None:
             view_menu.addAction(self._content_dock.toggleViewAction())
+        if self._alignment_toolbar is not None:
+            view_menu.addAction(self._alignment_toolbar.toggleViewAction())
 
     def _build_detail_tab(self) -> QWidget:
         widget = QFrame(self)
@@ -1081,46 +1088,44 @@ class NodeEditorWindow(QMainWindow):
 
         return widget
 
-    def _build_graph_toolbar(self) -> QWidget:
-        toolbar_frame = QFrame(self)
-        toolbar_frame.setObjectName("graphSideToolbar")
-        toolbar_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        toolbar_frame.setMinimumWidth(56)
+    def _create_alignment_toolbar(self) -> QToolBar:
+        toolbar = QToolBar("ノード整列", self)
+        toolbar.setObjectName("AlignmentToolBar")
+        toolbar.setOrientation(Qt.Vertical)
+        toolbar.setIconSize(QSize(24, 24))
+        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        toolbar.setAllowedAreas(Qt.LeftToolBarArea | Qt.RightToolBarArea)
+        toolbar.setMovable(True)
+        toolbar.setFloatable(True)
+        toolbar.setMinimumWidth(72)
+        layout = toolbar.layout()
+        if layout is not None:
+            layout.setSpacing(12)
+            layout.setContentsMargins(12, 16, 12, 16)
 
-        layout = QVBoxLayout(toolbar_frame)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-        layout.setAlignment(Qt.AlignTop)
-
-        self._align_inputs_button = QToolButton(toolbar_frame)
-        self._align_inputs_button.setObjectName("alignInputsButton")
-        self._align_inputs_button.setIcon(
-            self.style().standardIcon(QStyle.SP_ArrowBack)
+        align_inputs_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.SP_ArrowBack), "入力側整列"
         )
-        self._align_inputs_button.setIconSize(QSize(24, 24))
-        self._align_inputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self._align_inputs_button.setAutoRaise(True)
-        self._align_inputs_button.setToolTip("入力側ノードを整列")
-        self._align_inputs_button.setEnabled(False)
-        self._align_inputs_button.clicked.connect(self._align_input_nodes)
-        layout.addWidget(self._align_inputs_button)
+        align_inputs_action.setToolTip("入力側ノードを整列")
+        align_inputs_action.setEnabled(False)
+        align_inputs_action.triggered.connect(self._align_input_nodes)
+        self._align_inputs_action = align_inputs_action
+        inputs_button = toolbar.widgetForAction(align_inputs_action)
+        if isinstance(inputs_button, QToolButton):
+            inputs_button.setAutoRaise(False)
 
-        self._align_outputs_button = QToolButton(toolbar_frame)
-        self._align_outputs_button.setObjectName("alignOutputsButton")
-        self._align_outputs_button.setIcon(
-            self.style().standardIcon(QStyle.SP_ArrowForward)
+        align_outputs_action = toolbar.addAction(
+            self.style().standardIcon(QStyle.SP_ArrowForward), "出力側整列"
         )
-        self._align_outputs_button.setIconSize(QSize(24, 24))
-        self._align_outputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        self._align_outputs_button.setAutoRaise(True)
-        self._align_outputs_button.setToolTip("出力側ノードを整列")
-        self._align_outputs_button.setEnabled(False)
-        self._align_outputs_button.clicked.connect(self._align_output_nodes)
-        layout.addWidget(self._align_outputs_button)
+        align_outputs_action.setToolTip("出力側ノードを整列")
+        align_outputs_action.setEnabled(False)
+        align_outputs_action.triggered.connect(self._align_output_nodes)
+        self._align_outputs_action = align_outputs_action
+        outputs_button = toolbar.widgetForAction(align_outputs_action)
+        if isinstance(outputs_button, QToolButton):
+            outputs_button.setAutoRaise(False)
 
-        layout.addStretch(1)
-
-        return toolbar_frame
+        return toolbar
 
     def _open_project_settings(self) -> None:
         if self._current_project_root is None:
@@ -1899,10 +1904,10 @@ class NodeEditorWindow(QMainWindow):
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
-        if self._align_inputs_button is not None:
-            self._align_inputs_button.setEnabled(bool(input_nodes))
-        if self._align_outputs_button is not None:
-            self._align_outputs_button.setEnabled(bool(output_nodes))
+        if self._align_inputs_action is not None:
+            self._align_inputs_action.setEnabled(bool(input_nodes))
+        if self._align_outputs_action is not None:
+            self._align_outputs_action.setEnabled(bool(output_nodes))
 
     def _align_input_nodes(self) -> None:
         if self._current_node is None:
