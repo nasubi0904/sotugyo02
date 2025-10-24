@@ -6,7 +6,7 @@ import logging
 import math
 from dataclasses import dataclass
 from datetime import date, timedelta
-from typing import Callable, Dict, Iterable, Optional, Union
+from typing import Callable, Dict, Iterable, Optional, Tuple, Union
 
 from PySide6.QtCore import (
     QEvent,
@@ -282,16 +282,22 @@ class ThemeProvider:
         self._label_font = QFont()
         self._label_font.setPointSize(9)
         self._label_font.setWeight(QFont.Weight.DemiBold)
+        self._scene_background_color = QColor(14, 20, 36)
 
     @property
     def label_font(self) -> QFont:
         return self._label_font
 
     def scene_background_color(self) -> QColor:
-        return QColor(14, 20, 36)
+        return QColor(self._scene_background_color)
 
     def scene_background_brush(self) -> QBrush:
         return QBrush(self.scene_background_color())
+
+    def set_scene_background_color(
+        self, color: Union[QColor, Tuple[int, int, int], Tuple[int, int, int, int]]
+    ) -> None:
+        self._scene_background_color = QColor(color)
 
     def background_brush(self, *, is_today: bool, is_weekend: bool, is_even: bool) -> QBrush:
         if is_today:
@@ -404,6 +410,13 @@ class _BaseLayer:
     def update(self, context: LayerUpdateContext) -> None:
         raise NotImplementedError
 
+    def set_theme(self, theme: ThemeProvider) -> None:
+        self._theme = theme
+        self._on_theme_changed()
+
+    def _on_theme_changed(self) -> None:
+        return
+
 
 class GridTileLayer(_BaseLayer):
     """列単位の背景パターンと縦グリッド線を描画する。"""
@@ -413,6 +426,9 @@ class GridTileLayer(_BaseLayer):
     def __init__(self, scene, theme: ThemeProvider) -> None:
         super().__init__(scene, theme)
         self._last_signature: Optional[tuple] = None
+
+    def _on_theme_changed(self) -> None:
+        self._last_signature = None
 
     def update(self, context: LayerUpdateContext) -> None:  # pragma: no cover - NodeGraphQt 依存
         if context.visible_scene_rect is None or context.viewport_rect is None:
@@ -531,6 +547,10 @@ class AxisLabelLayer(_BaseLayer):
         self._formatter = formatter
         self._labels: Dict[int, _LabelItem] = {}
 
+    def _on_theme_changed(self) -> None:
+        for label_item in self._labels.values():
+            label_item.label.setFont(self._theme.label_font)
+
     def update(self, context: LayerUpdateContext) -> None:  # pragma: no cover - NodeGraphQt 依存
         if self._scene is None:
             return
@@ -594,6 +614,10 @@ class MarkerLayer(_BaseLayer):
     def __init__(self, scene, theme: ThemeProvider) -> None:
         super().__init__(scene, theme)
         self._line: Optional[QGraphicsLineItem] = None
+
+    def _on_theme_changed(self) -> None:
+        if self._line is not None:
+            self._line.setPen(self._theme.today_marker_pen())
 
     def update(self, context: LayerUpdateContext) -> None:  # pragma: no cover - NodeGraphQt 依存
         if self._scene is None or context.visible_scene_rect is None:
@@ -669,6 +693,20 @@ class TimelineGridOverlay(QObject):
                 LOGGER.debug("シーン背景ブラシの初期化に失敗", exc_info=True)
         self._visible_rect_provider.set_view(view)
         self._scheduler.request(geometry=True, axis=True)
+
+    @property
+    def theme(self) -> ThemeProvider:
+        return self._theme
+
+    def set_theme(self, theme: ThemeProvider) -> None:
+        self._theme = theme
+        self._apply_theme()
+
+    def set_scene_background_color(
+        self, color: Union[QColor, Tuple[int, int, int], Tuple[int, int, int, int]]
+    ) -> None:
+        self._theme.set_scene_background_color(color)
+        self._apply_theme()
 
     def set_start_date(self, start: date) -> None:
         if self._date_mapper.set_start_date(start):
@@ -751,6 +789,17 @@ class TimelineGridOverlay(QObject):
             layer.update(context)
         self._last_scene_rect = visible_rect
         self._last_viewport_rect = viewport_rect
+
+    def _apply_theme(self) -> None:
+        if self._scene is not None:
+            try:
+                self._scene.setBackgroundBrush(self._theme.scene_background_brush())
+            except Exception:
+                LOGGER.debug("シーン背景ブラシの再設定に失敗", exc_info=True)
+        for layer in self._layers:
+            if layer is not None:
+                layer.set_theme(self._theme)
+        self._scheduler.request(force=True)
 
 
 __all__ = [
