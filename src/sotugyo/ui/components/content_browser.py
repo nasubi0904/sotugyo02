@@ -147,7 +147,7 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
-        self._icon_cache: Dict[str, QIcon] = {}
+        self._icon_cache: Dict[Tuple[str, int], QIcon] = {}
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
@@ -238,7 +238,7 @@ class NodeContentBrowser(QWidget):
             item.setData(Qt.UserRole, entry.node_type)
             item.setData(Qt.UserRole + 1, entry.searchable_text())
             item.setData(Qt.UserRole + 2, entry.genre)
-            item.setToolTip(entry.node_type)
+            item.setToolTip(self._entry_tooltip(entry))
             item.setTextAlignment(alignment)
             item.setSizeHint(item_size)
             item.setIcon(self._icon_for_entry(entry))
@@ -548,6 +548,7 @@ class NodeContentBrowser(QWidget):
         icon_size_value = self._current_icon_size_value()
         icon_size = QSize(icon_size_value, icon_size_value)
         self._available_list.setIconSize(icon_size)
+        self._refresh_icons()
         self._refresh_item_sizes()
         tooltip = (
             f"表示サイズ: {icon_size_value}px"
@@ -615,7 +616,12 @@ class NodeContentBrowser(QWidget):
         self._available_list.setViewMode(profile.view_mode)
         self._available_list.setFlow(profile.flow)
         self._available_list.setWrapping(profile.wrapping)
-        self._available_list.setSpacing(16 if profile.view_mode == QListWidget.IconMode else 8)
+        self._available_list.setSpacing(
+            16 if profile.view_mode == QListWidget.IconMode else 8
+        )
+        self._available_list.setWordWrap(
+            False if profile.view_mode == QListWidget.IconMode else True
+        )
         padding = profile.card_padding
         if self._card_layout is not None:
             self._card_layout.setContentsMargins(*padding)
@@ -671,6 +677,13 @@ class NodeContentBrowser(QWidget):
         if self._available_list.viewMode() == QListWidget.IconMode:
             self._available_list.setGridSize(item_size)
 
+    def _refresh_icons(self) -> None:
+        for index, entry in enumerate(self._view_model.entries):
+            item = self._available_list.item(index)
+            if item is None:
+                continue
+            item.setIcon(self._icon_for_entry(entry))
+
     def _list_item_size_hint(self) -> QSize:
         font: QFontMetrics = self._available_list.fontMetrics()
         icon_size = self._current_icon_size_value()
@@ -682,6 +695,11 @@ class NodeContentBrowser(QWidget):
         line_spacing = font.lineSpacing()
         leading = font.leading()
         profile = self._current_profile
+
+        if profile.view_mode == QListWidget.IconMode and not profile.compact:
+            padding = max(12, icon_size // 4)
+            cell = icon_size + padding * 2
+            return QSize(cell, cell)
 
         if profile.compact:
             vertical_padding = max(10, leading + 6)
@@ -719,7 +737,8 @@ class NodeContentBrowser(QWidget):
         return self._icon_size
 
     def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
-        key = entry.node_type
+        icon_size = self._current_icon_size_value()
+        key = (entry.node_type, icon_size)
         cached = self._icon_cache.get(key)
         if cached is not None:
             return cached
@@ -730,15 +749,20 @@ class NodeContentBrowser(QWidget):
         return icon
 
     def _create_entry_pixmap(self, entry: NodeCatalogEntry) -> QPixmap:
-        base_size = max(self._icon_size_levels.values(), default=80)
-        pixmap_size = int(base_size * 1.6)
-        pixmap = QPixmap(pixmap_size, pixmap_size)
+        icon_size = self._current_icon_size_value()
+        if hasattr(self, "devicePixelRatioF"):
+            device_ratio = max(1.0, float(self.devicePixelRatioF()))
+        else:
+            device_ratio = 1.0
+        pixel_size = max(1, int(round(icon_size * device_ratio)))
+        pixmap = QPixmap(pixel_size, pixel_size)
+        pixmap.setDevicePixelRatio(device_ratio)
         pixmap.fill(Qt.transparent)
 
         painter = QPainter(pixmap)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
-        rect_margin = max(6, pixmap_size // 12)
+        rect_margin = max(4, pixel_size // 12)
         rect = pixmap.rect().adjusted(rect_margin, rect_margin, -rect_margin, -rect_margin)
 
         fill_color = self._genre_color(entry.genre)
@@ -748,9 +772,9 @@ class NodeContentBrowser(QWidget):
         border_color = border_color.darker(125)
         border_color.setAlpha(255)
         border_pen = QPen(border_color)
-        border_pen.setWidth(max(2, pixmap_size // 24))
+        border_pen.setWidth(max(2, pixel_size // 20))
         painter.setPen(border_pen)
-        corner_radius = max(6, pixmap_size // 16)
+        corner_radius = max(6, pixel_size // 10)
         painter.drawRoundedRect(rect, corner_radius, corner_radius)
 
         title_source = entry.title or entry.subtitle or entry.node_type
@@ -760,7 +784,7 @@ class NodeContentBrowser(QWidget):
             painter.setPen(text_color)
             font = QFont()
             font.setBold(True)
-            font.setPointSizeF(pixmap_size * 0.28)
+            font.setPointSizeF(max(8.0, icon_size * 0.32))
             painter.setFont(font)
             painter.drawText(rect, Qt.AlignCenter, label_text)
 
@@ -787,6 +811,9 @@ class NodeContentBrowser(QWidget):
         return ""
 
     def _format_entry_text(self, entry: NodeCatalogEntry) -> str:
+        if self._current_profile.view_mode == QListWidget.IconMode and not self._compact_mode:
+            return ""
+
         title = entry.title.strip()
         subtitle = entry.subtitle.strip()
         node_type = entry.node_type.strip()
@@ -806,6 +833,19 @@ class NodeContentBrowser(QWidget):
         lines = [text for text in (title, subtitle) if text]
         if not lines and node_type:
             lines.append(node_type)
+        return "\n".join(lines)
+
+    def _entry_tooltip(self, entry: NodeCatalogEntry) -> str:
+        lines: List[str] = []
+        if entry.title:
+            lines.append(entry.title)
+        if entry.subtitle:
+            lines.append(entry.subtitle)
+        lines.append(f"タイプ: {entry.node_type}")
+        if entry.genre:
+            lines.append(f"ジャンル: {entry.genre}")
+        if entry.keywords:
+            lines.append("キーワード: " + ", ".join(entry.keywords))
         return "\n".join(lines)
 
     def _update_item_texts(self) -> None:
