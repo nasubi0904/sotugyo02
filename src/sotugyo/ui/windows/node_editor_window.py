@@ -24,6 +24,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
+    QComboBox,
     QDialog,
     QDockWidget,
     QFrame,
@@ -75,6 +76,21 @@ from ..style import apply_base_style
 
 
 @dataclass(frozen=True)
+class NodeCatalogEntry:
+    """コンテンツブラウザに表示するノード情報。"""
+
+    node_type: str
+    title: str
+    subtitle: str
+    genre: str
+    keywords: Tuple[str, ...] = ()
+
+    def searchable_text(self) -> str:
+        parts = [self.title, self.subtitle, self.node_type, *self.keywords]
+        return "\n".join(part.lower() for part in parts if part)
+
+
+@dataclass(frozen=True)
 class BrowserLayoutProfile:
     """コンテンツブラウザのレイアウト設定。"""
 
@@ -99,8 +115,9 @@ class NodeContentBrowser(QWidget):
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._search_line: QLineEdit = QLineEdit(self)
+        self._genre_combo: Optional[QComboBox] = None
         self._available_list: QListWidget = QListWidget(self)
-        self._available_entries: List[Dict[str, str]] = []
+        self._catalog_entries: List[NodeCatalogEntry] = []
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
         self._icon_size_levels: Dict[int, int] = {
@@ -179,6 +196,7 @@ class NodeContentBrowser(QWidget):
         self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
+        self._current_genre: Optional[str] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -231,6 +249,18 @@ class NodeContentBrowser(QWidget):
         self._search_line.setPlaceholderText("ノードを検索")
         self._search_line.setClearButtonEnabled(True)
         search_layout.addWidget(self._search_line, 1)
+
+        genre_label = QLabel("ジャンル", card)
+        genre_label.setProperty("hint", "secondary")
+        search_layout.addWidget(genre_label)
+
+        genre_combo = QComboBox(card)
+        genre_combo.setObjectName("genreFilterCombo")
+        genre_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        genre_combo.setMinimumContentsLength(6)
+        genre_combo.addItem("すべて", None)
+        self._genre_combo = genre_combo
+        search_layout.addWidget(genre_combo)
 
         card_layout.addLayout(search_layout)
 
@@ -373,30 +403,112 @@ class NodeContentBrowser(QWidget):
         self._available_list.itemActivated.connect(self._on_available_item_activated)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
+        if self._genre_combo is not None:
+            self._genre_combo.currentIndexChanged.connect(self._on_genre_changed)
 
     def set_available_nodes(self, entries: List[Dict[str, str]]) -> None:
-        self._available_entries = entries
-        self._total_entry_count = len(entries)
-        self._available_list.clear()
-        alignment = Qt.AlignLeft | Qt.AlignTop
+        catalog_entries: List[NodeCatalogEntry] = []
         for entry in entries:
-            title = entry.get("title", "")
-            subtitle = entry.get("subtitle", "")
-            node_type = entry.get("type", "")
+            node_type = str(entry.get("type", "") or "")
+            title = str(entry.get("title", "") or "")
+            subtitle = str(entry.get("subtitle", "") or "")
+            genre_value = entry.get("genre")
+            genre = str(genre_value).strip() if isinstance(genre_value, str) else ""
+            if not genre:
+                genre = self._guess_genre(node_type)
+            keywords: Tuple[str, ...] = ()
+            raw_keywords = entry.get("keywords")
+            if isinstance(raw_keywords, str):
+                keywords = tuple(
+                    part.strip()
+                    for part in raw_keywords.split()
+                    if part and part.strip()
+                )
+            elif isinstance(raw_keywords, IterableABC):
+                keywords = tuple(
+                    str(part).strip()
+                    for part in raw_keywords
+                    if part and str(part).strip()
+                )
+            catalog_entries.append(
+                NodeCatalogEntry(
+                    node_type=node_type,
+                    title=title,
+                    subtitle=subtitle,
+                    genre=genre,
+                    keywords=keywords,
+                )
+            )
+
+        self._catalog_entries = catalog_entries
+        self._total_entry_count = len(catalog_entries)
+        self._available_list.clear()
+
+        alignment = Qt.AlignLeft | Qt.AlignTop
+        item_size = self._list_item_size_hint()
+        for entry in catalog_entries:
             item = QListWidgetItem(self._format_entry_text(entry))
-            item.setData(Qt.UserRole, node_type)
-            searchable = "\n".join(
-                part for part in (title, subtitle, node_type) if part
-            ).lower()
-            item.setData(Qt.UserRole + 1, searchable)
-            item.setToolTip(node_type)
+            item.setData(Qt.UserRole, entry.node_type)
+            item.setData(Qt.UserRole + 1, entry.searchable_text())
+            item.setData(Qt.UserRole + 2, entry.genre)
+            item.setToolTip(entry.node_type)
             item.setTextAlignment(alignment)
-            item.setSizeHint(self._list_item_size_hint())
+            item.setSizeHint(item_size)
             self._available_list.addItem(item)
-        self._apply_filter()
+
+        self._populate_genre_options()
         self._apply_icon_size()
         self._update_item_texts()
-        self._update_summary_label()
+        self._apply_filter()
+
+    def _populate_genre_options(self) -> None:
+        if self._genre_combo is None:
+            return
+        previous = self._current_genre
+        genres = sorted({entry.genre for entry in self._catalog_entries if entry.genre})
+        self._genre_combo.blockSignals(True)
+        self._genre_combo.clear()
+        self._genre_combo.addItem("すべて", None)
+        target_index = 0
+        for genre in genres:
+            self._genre_combo.addItem(genre, genre)
+            if previous and genre == previous:
+                target_index = self._genre_combo.count() - 1
+        if target_index >= self._genre_combo.count():
+            target_index = 0
+        if target_index == 0:
+            previous = None
+        self._genre_combo.setCurrentIndex(target_index)
+        self._genre_combo.blockSignals(False)
+        self._current_genre = previous
+        tooltip_lines = ["ジャンルで一覧を絞り込みます。"]
+        if genres:
+            tooltip_lines.append("登録ジャンル: " + ", ".join(genres))
+        self._genre_combo.setToolTip("\n".join(tooltip_lines))
+
+    def _guess_genre(self, node_type: str) -> str:
+        normalized = node_type.strip()
+        if normalized.startswith("tool-environment:") or normalized.startswith(
+            "sotugyo.tooling"
+        ):
+            return "ツール環境"
+        if normalized.startswith("sotugyo.demo."):
+            return "ワークフロー"
+        if normalized.startswith("sotugyo.memo."):
+            return "メモ"
+        return "その他"
+
+    def _on_genre_changed(self, index: int) -> None:
+        if self._genre_combo is None:
+            return
+        data = self._genre_combo.itemData(index)
+        self._current_genre = data if isinstance(data, str) and data else None
+        self._apply_filter()
+
+    def _genre_total_count(self, genre: Optional[str]) -> int:
+        if genre is None:
+            return self._total_entry_count
+        return sum(1 for entry in self._catalog_entries if entry.genre == genre)
 
     def focus_search(self) -> None:
         self._search_line.setFocus()
@@ -416,15 +528,24 @@ class NodeContentBrowser(QWidget):
 
     def _apply_filter(self) -> None:
         keyword = self._search_line.text().strip().lower()
+        selected_genre = self._current_genre
         visible_count = 0
         for index in range(self._available_list.count()):
             item = self._available_list.item(index)
             if item is None:
                 continue
+            entry = self._catalog_entries[index] if index < len(self._catalog_entries) else None
             search_text = item.data(Qt.UserRole + 1)
             if not isinstance(search_text, str):
-                search_text = item.text().lower()
-            is_hidden = bool(keyword) and keyword not in search_text
+                search_text = entry.searchable_text() if entry else item.text().lower()
+            matches_keyword = not keyword or keyword in search_text
+            matches_genre = True
+            if selected_genre:
+                genre_value = item.data(Qt.UserRole + 2)
+                if not isinstance(genre_value, str):
+                    genre_value = entry.genre if entry else ""
+                matches_genre = genre_value == selected_genre
+            is_hidden = not (matches_keyword and matches_genre)
             item.setHidden(is_hidden)
             if not is_hidden:
                 visible_count += 1
@@ -533,12 +654,12 @@ class NodeContentBrowser(QWidget):
         self._update_item_texts()
         self._adjust_control_header(width)
 
-    def _format_entry_text(self, entry: Mapping[str, str]) -> str:
+    def _format_entry_text(self, entry: NodeCatalogEntry) -> str:
         """エントリー情報を表示用文字列に整形する。"""
 
-        title = (entry.get("title", "") or "").strip()
-        subtitle = (entry.get("subtitle", "") or "").strip()
-        node_type = (entry.get("type", "") or "").strip()
+        title = entry.title.strip()
+        subtitle = entry.subtitle.strip()
+        node_type = entry.node_type.strip()
 
         if self._compact_mode:
             parts: List[str] = []
@@ -558,7 +679,7 @@ class NodeContentBrowser(QWidget):
     def _update_item_texts(self) -> None:
         """現在表示中の項目テキストを再整形する。"""
 
-        for index, entry in enumerate(self._available_entries):
+        for index, entry in enumerate(self._catalog_entries):
             item = self._available_list.item(index)
             if item is None:
                 continue
@@ -650,16 +771,25 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout.invalidate()
 
     def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
-        if visible_count is None:
-            visible_count = self._visible_entry_count or sum(
-                0 if item is None or item.isHidden() else 1
-                for item in (self._available_list.item(i) for i in range(self._available_list.count()))
-            )
-            self._visible_entry_count = visible_count
         if self._result_summary_label is None:
             return
-        total = self._total_entry_count
-        self._result_summary_label.setText(f"{visible_count} 件 / 全 {total} 件")
+        if visible_count is None:
+            visible_count = sum(
+                0
+                if item is None or item.isHidden()
+                else 1
+                for item in (
+                    self._available_list.item(i)
+                    for i in range(self._available_list.count())
+                )
+            )
+        self._visible_entry_count = visible_count
+        if self._current_genre:
+            total = self._genre_total_count(self._current_genre)
+            text = f"{visible_count} 件 / {total} 件（ジャンル: {self._current_genre}）"
+        else:
+            text = f"{visible_count} 件 / 全 {self._total_entry_count} 件"
+        self._result_summary_label.setText(text)
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -1120,16 +1250,22 @@ class NodeEditorWindow(QMainWindow):
                 "type": "sotugyo.demo.TaskNode",
                 "title": TaskNode.NODE_NAME,
                 "subtitle": "工程を構成するタスクノード",
+                "genre": "ワークフロー",
+                "keywords": ["task", "workflow", "工程"],
             },
             {
                 "type": "sotugyo.demo.ReviewNode",
                 "title": ReviewNode.NODE_NAME,
                 "subtitle": "成果物を検証するレビューノード",
+                "genre": "ワークフロー",
+                "keywords": ["review", "チェック", "検証"],
             },
             {
                 "type": MemoNode.node_type_identifier(),
                 "title": MemoNode.NODE_NAME,
                 "subtitle": "ノードエディタ上で自由に記述できるメモ",
+                "genre": "メモ",
+                "keywords": ["note", "メモ", "記録"],
             },
         ]
 
@@ -1150,6 +1286,11 @@ class NodeEditorWindow(QMainWindow):
                         "type": f"tool-environment:{environment.environment_id}",
                         "title": environment.name,
                         "subtitle": subtitle,
+                        "genre": "ツール環境",
+                        "keywords": [
+                            environment.environment_id,
+                            tool.display_name if tool is not None else "",
+                        ],
                     }
                 )
         return entries
