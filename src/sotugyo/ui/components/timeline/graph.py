@@ -641,6 +641,13 @@ class TimelineGridOverlay(QObject):
         if self._date_mapper.set_column_width(width):
             self._scheduler.request(axis=True)
 
+    def set_column_units(self, units: int) -> None:
+        """列単位数を設定する。
+
+        互換性維持のため、従来の ``set_units`` をラップする。
+        """
+        self.set_units(units)
+
     def set_units(self, units: int) -> None:
         if self._date_mapper.set_column_units(units):
             self._scheduler.request(axis=True)
