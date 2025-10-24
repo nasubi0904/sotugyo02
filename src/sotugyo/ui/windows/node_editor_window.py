@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QFont,
     QFontMetrics,
     QColor,
+    QIcon,
     QPen,
     QKeySequence,
     QPainter,
