@@ -12,7 +12,7 @@ BASE_STYLE_SHEET = """
 * {
     font-family: "Yu Gothic UI", "Meiryo", "Segoe UI", sans-serif;
     font-size: 13px;
-    letter-spacing: 0.2px;
+    letter-spacing: 0.05px;
 }
 QWidget {
     background-color: #040b18;
@@ -60,7 +60,7 @@ QLabel[hint="secondary"] {
 QLabel#panelTitle {
     font-weight: 650;
     font-size: 14px;
-    letter-spacing: 0.4px;
+    letter-spacing: 0.1px;
 }
 QLabel#formLabel {
     color: #bac8ea;
