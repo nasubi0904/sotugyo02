@@ -15,9 +15,15 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
+    QColor,
     QCloseEvent,
+    QFont,
     QFontMetrics,
+    QIcon,
     QKeySequence,
+    QPainter,
+    QPen,
+    QPixmap,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -147,6 +153,7 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
+        self._icon_cache: Dict[str, QIcon] = {}
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
@@ -457,6 +464,7 @@ class NodeContentBrowser(QWidget):
         self._catalog_entries = catalog_entries
         self._total_entry_count = len(catalog_entries)
         self._available_list.clear()
+        self._icon_cache.clear()
 
         alignment = Qt.AlignLeft | Qt.AlignTop
         item_size = self._list_item_size_hint()
@@ -468,6 +476,7 @@ class NodeContentBrowser(QWidget):
             item.setToolTip(entry.node_type)
             item.setTextAlignment(alignment)
             item.setSizeHint(item_size)
+            item.setIcon(self._icon_for_entry(entry))
             self._available_list.addItem(item)
 
         self._populate_genre_options()
@@ -791,6 +800,75 @@ class NodeContentBrowser(QWidget):
         if self._control_header is not None:
             self._control_header.updateGeometry()
         self._control_header_layout.invalidate()
+
+    def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
+        key = entry.node_type
+        cached = self._icon_cache.get(key)
+        if cached is not None:
+            return cached
+
+        pixmap = self._create_entry_pixmap(entry)
+        icon = QIcon(pixmap)
+        self._icon_cache[key] = icon
+        return icon
+
+    def _create_entry_pixmap(self, entry: NodeCatalogEntry) -> QPixmap:
+        base_size = max(self._icon_size_levels.values(), default=80)
+        # 余裕を持った描画サイズを確保し、高解像度のアイコンを生成する。
+        pixmap_size = int(base_size * 1.6)
+        pixmap = QPixmap(pixmap_size, pixmap_size)
+        pixmap.fill(Qt.transparent)
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect_margin = max(6, pixmap_size // 12)
+        rect = pixmap.rect().adjusted(rect_margin, rect_margin, -rect_margin, -rect_margin)
+
+        fill_color = self._genre_color(entry.genre)
+        painter.setBrush(fill_color)
+
+        border_color = QColor(fill_color)
+        border_color = border_color.darker(125)
+        border_color.setAlpha(255)
+        border_pen = QPen(border_color)
+        border_pen.setWidth(max(2, pixmap_size // 24))
+        painter.setPen(border_pen)
+        corner_radius = max(6, pixmap_size // 16)
+        painter.drawRoundedRect(rect, corner_radius, corner_radius)
+
+        title_source = entry.title or entry.subtitle or entry.node_type
+        label_text = self._icon_label_text(title_source)
+        if label_text:
+            text_color = QColor(255, 255, 255)
+            painter.setPen(text_color)
+            font = QFont()
+            font.setBold(True)
+            font.setPointSizeF(pixmap_size * 0.28)
+            painter.setFont(font)
+            painter.drawText(rect, Qt.AlignCenter, label_text)
+
+        painter.end()
+        return pixmap
+
+    def _genre_color(self, genre: str) -> QColor:
+        palette = {
+            "ツール環境": QColor(14, 165, 233),
+            "ワークフロー": QColor(34, 197, 94),
+            "メモ": QColor(249, 115, 22),
+        }
+        color = palette.get(genre)
+        if color is None:
+            color = QColor(99, 102, 241)
+        return color
+
+    def _icon_label_text(self, source_text: str) -> str:
+        for char in source_text:
+            if char.isalnum():
+                return char.upper()
+            if char.strip():
+                return char
+        return ""
 
     def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
         if self._result_summary_label is None:
