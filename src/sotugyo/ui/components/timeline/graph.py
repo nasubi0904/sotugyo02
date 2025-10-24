@@ -18,11 +18,19 @@ from PySide6.QtCore import (
     Qt,
     QTimer,
 )
-from PySide6.QtGui import QBrush, QColor, QFont, QPen, QTransform
+from PySide6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QPainter,
+    QPen,
+    QPixmap,
+    QTransform,
+)
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsLineItem,
-    QGraphicsRectItem,
     QGraphicsSimpleTextItem,
 )
 from NodeGraphQt import NodeGraph
@@ -54,12 +62,6 @@ class TimelineNodeGraph(NodeGraph):
 
 
 @dataclass
-class _GridColumnItems:
-    background: QGraphicsRectItem
-    line: QGraphicsLineItem
-
-
-@dataclass
 class _LabelItem:
     label: QGraphicsSimpleTextItem
 
@@ -76,6 +78,7 @@ class LayerUpdateContext:
     transform: QTransform
     theme: "ThemeProvider"
     today: date
+    view: Optional[object]
 
 
 class DateMapper:
@@ -284,6 +287,12 @@ class ThemeProvider:
     def label_font(self) -> QFont:
         return self._label_font
 
+    def scene_background_color(self) -> QColor:
+        return QColor(14, 20, 36)
+
+    def scene_background_brush(self) -> QBrush:
+        return QBrush(self.scene_background_color())
+
     def background_brush(self, *, is_today: bool, is_weekend: bool, is_even: bool) -> QBrush:
         if is_today:
             color = QColor(68, 104, 182, 120)
@@ -397,29 +406,36 @@ class _BaseLayer:
 
 
 class GridTileLayer(_BaseLayer):
-    """列単位の背景タイルと縦グリッド線を描画する。"""
+    """列単位の背景パターンと縦グリッド線を描画する。"""
 
     PADDING = 2
 
     def __init__(self, scene, theme: ThemeProvider) -> None:
         super().__init__(scene, theme)
-        self._columns: Dict[int, _GridColumnItems] = {}
+        self._last_signature: Optional[tuple] = None
 
     def update(self, context: LayerUpdateContext) -> None:  # pragma: no cover - NodeGraphQt 依存
-        if self._scene is None or context.visible_scene_rect is None:
+        if context.visible_scene_rect is None or context.viewport_rect is None:
             return
-        indexes = list(self._iter_required_indexes(context))
-        current_keys = set(self._columns.keys())
-        required_keys = set(indexes)
-        for index in current_keys - required_keys:
-            column = self._columns.pop(index)
-            self._scene.removeItem(column.background)
-            self._scene.removeItem(column.line)
-        for index in indexes:
-            if index in self._columns:
-                self._update_column(index, context)
-            else:
-                self._create_column(index, context)
+        view = getattr(context, "view", None)
+        if view is None:
+            return
+        if self._scene is not None:
+            try:
+                self._scene.setBackgroundBrush(self._theme.scene_background_brush())
+            except Exception:
+                pass
+        pixmap = self._render_background_pixmap(context, view)
+        if pixmap is None:
+            try:
+                view.setBackgroundBrush(self._theme.scene_background_brush())
+            except Exception:
+                LOGGER.debug("背景ブラシのリセットに失敗", exc_info=True)
+            return
+        try:
+            view.setBackgroundBrush(QBrush(pixmap))
+        except Exception:
+            LOGGER.debug("背景ブラシの設定に失敗", exc_info=True)
 
     def _iter_required_indexes(self, context: LayerUpdateContext) -> Iterable[int]:
         mapper = context.date_mapper
@@ -430,58 +446,79 @@ class GridTileLayer(_BaseLayer):
         end = int(right_index) + self.PADDING
         return range(start, end + 1)
 
-    def _create_column(self, index: int, context: LayerUpdateContext) -> None:
+    def _render_background_pixmap(self, context: LayerUpdateContext, view) -> Optional[QPixmap]:
+        viewport_rect = context.viewport_rect
+        width = max(1, viewport_rect.width())
+        height = max(1, viewport_rect.height())
+        indexes = list(self._iter_required_indexes(context))
         mapper = context.date_mapper
-        left = mapper.index_to_x(index)
-        right = mapper.index_to_x(index + 1)
-        width = right - left
         rect = context.visible_scene_rect
-        background = QGraphicsRectItem(left, rect.top(), width, rect.height())
-        background.setPen(QPen(Qt.PenStyle.NoPen))
-        target_date = mapper.date_at_index(index)
-        is_weekend = target_date.weekday() >= 5
-        is_today = target_date == context.today
-        brush = self._theme.background_brush(
-            is_today=is_today,
-            is_weekend=is_weekend,
-            is_even=index % 2 == 0,
+        signature = (
+            indexes[0] if indexes else None,
+            indexes[-1] if indexes else None,
+            round(rect.left(), 3),
+            round(rect.right(), 3),
+            round(mapper.column_width, 3),
+            mapper.column_units,
+            mapper.start_date.toordinal(),
+            context.today.toordinal(),
+            width,
+            height,
+            round(context.transform.m11(), 5),
+            round(context.transform.m22(), 5),
         )
-        background.setBrush(brush)
-        background.setZValue(-200)
-        background.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        if signature == self._last_signature:
+            return None
+        self._last_signature = signature
 
-        line = QGraphicsLineItem(left, rect.top(), left, rect.bottom())
-        line_pen = self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend)
-        line.setPen(line_pen)
-        line.setZValue(-150)
-        line.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        image = QImage(width, height, QImage.Format_ARGB32_Premultiplied)
+        image.fill(self._theme.scene_background_color())
 
-        self._scene.addItem(background)
-        self._scene.addItem(line)
-        self._columns[index] = _GridColumnItems(background=background, line=line)
+        painter = QPainter(image)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        scene_top = rect.top()
+        full_rect = QRect(0, 0, width, height)
 
-    def _update_column(self, index: int, context: LayerUpdateContext) -> None:
-        mapper = context.date_mapper
-        column = self._columns[index]
-        left = mapper.index_to_x(index)
-        right = mapper.index_to_x(index + 1)
-        width = right - left
-        rect = context.visible_scene_rect
-        column.background.setRect(left, rect.top(), width, rect.height())
-        target_date = mapper.date_at_index(index)
-        is_weekend = target_date.weekday() >= 5
-        is_today = target_date == context.today
-        column.background.setBrush(
-            self._theme.background_brush(
-                is_today=is_today,
-                is_weekend=is_weekend,
-                is_even=index % 2 == 0,
-            )
-        )
-        column.line.setLine(left, rect.top(), left, rect.bottom())
-        column.line.setPen(
-            self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend)
-        )
+        for index in indexes:
+            left_scene = mapper.index_to_x(index)
+            right_scene = mapper.index_to_x(index + 1)
+            left_point = view.mapFromScene(QPointF(left_scene, scene_top))
+            right_point = view.mapFromScene(QPointF(right_scene, scene_top))
+            left_x = left_point.x()
+            right_x = right_point.x()
+            if right_x < left_x:
+                left_x, right_x = right_x, left_x
+            column_left = int(math.floor(left_x))
+            column_right = int(math.ceil(right_x))
+            column_width = max(1, column_right - column_left)
+            target_date = mapper.date_at_index(index)
+            is_weekend = target_date.weekday() >= 5
+            is_today = target_date == context.today
+            fill_rect = QRect(column_left, 0, column_width, height).intersected(full_rect)
+            if not fill_rect.isEmpty():
+                painter.fillRect(
+                    fill_rect,
+                    self._theme.background_brush(
+                        is_today=is_today,
+                        is_weekend=is_weekend,
+                        is_even=index % 2 == 0,
+                    ),
+                )
+            line_x = max(0, min(width - 1, column_left))
+            painter.setPen(self._theme.grid_pen(is_today=is_today, is_weekend=is_weekend))
+            painter.drawLine(line_x, 0, line_x, height)
+
+        if indexes:
+            last_index = indexes[-1] + 1
+            right_scene = mapper.index_to_x(last_index)
+            right_point = view.mapFromScene(QPointF(right_scene, scene_top))
+            line_x = int(round(right_point.x()))
+            if 0 <= line_x <= width:
+                painter.setPen(self._theme.grid_pen(is_today=False, is_weekend=False))
+                painter.drawLine(line_x, 0, line_x, height)
+
+        painter.end()
+        return QPixmap.fromImage(image)
 
 
 class AxisLabelLayer(_BaseLayer):
@@ -625,6 +662,11 @@ class TimelineGridOverlay(QObject):
             self._label_layer,
             self._snap_layer,
         ]
+        if self._scene is not None:
+            try:
+                self._scene.setBackgroundBrush(self._theme.scene_background_brush())
+            except Exception:
+                LOGGER.debug("シーン背景ブラシの初期化に失敗", exc_info=True)
         self._visible_rect_provider.set_view(view)
         self._scheduler.request(geometry=True, axis=True)
 
@@ -703,6 +745,7 @@ class TimelineGridOverlay(QObject):
             transform=transform,
             theme=self._theme,
             today=self._today,
+            view=self._view,
         )
         for layer in self._layers:
             layer.update(context)
