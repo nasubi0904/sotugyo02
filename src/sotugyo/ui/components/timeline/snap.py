@@ -6,6 +6,7 @@ from dataclasses import replace
 from typing import Callable, Iterable, Optional
 
 from ....domain.projects.timeline import (
+    TimelineAxis,
     TimelineSnapSettings,
     calculate_snap_position,
     calculate_snap_width,
@@ -37,8 +38,22 @@ class TimelineSnapController:
     def column_width(self) -> float:
         return self._settings.column_width
 
+    @property
+    def axis(self) -> TimelineAxis:
+        return self._settings.axis
+
     def set_origin_x(self, value: float) -> None:
         self._settings = replace(self._settings, origin_x=float(value))
+
+    def set_origin_y(self, value: float) -> None:
+        self.set_origin_x(value)
+
+    def set_axis_orientation(self, axis: TimelineAxis) -> bool:
+        normalized = axis if isinstance(axis, TimelineAxis) else TimelineAxis(axis)
+        if normalized == self._settings.axis:
+            return False
+        self._settings = replace(self._settings, axis=normalized)
+        return True
 
     def set_column_units(self, units: int) -> bool:
         normalized = max(1, int(units))
@@ -103,10 +118,14 @@ class TimelineSnapController:
             current_y = float(pos[1])
         except (TypeError, ValueError):
             return False
-        target_x = calculate_snap_position(current_x, self._settings)
-        if abs(target_x - current_x) < 0.5:
+        axis_value = current_x if self.axis == TimelineAxis.HORIZONTAL else current_y
+        target_value = calculate_snap_position(axis_value, self._settings)
+        if abs(target_value - axis_value) < 0.5:
             return False
-        self._apply_node_position(node, target_x, current_y)
+        if self.axis == TimelineAxis.HORIZONTAL:
+            self._apply_node_position(node, target_value, current_y)
+        else:
+            self._apply_node_position(node, current_x, target_value)
         return True
 
     def _snap_node_width(self, node, *, width_override: float | None = None) -> bool:

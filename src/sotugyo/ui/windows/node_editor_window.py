@@ -50,7 +50,11 @@ from ..components.timeline import (
 )
 from ...domain.projects.service import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
-from ...domain.projects.timeline import DEFAULT_TIMELINE_UNIT, TimelineSnapSettings
+from ...domain.projects.timeline import (
+    DEFAULT_TIMELINE_UNIT,
+    TimelineAxis,
+    TimelineSnapSettings,
+)
 from ...domain.users.settings import UserAccount, UserSettingsManager
 from ...domain.tooling.coordinator import (
     NodeCatalogRecord,
@@ -100,7 +104,7 @@ class NodeEditorWindow(QMainWindow):
 
         self._timeline_base_unit = DEFAULT_TIMELINE_UNIT
         self._timeline_column_units = 1
-        self._timeline_origin_x = 0.0
+        self._timeline_origin_y = 0.0
         self._timeline_start_date = date.today()
         self._timeline_reference_date: Optional[date] = self._timeline_start_date
         self._timeline_overlay: Optional[TimelineGridOverlay] = None
@@ -141,7 +145,8 @@ class NodeEditorWindow(QMainWindow):
         snap_settings = TimelineSnapSettings(
             base_unit=self._timeline_base_unit,
             column_units=self._timeline_column_units,
-            origin_x=self._timeline_origin_x,
+            origin_x=self._timeline_origin_y,
+            axis=TimelineAxis.VERTICAL,
         )
         self._timeline_snap_controller = TimelineSnapController(
             self._graph,
@@ -149,10 +154,13 @@ class NodeEditorWindow(QMainWindow):
             should_snap=self._should_snap_node,
             modified_callback=self._set_modified,
         )
+        self._timeline_snap_controller.set_axis_orientation(TimelineAxis.VERTICAL)
         self._graph.set_timeline_move_handler(
             self._timeline_snap_controller.handle_nodes_moved
         )
-        self._timeline_overlay = TimelineGridOverlay(self._graph_widget)
+        self._timeline_overlay = TimelineGridOverlay(
+            self._graph_widget, axis=TimelineAxis.VERTICAL
+        )
         self._update_timeline_overlay_settings()
 
         self._init_ui()
@@ -642,8 +650,9 @@ class NodeEditorWindow(QMainWindow):
     def _update_timeline_overlay_settings(self) -> None:
         if self._timeline_overlay is None or self._timeline_snap_controller is None:
             return
-        self._timeline_snap_controller.set_origin_x(self._timeline_origin_x)
+        self._timeline_snap_controller.set_origin_y(self._timeline_origin_y)
         snap_settings = self._timeline_snap_controller.settings
+        self._timeline_overlay.set_axis_orientation(TimelineAxis.VERTICAL)
         self._timeline_overlay.set_column_width(self._timeline_snap_controller.column_width)
         self._timeline_overlay.set_column_units(snap_settings.normalized_column_units)
         self._timeline_overlay.set_origin_x(snap_settings.origin_x)
