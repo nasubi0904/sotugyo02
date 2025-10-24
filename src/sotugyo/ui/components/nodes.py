@@ -5,12 +5,18 @@ from __future__ import annotations
 from typing import ClassVar, Optional
 
 from PySide6.QtCore import QPointF, Qt, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QTextOption
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPainterPath,
+    QTextOption,
+    QUndoCommand,
+)
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QSizePolicy,
     QTextEdit,
-    QUndoCommand,
 )
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
