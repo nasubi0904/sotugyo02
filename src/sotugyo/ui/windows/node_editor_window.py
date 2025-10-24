@@ -1538,10 +1538,7 @@ class NodeEditorWindow(QMainWindow):
         width_label = QLabel("枠幅", toolbar)
         width_label.setObjectName("timelineWidthLabel")
         width_label.setAlignment(Qt.AlignHCenter)
-        if layout is not None:
-            layout.addWidget(width_label)
-        else:
-            toolbar.addWidget(width_label)
+        toolbar.addWidget(width_label)
 
         self._timeline_width_spin = QSpinBox(toolbar)
         self._timeline_width_spin.setRange(1, 12)
@@ -1550,11 +1547,11 @@ class NodeEditorWindow(QMainWindow):
         self._timeline_width_spin.valueChanged.connect(
             self._on_timeline_width_units_changed
         )
-        if layout is not None:
-            layout.addWidget(self._timeline_width_spin)
-            layout.addStretch(1)
-        else:
-            toolbar.addWidget(self._timeline_width_spin)
+        toolbar.addWidget(self._timeline_width_spin)
+
+        spacer = QWidget(toolbar)
+        spacer.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+        toolbar.addWidget(spacer)
 
         return toolbar
 
