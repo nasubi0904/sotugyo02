@@ -78,9 +78,12 @@ class ToolRegistryDialog(QDialog):
         button_row = QHBoxLayout()
         add_button = QPushButton("ツールを追加")
         add_button.clicked.connect(self._open_add_menu)
+        auto_button = QPushButton("テンプレート自動登録")
+        auto_button.clicked.connect(self._auto_register_all_templates)
         remove_button = QPushButton("選択ツールを削除")
         remove_button.clicked.connect(self._remove_selected_tool)
         button_row.addWidget(add_button)
+        button_row.addWidget(auto_button)
         button_row.addWidget(remove_button)
         button_row.addStretch(1)
         layout.addLayout(button_row)
@@ -186,6 +189,60 @@ class ToolRegistryDialog(QDialog):
             return
         self._refresh_on_accept = True
         self._refresh_tool_list()
+
+    def _auto_register_all_templates(self) -> None:
+        templates = self._service.list_templates()
+        if not templates:
+            QMessageBox.information(self, "自動登録", "利用可能なテンプレートが定義されていません。")
+            return
+
+        registered = 0
+        skipped = 0
+        errors: List[str] = []
+
+        for template in templates:
+            template_id = template.get("template_id")
+            if not template_id:
+                continue
+            candidates = self._service.discover_template_installations(template_id)
+            for candidate in candidates:
+                try:
+                    self._service.register_tool(
+                        display_name=candidate.display_name,
+                        executable_path=candidate.executable_path,
+                        template_id=candidate.template_id,
+                        version=candidate.version,
+                    )
+                except ValueError:
+                    skipped += 1
+                except OSError as exc:
+                    errors.append(f"{candidate.display_name}: {exc}")
+                else:
+                    registered += 1
+
+        if registered == 0 and skipped == 0 and not errors:
+            QMessageBox.information(
+                self,
+                "自動登録",
+                "テンプレートから登録可能なインストールは見つかりませんでした。",
+            )
+            return
+
+        messages: List[str] = []
+        if registered:
+            messages.append(f"{registered} 件のツールを登録しました。")
+        if skipped:
+            messages.append(f"{skipped} 件は既に登録済みのためスキップしました。")
+        if errors:
+            messages.append("一部のインストールでエラーが発生しました:")
+            messages.extend(errors)
+            QMessageBox.warning(self, "自動登録", "\n".join(messages))
+        else:
+            QMessageBox.information(self, "自動登録", "\n".join(messages))
+
+        if registered or skipped:
+            self._refresh_on_accept = True
+            self._refresh_tool_list()
 
 
 class ToolRegistrationDialog(QDialog):
