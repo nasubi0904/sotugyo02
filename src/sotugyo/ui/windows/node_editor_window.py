@@ -11,7 +11,7 @@ from collections.abc import Iterable as IterableABC, Mapping
 from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
@@ -22,26 +22,13 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import (
     QDialog,
-    QDockWidget,
     QFileDialog,
-    QFormLayout,
-    QFrame,
     QHBoxLayout,
-    QLabel,
-    QLineEdit,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
-    QPushButton,
-    QSpinBox,
-    QStyle,
-    QTextEdit,
     QSizePolicy,
-    QTabWidget,
-    QToolBar,
-    QToolButton,
-    QVBoxLayout,
     QWidget,
 )
 from NodeGraphQt import Port
@@ -49,7 +36,7 @@ from NodeGraphQt import Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ..components.content_browser import NodeCatalogEntry, NodeContentBrowser
+from ..components.content_browser import NodeCatalogEntry
 from ..components.nodes import (
     MemoNode,
     ReviewNode,
@@ -78,6 +65,9 @@ from ..dialogs import (
     UserSettingsDialog,
 )
 from ..style import apply_base_style
+from .alignment_toolbar import TimelineAlignmentToolBar
+from .content_browser_dock import NodeContentBrowserDock
+from .inspector_panel import NodeInspectorDock
 
 
 class NodeEditorWindow(QMainWindow):
@@ -115,7 +105,6 @@ class NodeEditorWindow(QMainWindow):
         self._timeline_reference_date: Optional[date] = self._timeline_start_date
         self._timeline_overlay: Optional[TimelineGridOverlay] = None
         self._timeline_snap_controller: Optional[TimelineSnapController] = None
-        self._timeline_width_spin: Optional[QSpinBox] = None
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -139,28 +128,15 @@ class NodeEditorWindow(QMainWindow):
         self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
 
-        self._side_tabs: Optional[QTabWidget] = None
-        self._detail_name_label: Optional[QLabel] = None
-        self._detail_type_label: Optional[QLabel] = None
-        self._detail_position_label: Optional[QLabel] = None
-        self._detail_uuid_label: Optional[QLabel] = None
-        self._rename_input: Optional[QLineEdit] = None
-        self._rename_button: Optional[QPushButton] = None
-        self._memo_text_edit: Optional[QTextEdit] = None
-        self._memo_font_spin: Optional[QSpinBox] = None
-        self._memo_controls_active = False
-        self._content_browser: Optional[NodeContentBrowser] = None
         self._shortcuts: List[QShortcut] = []
         self._node_type_creators = {
             "sotugyo.demo.TaskNode": self._create_task_node,
             "sotugyo.demo.ReviewNode": self._create_review_node,
             MemoNode.node_type_identifier(): self._create_memo_node,
         }
-        self._inspector_dock: Optional[QDockWidget] = None
-        self._content_dock: Optional[QDockWidget] = None
-        self._alignment_toolbar: Optional[QToolBar] = None
-        self._align_inputs_action: Optional[QAction] = None
-        self._align_outputs_action: Optional[QAction] = None
+        self._inspector_dock: Optional[NodeInspectorDock] = None
+        self._content_dock: Optional[NodeContentBrowserDock] = None
+        self._alignment_toolbar: Optional[TimelineAlignmentToolBar] = None
 
         snap_settings = TimelineSnapSettings(
             base_unit=self._timeline_base_unit,
@@ -214,56 +190,32 @@ class NodeEditorWindow(QMainWindow):
         central_layout.addWidget(self._graph_widget, 1)
         self.setCentralWidget(central)
 
-        alignment_toolbar = self._create_alignment_toolbar()
+        alignment_toolbar = TimelineAlignmentToolBar(
+            self, initial_units=self._timeline_column_units
+        )
+        alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
+        alignment_toolbar.align_outputs_requested.connect(self._align_output_nodes)
+        alignment_toolbar.timeline_width_changed.connect(
+            self._on_timeline_width_units_changed
+        )
         self.addToolBar(Qt.LeftToolBarArea, alignment_toolbar)
         self._alignment_toolbar = alignment_toolbar
 
-        self._side_tabs = QTabWidget(self)
-        self._side_tabs.setMinimumWidth(260)
-        self._side_tabs.addTab(self._build_detail_tab(), "ノード詳細")
-        self._side_tabs.addTab(self._build_operation_tab(), "ノード操作")
-
-        inspector_dock = QDockWidget("インスペクタ", self)
-        inspector_dock.setObjectName("InspectorDock")
-        inspector_dock.setAllowedAreas(
-            Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea
+        inspector_dock = NodeInspectorDock(
+            self,
+            memo_font_range=(MemoNode.MIN_FONT_SIZE, MemoNode.MAX_FONT_SIZE),
+            memo_font_default=MemoNode.DEFAULT_FONT_SIZE,
         )
-        inspector_dock.setFeatures(
-            QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-            | QDockWidget.DockWidgetClosable
-        )
-        inspector_container = QWidget(inspector_dock)
-        inspector_container.setObjectName("dockContentContainer")
-        inspector_layout = QVBoxLayout(inspector_container)
-        inspector_layout.setContentsMargins(12, 12, 12, 12)
-        inspector_layout.setSpacing(12)
-        inspector_layout.addWidget(self._side_tabs)
-        inspector_dock.setWidget(inspector_container)
+        inspector_dock.rename_requested.connect(self._handle_rename_requested)
+        inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
+        inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
-        self._content_browser = NodeContentBrowser(self)
-        self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
-        self._content_browser.search_submitted.connect(self._handle_content_browser_search)
-        self._content_browser.back_requested.connect(self._return_to_start)
-        self._content_browser.setMinimumHeight(160)
-
-        content_dock = QDockWidget("コンテンツブラウザ", self)
-        content_dock.setObjectName("ContentBrowserDock")
-        content_dock.setAllowedAreas(Qt.TopDockWidgetArea | Qt.BottomDockWidgetArea)
-        content_dock.setFeatures(
-            QDockWidget.DockWidgetMovable
-            | QDockWidget.DockWidgetFloatable
-            | QDockWidget.DockWidgetClosable
-        )
-        content_container = QWidget(content_dock)
-        content_container.setObjectName("dockContentContainer")
-        content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(12, 12, 12, 12)
-        content_layout.setSpacing(12)
-        content_layout.addWidget(self._content_browser)
-        content_dock.setWidget(content_container)
+        content_dock = NodeContentBrowserDock(self)
+        content_dock.node_type_requested.connect(self._spawn_node_by_type)
+        content_dock.search_submitted.connect(self._handle_content_browser_search)
+        content_dock.back_requested.connect(self._return_to_start)
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
 
@@ -320,128 +272,6 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._content_dock.toggleViewAction())
         if self._alignment_toolbar is not None:
             view_menu.addAction(self._alignment_toolbar.toggleViewAction())
-
-    def _build_detail_tab(self) -> QWidget:
-        widget = QFrame(self)
-        widget.setObjectName("inspectorSection")
-        layout = QFormLayout(widget)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(10)
-
-        self._detail_name_label = QLabel("-", widget)
-        self._detail_type_label = QLabel("-", widget)
-        self._detail_uuid_label = QLabel("-", widget)
-        self._detail_position_label = QLabel("-", widget)
-
-        layout.addRow("名前", self._detail_name_label)
-        layout.addRow("タイプ", self._detail_type_label)
-        layout.addRow("UUID", self._detail_uuid_label)
-        layout.addRow("位置", self._detail_position_label)
-
-        return widget
-
-    def _build_operation_tab(self) -> QWidget:
-        widget = QFrame(self)
-        widget.setObjectName("inspectorSection")
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-
-        rename_label = QLabel("名前の変更", widget)
-        rename_label.setObjectName("panelTitle")
-        self._rename_input = QLineEdit(widget)
-        self._rename_input.setPlaceholderText("ノード名を入力")
-
-        self._rename_button = QPushButton("名前を更新", widget)
-        self._rename_button.clicked.connect(self._apply_node_rename)
-
-        layout.addWidget(rename_label)
-        layout.addWidget(self._rename_input)
-        layout.addWidget(self._rename_button)
-
-        memo_label = QLabel("メモ編集", widget)
-        memo_label.setObjectName("panelTitle")
-        layout.addWidget(memo_label)
-
-        self._memo_text_edit = QTextEdit(widget)
-        self._memo_text_edit.setAcceptRichText(False)
-        self._memo_text_edit.setPlaceholderText("メモノードの内容を入力")
-        self._memo_text_edit.setMinimumHeight(140)
-        self._memo_text_edit.textChanged.connect(self._handle_memo_text_changed)
-        layout.addWidget(self._memo_text_edit)
-
-        memo_font_layout = QHBoxLayout()
-        memo_font_label = QLabel("文字サイズ", widget)
-        self._memo_font_spin = QSpinBox(widget)
-        self._memo_font_spin.setRange(MemoNode.MIN_FONT_SIZE, MemoNode.MAX_FONT_SIZE)
-        self._memo_font_spin.setValue(MemoNode.DEFAULT_FONT_SIZE)
-        self._memo_font_spin.valueChanged.connect(self._handle_memo_font_size_changed)
-        memo_font_layout.addWidget(memo_font_label)
-        memo_font_layout.addWidget(self._memo_font_spin)
-        layout.addLayout(memo_font_layout)
-
-        self._set_memo_controls_enabled(False)
-
-        layout.addStretch(1)
-
-        return widget
-
-    def _create_alignment_toolbar(self) -> QToolBar:
-        toolbar = QToolBar("ノード整列", self)
-        toolbar.setObjectName("AlignmentToolBar")
-        toolbar.setOrientation(Qt.Vertical)
-        toolbar.setIconSize(QSize(24, 24))
-        toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
-        toolbar.setAllowedAreas(Qt.LeftToolBarArea | Qt.RightToolBarArea)
-        toolbar.setMovable(True)
-        toolbar.setFloatable(True)
-        toolbar.setMinimumWidth(72)
-        layout = toolbar.layout()
-        if layout is not None:
-            layout.setSpacing(12)
-            layout.setContentsMargins(12, 16, 12, 16)
-
-        align_inputs_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.SP_ArrowBack), "入力側整列"
-        )
-        align_inputs_action.setToolTip("入力側ノードを整列")
-        align_inputs_action.setEnabled(False)
-        align_inputs_action.triggered.connect(self._align_input_nodes)
-        self._align_inputs_action = align_inputs_action
-        inputs_button = toolbar.widgetForAction(align_inputs_action)
-        if isinstance(inputs_button, QToolButton):
-            inputs_button.setAutoRaise(False)
-
-        align_outputs_action = toolbar.addAction(
-            self.style().standardIcon(QStyle.SP_ArrowForward), "出力側整列"
-        )
-        align_outputs_action.setToolTip("出力側ノードを整列")
-        align_outputs_action.setEnabled(False)
-        align_outputs_action.triggered.connect(self._align_output_nodes)
-        self._align_outputs_action = align_outputs_action
-        outputs_button = toolbar.widgetForAction(align_outputs_action)
-        if isinstance(outputs_button, QToolButton):
-            outputs_button.setAutoRaise(False)
-
-        width_label = QLabel("枠幅", toolbar)
-        width_label.setObjectName("timelineWidthLabel")
-        width_label.setAlignment(Qt.AlignHCenter)
-        toolbar.addWidget(width_label)
-
-        self._timeline_width_spin = QSpinBox(toolbar)
-        self._timeline_width_spin.setRange(1, 12)
-        self._timeline_width_spin.setValue(self._timeline_column_units)
-        self._timeline_width_spin.setToolTip("1枠の幅をノード幅の倍数で設定")
-        self._timeline_width_spin.valueChanged.connect(
-            self._on_timeline_width_units_changed
-        )
-        toolbar.addWidget(self._timeline_width_spin)
-
-        spacer = QWidget(toolbar)
-        spacer.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
-        toolbar.addWidget(spacer)
-
-        return toolbar
 
     def _open_project_settings(self) -> None:
         if self._current_project_root is None:
@@ -546,7 +376,7 @@ class NodeEditorWindow(QMainWindow):
         register("Ctrl+R", self._create_review_node)
 
     def _initialize_content_browser(self) -> None:
-        if self._content_browser is None:
+        if self._content_dock is None:
             return
         self._refresh_content_browser_entries()
 
@@ -558,7 +388,7 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_content_browser_entries()
 
     def _refresh_content_browser_entries(self) -> None:
-        if self._content_browser is None:
+        if self._content_dock is None:
             return
         records = self._build_available_node_records()
         if self._tool_snapshot is not None:
@@ -573,7 +403,7 @@ class NodeEditorWindow(QMainWindow):
             )
             for record in records
         ]
-        self._content_browser.set_catalog_entries(entries)
+        self._content_dock.set_catalog_entries(entries)
 
     # ------------------------------------------------------------------
     # プロジェクトコンテキスト管理
@@ -693,11 +523,11 @@ class NodeEditorWindow(QMainWindow):
         menu.exec(global_pos)
 
     def _focus_content_browser_search(self) -> None:
-        if self._content_browser is not None:
-            self._content_browser.focus_search()
+        if self._content_dock is not None:
+            self._content_dock.focus_search()
 
     def _handle_content_browser_search(self, keyword: str) -> None:
-        if self._content_browser is None:
+        if self._content_dock is None:
             return
         keyword = keyword.strip()
         if not keyword:
@@ -707,7 +537,7 @@ class NodeEditorWindow(QMainWindow):
         if self._search_nodes(keyword, show_dialog=False) is not None:
             return
 
-        available_type = self._content_browser.first_visible_available_type()
+        available_type = self._content_dock.first_visible_available_type()
         if available_type is not None:
             self._spawn_node_by_type(available_type)
             return
@@ -804,6 +634,8 @@ class NodeEditorWindow(QMainWindow):
         if not self._timeline_snap_controller.set_column_units(value):
             return
         self._timeline_column_units = max(1, int(value))
+        if self._alignment_toolbar is not None:
+            self._alignment_toolbar.set_timeline_units(self._timeline_column_units)
         self._update_timeline_overlay_settings()
         self._timeline_snap_controller.snap_nodes(self._collect_all_nodes())
 
@@ -1086,8 +918,8 @@ class NodeEditorWindow(QMainWindow):
     ):
         if keyword is None:
             keyword = (
-                self._content_browser.current_search_text()
-                if self._content_browser is not None
+                self._content_dock.current_search_text()
+                if self._content_dock is not None
                 else ""
             )
         keyword = keyword.strip()
@@ -1140,21 +972,12 @@ class NodeEditorWindow(QMainWindow):
         node = nodes[0] if nodes else None
         self._current_node = node
 
+        inspector = self._inspector_dock
         if node is None:
-            if self._detail_name_label:
-                self._detail_name_label.setText("-")
-            if self._detail_type_label:
-                self._detail_type_label.setText("-")
-            if self._detail_position_label:
-                self._detail_position_label.setText("-")
-            if self._detail_uuid_label:
-                self._detail_uuid_label.setText("-")
-            if self._rename_input is not None:
-                self._rename_input.setText("")
-                self._rename_input.setEnabled(False)
-            if self._rename_button is not None:
-                self._rename_button.setEnabled(False)
-            self._update_memo_controls(None)
+            if inspector is not None:
+                inspector.clear_node_details()
+                inspector.disable_rename()
+                inspector.clear_memo()
             self._update_alignment_controls(None)
             return
 
@@ -1175,47 +998,38 @@ class NodeEditorWindow(QMainWindow):
         if metadata_changed:
             self._set_modified(True)
 
-        if self._detail_name_label:
-            self._detail_name_label.setText(name)
-        if self._detail_type_label:
-            self._detail_type_label.setText(str(node_type))
-        if self._detail_position_label:
-            self._detail_position_label.setText(pos_text)
-        if self._detail_uuid_label:
-            self._detail_uuid_label.setText(node_uuid)
-        if self._rename_input is not None:
-            self._rename_input.blockSignals(True)
-            self._rename_input.setText(name)
-            self._rename_input.setEnabled(True)
-            self._rename_input.blockSignals(False)
-        if self._rename_button is not None:
-            self._rename_button.setEnabled(True)
-
+        if inspector is not None:
+            inspector.update_node_details(
+                name=name,
+                node_type=node_type,
+                node_uuid=node_uuid,
+                position_text=pos_text,
+            )
+            inspector.enable_rename(name)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
-    def _apply_node_rename(self) -> None:
-        if self._current_node is None or self._rename_input is None:
+    def _handle_rename_requested(self, new_name: str) -> None:
+        if self._current_node is None:
             self._show_info_dialog("名前を変更するノードを選択してください。")
+            if self._inspector_dock is not None:
+                self._inspector_dock.disable_rename()
             return
 
-        new_name = self._rename_input.text().strip()
-        if not new_name:
+        normalized_name = new_name.strip()
+        if not normalized_name:
             self._show_info_dialog("新しい名前を入力してください。")
             return
 
         if hasattr(self._current_node, "set_name"):
-            self._current_node.set_name(new_name)
+            self._current_node.set_name(normalized_name)
         self._update_selected_node_info()
         self._set_modified(True)
         self._refresh_node_catalog()
 
-    def _handle_memo_text_changed(self) -> None:
-        if self._memo_controls_active or self._memo_text_edit is None:
-            return
+    def _handle_memo_text_changed(self, text: str) -> None:
         if self._current_node is None or not self._is_memo_node(self._current_node):
             return
-        text = self._memo_text_edit.toPlainText()
         try:
             current = self._current_node.get_property("memo_text")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
@@ -1230,8 +1044,6 @@ class NodeEditorWindow(QMainWindow):
         self._set_modified(True)
 
     def _handle_memo_font_size_changed(self, value: int) -> None:
-        if self._memo_controls_active or self._memo_font_spin is None:
-            return
         if self._current_node is None or not self._is_memo_node(self._current_node):
             return
         try:
@@ -1247,19 +1059,13 @@ class NodeEditorWindow(QMainWindow):
             return
         self._set_modified(True)
 
-    def _set_memo_controls_enabled(self, enabled: bool) -> None:
-        if self._memo_text_edit is not None:
-            self._memo_text_edit.setEnabled(enabled)
-        if self._memo_font_spin is not None:
-            self._memo_font_spin.setEnabled(enabled)
-
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
-        if self._align_inputs_action is not None:
-            self._align_inputs_action.setEnabled(bool(input_nodes))
-        if self._align_outputs_action is not None:
-            self._align_outputs_action.setEnabled(bool(output_nodes))
+        if self._alignment_toolbar is not None:
+            self._alignment_toolbar.set_alignment_enabled(
+                inputs=bool(input_nodes), outputs=bool(output_nodes)
+            )
 
     def _align_input_nodes(self) -> None:
         if self._current_node is None:
@@ -1395,18 +1201,13 @@ class NodeEditorWindow(QMainWindow):
         return True
 
     def _update_memo_controls(self, node) -> None:
-        if self._memo_text_edit is None or self._memo_font_spin is None:
+        inspector = self._inspector_dock
+        if inspector is None:
             return
-        is_memo = self._is_memo_node(node)
-        self._memo_controls_active = True
-        if not is_memo:
-            self._memo_text_edit.setPlainText("")
-            self._memo_font_spin.setValue(MemoNode.DEFAULT_FONT_SIZE)
-            self._set_memo_controls_enabled(False)
-            self._memo_controls_active = False
+        if not self._is_memo_node(node):
+            inspector.clear_memo()
             return
 
-        self._set_memo_controls_enabled(True)
         try:
             memo_text = node.get_property("memo_text")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
@@ -1415,13 +1216,11 @@ class NodeEditorWindow(QMainWindow):
             font_size = node.get_property("memo_font_size")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
             font_size = MemoNode.DEFAULT_FONT_SIZE
-        self._memo_text_edit.setPlainText(str(memo_text or ""))
         try:
             normalized_size = int(font_size)
         except (TypeError, ValueError):
             normalized_size = MemoNode.DEFAULT_FONT_SIZE
-        self._memo_font_spin.setValue(normalized_size)
-        self._memo_controls_active = False
+        inspector.show_memo(str(memo_text or ""), normalized_size)
 
     def _is_memo_node(self, node) -> bool:
         if node is None:
