@@ -27,7 +27,6 @@ from PySide6.QtWidgets import (
     QListView,
     QListWidget,
     QListWidgetItem,
-    QMenuBar,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -115,8 +114,6 @@ class NodeContentBrowser(QWidget):
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
     back_requested = Signal()
-    tool_environment_edit_requested = Signal()
-
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._view_model = NodeCatalogViewModel()
@@ -138,7 +135,6 @@ class NodeContentBrowser(QWidget):
         self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
         self._compact_mode: bool = False
         self._icon_control_container: Optional[QWidget] = None
-        self._menu_bar: Optional[QMenuBar] = None
         self._outer_layout: Optional[QVBoxLayout] = None
         self._card_frame: Optional[QFrame] = None
         self._card_layout: Optional[QVBoxLayout] = None
@@ -317,10 +313,6 @@ class NodeContentBrowser(QWidget):
         self._card_frame = card
         self._card_layout = card_layout
 
-        menu_bar = self._create_menu_bar(card)
-        if menu_bar is not None:
-            card_layout.addWidget(menu_bar)
-
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(8)
@@ -384,15 +376,6 @@ class NodeContentBrowser(QWidget):
         )
 
         outer_layout.addWidget(card, 1)
-
-    def _create_menu_bar(self, parent: QWidget) -> Optional[QMenuBar]:
-        menu_bar = QMenuBar(parent)
-        menu_bar.setNativeMenuBar(False)
-        environment_menu = menu_bar.addMenu("環境")
-        edit_action = environment_menu.addAction("ツール環境の編集...")
-        edit_action.triggered.connect(self.tool_environment_edit_requested.emit)
-        self._menu_bar = menu_bar
-        return menu_bar
 
     def _configure_list_widget(self, widget: QListWidget) -> None:
         widget.setObjectName("contentList")
