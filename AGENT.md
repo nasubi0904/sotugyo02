@@ -17,6 +17,39 @@
 5. パッケージングスクリプトを変更する際は、スタジオ固有のディレクトリをハードコードせず、環境変数や設定ファイルで経路を調整できるようにする。
 6. プレーンテキストのドキュメントや説明は絶対にすべて日本語で記述する。
 
+## 現在のディレクトリ構成（視認性優先）
+- `/`
+  - `AGENT.md`
+  - `plan.md`
+  - `src/`
+    - `__init__.py`
+    - `sotugyo/`
+      - `__init__.py`
+      - `main.py`
+      - `domain/`
+        - `__init__.py`
+        - `projects/`（`about.md`、`registry.py`、`service.py`、`settings.py`、`structure.py`、`timeline.py`）
+        - `tooling/`（`about.md`、`coordinator.py`、`models.py`、`repository.py`、`service.py`、`templates.py`）
+        - `users/`（`about.md`、`settings.py`）
+      - `infrastructure/`
+        - `__init__.py`
+        - `paths/`（`about.md`、`storage.py`）
+      - `ui/`
+        - `__init__.py`
+        - `components/`
+          - `__init__.py`
+          - `content_browser.py`
+          - `nodes/`（`__init__.py`、`demo.py`、`memo.py`、`tool_environment.py`）
+          - `timeline/`（`__init__.py`、`graph.py`、`snap.py`）
+        - `dialogs/`（`__init__.py`、`about.md`、`project_settings_dialog.py`、`tool_environment_dialog.py`、`tool_registry_dialog.py`、`user_settings_dialog.py`）
+        - `style.py`
+        - `windows/`（`__init__.py`、`about.md`、`node_editor_window.py`、`start_window.py`）
+  - `tests/`
+    - `domain/`
+      - `projects/`（`test_timeline.py`）
+
+※ 構成に変更が生じた場合は本節を随時更新すること。
+
 ## ディレクトリ構成ポリシー
 - `src/sotugyo/domain/`
   - 業務ロジックをジャンル別に管理する領域。`projects/` はプロジェクト管理、`users/` はユーザー管理に関する機能のみを保持する。
