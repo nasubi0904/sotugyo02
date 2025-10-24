@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QResizeEvent,
     QShortcut,
+    QShowEvent,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -808,6 +809,7 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self._base_window_title = self.windowTitle()
         self.resize(960, 600)
+        self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
         self._graph.register_node(TaskNode)
@@ -867,6 +869,13 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_node_catalog()
         self._set_modified(False)
         apply_base_style(self)
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """ウィンドウ表示時に全画面状態を維持する。"""
+
+        super().showEvent(event)
+        if not self.isFullScreen():
+            self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
     # ------------------------------------------------------------------
     # UI 初期化
