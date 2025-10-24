@@ -31,6 +31,7 @@ class NodeCatalogRecord:
     subtitle: str
     genre: str
     keywords: Tuple[str, ...] = ()
+    icon_path: str | None = None
 
 
 class NodeEditorCoordinator:
@@ -87,6 +88,9 @@ class NodeEditorCoordinator:
                 environment.environment_id,
                 tool.display_name if tool is not None else "",
             )
+            icon_path = None
+            if tool is not None and tool.template_id:
+                icon_path = str(tool.executable_path)
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
@@ -94,6 +98,7 @@ class NodeEditorCoordinator:
                     subtitle=subtitle,
                     genre="ツール環境",
                     keywords=keywords,
+                    icon_path=icon_path,
                 )
             )
         return records
