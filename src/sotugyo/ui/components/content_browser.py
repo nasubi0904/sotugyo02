@@ -6,7 +6,16 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPen, QPixmap
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+    QResizeEvent,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QBoxLayout,
@@ -20,7 +29,6 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMenuBar,
     QPushButton,
-    QResizeEvent,
     QSize,
     QSizePolicy,
     QSlider,
