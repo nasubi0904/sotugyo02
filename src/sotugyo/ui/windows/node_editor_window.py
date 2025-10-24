@@ -9,17 +9,18 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QObject, QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QColor,
     QCloseEvent,
     QFont,
     QFontMetrics,
-    QIcon,
+    QColor,
+    QPen,
     QKeySequence,
     QPainter,
     QPen,
@@ -34,6 +35,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDockWidget,
+    QGraphicsLineItem,
+    QGraphicsSimpleTextItem,
     QFrame,
     QFileDialog,
     QFormLayout,
@@ -65,6 +68,8 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
+DEFAULT_TIMELINE_UNIT = 320.0
+
 from ..components.nodes import (
     MemoNode,
     ReviewNode,
@@ -84,6 +89,307 @@ from ..dialogs import (
 )
 from ..style import apply_base_style
 
+
+class TimelineNodeGraph(NodeGraph):
+    """ノード移動前にタイムライン制約を適用するための NodeGraph 拡張。"""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._timeline_move_handler = None
+
+    def set_timeline_move_handler(self, handler) -> None:
+        self._timeline_move_handler = handler
+
+    def _on_nodes_moved(self, node_data):
+        if self._timeline_move_handler is not None:
+            try:
+                self._timeline_move_handler(node_data)
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("タイムライン制約の適用に失敗", exc_info=True)
+        super()._on_nodes_moved(node_data)
+
+
+class TimelineSnapManager:
+    """ノードの位置・幅をタイムライン枠にスナップさせる管理クラス。"""
+
+    def __init__(
+        self,
+        graph: TimelineNodeGraph,
+        *,
+        base_unit: float = DEFAULT_TIMELINE_UNIT,
+        origin_x: float = 0.0,
+        should_snap=None,
+        modified_callback=None,
+    ) -> None:
+        self._graph = graph
+        self._base_unit = max(1.0, float(base_unit))
+        self._origin_x = float(origin_x)
+        self._column_units = 1
+        self._column_width = self._base_unit
+        self._should_snap = should_snap or (lambda node: True)
+        self._modified_callback = modified_callback
+        self._processing = False
+
+    @property
+    def column_width(self) -> float:
+        return self._column_width
+
+    @property
+    def origin_x(self) -> float:
+        return self._origin_x
+
+    def set_origin_x(self, value: float) -> None:
+        self._origin_x = float(value)
+
+    def set_column_units(self, units: int) -> bool:
+        normalized = max(1, int(units))
+        if normalized == self._column_units:
+            return False
+        self._column_units = normalized
+        self._column_width = self._base_unit * self._column_units
+        return True
+
+    def handle_nodes_moved(self, node_data) -> None:
+        if self._processing:
+            return
+        changed = False
+        for node_view in node_data.keys():
+            node = self._graph.get_node_by_id(getattr(node_view, "id", None))
+            if node is None or not self._should_snap(node):
+                continue
+            if self._snap_node_position(node):
+                changed = True
+        if changed and callable(self._modified_callback):
+            self._modified_callback(True)
+
+    def handle_property_changed(self, node, prop_name: str, value: object) -> bool:
+        if self._processing or not self._should_snap(node):
+            return False
+        if prop_name != "width":
+            return False
+        width = self._to_float(value)
+        if width is None:
+            return False
+        changed = self._snap_node_width(node, width_override=width)
+        if changed and callable(self._modified_callback):
+            self._modified_callback(True)
+        return changed
+
+    def snap_nodes(self, nodes: Iterable) -> bool:
+        if self._processing:
+            return False
+        changed = False
+        for node in nodes:
+            if not self._should_snap(node):
+                continue
+            if self._snap_node_position(node):
+                changed = True
+            if self._snap_node_width(node):
+                changed = True
+        if changed and callable(self._modified_callback):
+            self._modified_callback(True)
+        return changed
+
+    def _snap_node_position(self, node) -> bool:
+        pos_getter = getattr(node, "pos", None)
+        if not callable(pos_getter):
+            return False
+        try:
+            pos = pos_getter()
+        except Exception:  # pragma: no cover - NodeGraph 依存
+            return False
+        if not isinstance(pos, (list, tuple)) or len(pos) < 2:
+            return False
+        try:
+            current_x = float(pos[0])
+            current_y = float(pos[1])
+        except (TypeError, ValueError):
+            return False
+        target_x = self._snap_to_grid(current_x)
+        if abs(target_x - current_x) < 0.5:
+            return False
+        self._apply_node_position(node, target_x, current_y)
+        return True
+
+    def _snap_node_width(self, node, *, width_override: Optional[float] = None) -> bool:
+        width_value = width_override
+        if width_value is None:
+            view = getattr(node, "view", None)
+            width_value = self._to_float(getattr(view, "width", None))
+        if width_value is None:
+            return False
+        target_width = self._snap_width(width_value)
+        if abs(target_width - width_value) < 0.5:
+            return False
+        self._apply_node_width(node, target_width)
+        return True
+
+    def _snap_to_grid(self, value: float) -> float:
+        if self._column_width <= 0:
+            return value
+        relative = (value - self._origin_x) / self._column_width
+        index = round(relative)
+        return self._origin_x + index * self._column_width
+
+    def _snap_width(self, width: float) -> float:
+        units = max(1, round(width / self._column_width))
+        return self._column_width * units
+
+    def _apply_node_position(self, node, target_x: float, target_y: float) -> None:
+        self._processing = True
+        try:
+            model = getattr(node, "model", None)
+            if model is not None:
+                model.set_property("pos", [target_x, target_y])
+            view = getattr(node, "view", None)
+            if view is not None:
+                setattr(view, "xy_pos", [target_x, target_y])
+                move = getattr(view, "setPos", None)
+                if callable(move):
+                    move(target_x, target_y)
+        finally:
+            self._processing = False
+
+    def _apply_node_width(self, node, target_width: float) -> None:
+        self._processing = True
+        try:
+            model = getattr(node, "model", None)
+            if model is not None:
+                model.set_property("width", target_width)
+            view = getattr(node, "view", None)
+            if view is not None:
+                setattr(view, "width", target_width)
+                redraw = getattr(view, "draw_node", None)
+                if callable(redraw):
+                    redraw()
+                updater = getattr(view, "update", None)
+                if callable(updater):
+                    updater()
+        finally:
+            self._processing = False
+
+    @staticmethod
+    def _to_float(value: object) -> Optional[float]:
+        try:
+            return float(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return None
+
+
+class TimelineGridOverlay(QObject):
+    """ノードエディタ上に日付枠線を描画するオーバーレイ。"""
+
+    def __init__(self, view) -> None:
+        super().__init__(view)
+        self._view = view
+        self._scene = getattr(view, "scene", lambda: None)()
+        self._column_width = DEFAULT_TIMELINE_UNIT
+        self._origin_x = 0.0
+        self._start_date = date.today()
+        self._columns: Dict[int, Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]] = {}
+        self._last_visible_rect = None
+        viewport = getattr(view, "viewport", None)
+        if callable(viewport):
+            vp = viewport()
+            if vp is not None:
+                vp.installEventFilter(self)
+
+    def eventFilter(self, obj, event):  # pragma: no cover - Qt 依存
+        if event is not None and event.type() in {QEvent.Paint, QEvent.Resize, QEvent.Wheel}:
+            self.update_overlay()
+        return False
+
+    def set_column_width(self, width: float) -> None:
+        self._column_width = max(1.0, float(width))
+        self.update_overlay(force=True)
+
+    def set_origin_x(self, value: float) -> None:
+        self._origin_x = float(value)
+        self.update_overlay(force=True)
+
+    def set_start_date(self, start: date) -> None:
+        self._start_date = start
+        self.update_overlay(force=True)
+
+    def update_overlay(self, *, force: bool = False) -> None:
+        if self._scene is None or self._column_width <= 0:
+            return
+        rect = self._visible_scene_rect()
+        if rect is None:
+            return
+        if not force and self._last_visible_rect is not None:
+            if (
+                abs(rect.left() - self._last_visible_rect.left()) < 0.5
+                and abs(rect.right() - self._last_visible_rect.right()) < 0.5
+                and abs(rect.top() - self._last_visible_rect.top()) < 0.5
+                and abs(rect.bottom() - self._last_visible_rect.bottom()) < 0.5
+            ):
+                return
+        self._last_visible_rect = rect
+        self._refresh_columns(rect)
+
+    def _visible_scene_rect(self):
+        viewport = getattr(self._view, "viewport", None)
+        if not callable(viewport):
+            return None
+        vp = viewport()
+        if vp is None:
+            return None
+        mapper = getattr(self._view, "mapToScene", None)
+        if not callable(mapper):
+            return None
+        mapped = mapper(vp.rect())
+        return mapped.boundingRect() if hasattr(mapped, "boundingRect") else None
+
+    def _refresh_columns(self, visible_rect) -> None:
+        left = visible_rect.left()
+        right = visible_rect.right()
+        top = visible_rect.top()
+        bottom = visible_rect.bottom()
+        span = max(1, int((right - left) / self._column_width) + 4)
+        start_index = int((left - self._origin_x) / self._column_width) - 2
+        needed = set(range(start_index, start_index + span))
+        for index, items in list(self._columns.items()):
+            visible = index in needed
+            for item in items:
+                item.setVisible(visible)
+        for index in needed:
+            line_item, text_item = self._ensure_column(index)
+            position_x = self._origin_x + index * self._column_width
+            line_item.setLine(position_x, top, position_x, bottom)
+            label = self._format_label(index)
+            text_item.setText(label)
+            text_item.setVisible(True)
+            line_item.setVisible(True)
+            rect = text_item.boundingRect()
+            label_x = position_x + (self._column_width - rect.width()) / 2
+            label_y = top + 6.0
+            text_item.setPos(label_x, label_y)
+
+    def _ensure_column(self, index: int) -> Tuple[QGraphicsLineItem, QGraphicsSimpleTextItem]:
+        if index in self._columns:
+            return self._columns[index]
+        line = QGraphicsLineItem()
+        line.setZValue(-10000)
+        pen = QPen(QColor(200, 200, 200, 120))
+        pen.setCosmetic(True)
+        line.setPen(pen)
+        text = QGraphicsSimpleTextItem()
+        text.setBrush(QColor(230, 230, 230, 220))
+        text.setZValue(10000)
+        text.setFlag(QGraphicsSimpleTextItem.ItemIgnoresTransformations, True)
+        if self._scene is not None:
+            self._scene.addItem(line)
+            self._scene.addItem(text)
+        self._columns[index] = (line, text)
+        return line, text
+
+    def _format_label(self, index: int) -> str:
+        try:
+            target = self._start_date + timedelta(days=index)
+            return target.strftime("%m/%d")
+        except Exception:  # pragma: no cover - 日付演算例外
+            return f"{index:+d}"
 
 @dataclass(frozen=True)
 class NodeCatalogEntry:
@@ -910,7 +1216,7 @@ class NodeEditorWindow(QMainWindow):
         self.resize(960, 600)
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
-        self._graph = NodeGraph()
+        self._graph = TimelineNodeGraph()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -918,6 +1224,15 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        self._timeline_base_unit = DEFAULT_TIMELINE_UNIT
+        self._timeline_column_units = 1
+        self._timeline_origin_x = 0.0
+        self._timeline_start_date = date.today()
+        self._timeline_reference_date: Optional[date] = self._timeline_start_date
+        self._timeline_overlay: Optional[TimelineGridOverlay] = None
+        self._timeline_snap_manager: Optional[TimelineSnapManager] = None
+        self._timeline_width_spin: Optional[QSpinBox] = None
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -960,6 +1275,19 @@ class NodeEditorWindow(QMainWindow):
         self._align_inputs_action: Optional[QAction] = None
         self._align_outputs_action: Optional[QAction] = None
 
+        self._timeline_snap_manager = TimelineSnapManager(
+            self._graph,
+            base_unit=self._timeline_base_unit,
+            origin_x=self._timeline_origin_x,
+            should_snap=self._should_snap_node,
+            modified_callback=self._set_modified,
+        )
+        self._graph.set_timeline_move_handler(
+            self._timeline_snap_manager.handle_nodes_moved
+        )
+        self._timeline_overlay = TimelineGridOverlay(self._graph_widget)
+        self._update_timeline_overlay_settings()
+
         self._init_ui()
         self._create_menus()
         self._setup_graph_signals()
@@ -971,6 +1299,10 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_node_catalog()
         self._set_modified(False)
         apply_base_style(self)
+
+        property_signal = getattr(self._graph, "property_changed", None)
+        if property_signal is not None and hasattr(property_signal, "connect"):
+            property_signal.connect(self._on_graph_property_changed_timeline)
 
     def showEvent(self, event: QShowEvent) -> None:
         """ウィンドウ表示時に全画面状態を維持する。"""
@@ -1195,13 +1527,29 @@ class NodeEditorWindow(QMainWindow):
         align_outputs_action = toolbar.addAction(
             self.style().standardIcon(QStyle.SP_ArrowForward), "出力側整列"
         )
-        align_outputs_action.setToolTip("出力側ノードを整列")
-        align_outputs_action.setEnabled(False)
-        align_outputs_action.triggered.connect(self._align_output_nodes)
-        self._align_outputs_action = align_outputs_action
-        outputs_button = toolbar.widgetForAction(align_outputs_action)
-        if isinstance(outputs_button, QToolButton):
-            outputs_button.setAutoRaise(False)
+        self._align_outputs_button.setIconSize(QSize(24, 24))
+        self._align_outputs_button.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        self._align_outputs_button.setAutoRaise(True)
+        self._align_outputs_button.setToolTip("出力側ノードを整列")
+        self._align_outputs_button.setEnabled(False)
+        self._align_outputs_button.clicked.connect(self._align_output_nodes)
+        layout.addWidget(self._align_outputs_button)
+
+        width_label = QLabel("枠幅", toolbar_frame)
+        width_label.setObjectName("timelineWidthLabel")
+        width_label.setAlignment(Qt.AlignHCenter)
+        layout.addWidget(width_label)
+
+        self._timeline_width_spin = QSpinBox(toolbar_frame)
+        self._timeline_width_spin.setRange(1, 12)
+        self._timeline_width_spin.setValue(self._timeline_column_units)
+        self._timeline_width_spin.setToolTip("1枠の幅をノード幅の倍数で設定")
+        self._timeline_width_spin.valueChanged.connect(
+            self._on_timeline_width_units_changed
+        )
+        layout.addWidget(self._timeline_width_spin)
+
+        layout.addStretch(1)
 
         return toolbar
 
@@ -1578,11 +1926,75 @@ class NodeEditorWindow(QMainWindow):
                 or previous_assigned_at != normalized_assigned_at
             )
 
+        if normalized_assigned_at:
+            self._consider_timeline_date(normalized_assigned_at)
+
         return normalized_uuid, normalized_assigned_at, metadata_changed
 
     def _remove_node_metadata(self, nodes: Iterable) -> None:
         for node in nodes:
             self._node_metadata.pop(node, None)
+
+    def _on_graph_property_changed_timeline(self, node, prop_name: str, value: object) -> None:
+        if self._timeline_snap_manager is None:
+            return
+        if self._timeline_snap_manager.handle_property_changed(node, prop_name, value):
+            self._update_timeline_overlay_settings()
+
+    def _on_timeline_width_units_changed(self, value: int) -> None:
+        if self._timeline_snap_manager is None:
+            return
+        if not self._timeline_snap_manager.set_column_units(value):
+            return
+        self._timeline_column_units = max(1, int(value))
+        self._update_timeline_overlay_settings()
+        self._timeline_snap_manager.snap_nodes(self._collect_all_nodes())
+
+    def _update_timeline_overlay_settings(self) -> None:
+        if self._timeline_overlay is None or self._timeline_snap_manager is None:
+            return
+        self._timeline_overlay.set_column_width(self._timeline_snap_manager.column_width)
+        self._timeline_overlay.set_origin_x(self._timeline_snap_manager.origin_x)
+        self._timeline_overlay.set_start_date(self._timeline_start_date)
+
+    def _consider_timeline_date(self, assigned_at: Optional[str]) -> None:
+        candidate = self._parse_assigned_date(assigned_at)
+        if candidate is None:
+            return
+        if self._timeline_reference_date is None or candidate < self._timeline_reference_date:
+            self._timeline_reference_date = candidate
+            self._timeline_start_date = candidate
+            self._update_timeline_overlay_settings()
+
+    def _rebuild_timeline_reference(self) -> None:
+        earliest: Optional[date] = None
+        for metadata in self._node_metadata.values():
+            assigned = metadata.get("uuid_assigned_at")
+            candidate = self._parse_assigned_date(assigned)
+            if candidate is None:
+                continue
+            if earliest is None or candidate < earliest:
+                earliest = candidate
+        if earliest is None:
+            earliest = date.today()
+        self._timeline_reference_date = earliest
+        self._timeline_start_date = earliest
+        self._update_timeline_overlay_settings()
+
+    @staticmethod
+    def _parse_assigned_date(value: Optional[str]) -> Optional[date]:
+        if not value:
+            return None
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").date()
+        except ValueError:
+            return None
+
+    def _apply_timeline_constraints_to_nodes(self, nodes: Iterable) -> None:
+        if self._timeline_snap_manager is None:
+            return
+        if self._timeline_snap_manager.snap_nodes(nodes):
+            self._update_timeline_overlay_settings()
 
     def _create_task_node(self) -> None:
         self._task_count += 1
@@ -1630,6 +2042,7 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
+        self._apply_timeline_constraints_to_nodes([node])
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -1649,6 +2062,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.delete_nodes(nodes)
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
         self._remove_node_metadata(nodes)
+        self._rebuild_timeline_reference()
         self._on_selection_changed()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -2064,6 +2478,7 @@ class NodeEditorWindow(QMainWindow):
                 updated = True
 
         if updated:
+            self._apply_timeline_constraints_to_nodes(sorted_nodes)
             self._set_modified(True)
 
     def _estimate_node_spacing(self, nodes: List) -> float:
@@ -2153,6 +2568,9 @@ class NodeEditorWindow(QMainWindow):
             return False
         return self._node_type_identifier(node) == MemoNode.node_type_identifier()
 
+    def _should_snap_node(self, node) -> bool:
+        return node is not None and not self._is_memo_node(node)
+
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
             return
@@ -2228,6 +2646,7 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._rebuild_timeline_reference()
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             try:
@@ -2524,6 +2943,8 @@ class NodeEditorWindow(QMainWindow):
         self._memo_count = sum(
             1 for node in self._known_nodes if self._node_type_identifier(node) == MemoNode.node_type_identifier()
         )
+        self._rebuild_timeline_reference()
+        self._apply_timeline_constraints_to_nodes(self._known_nodes)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
