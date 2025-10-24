@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-__all__ = ["projects", "users"]
+__all__ = ["projects", "tooling", "users"]
 
-from . import projects, users  # noqa: F401
+from . import projects, tooling, users  # noqa: F401
