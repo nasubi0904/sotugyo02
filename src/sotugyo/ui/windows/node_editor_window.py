@@ -247,9 +247,6 @@ class NodeEditorWindow(QMainWindow):
         self._content_browser.node_type_requested.connect(self._spawn_node_by_type)
         self._content_browser.search_submitted.connect(self._handle_content_browser_search)
         self._content_browser.back_requested.connect(self._return_to_start)
-        self._content_browser.tool_environment_edit_requested.connect(
-            self._open_tool_environment_manager
-        )
         self._content_browser.setMinimumHeight(160)
 
         content_dock = QDockWidget("コンテンツブラウザ", self)
