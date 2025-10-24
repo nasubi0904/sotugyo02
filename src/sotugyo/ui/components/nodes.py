@@ -262,4 +262,6 @@ class ToolEnvironmentNode(BaseNode):
         if executable_path:
             summary_lines.append(executable_path)
         tooltip = "\n".join(summary_lines) if summary_lines else "ツール環境"
-        self.set_tooltip(tooltip)
+        view = getattr(self, "view", None)
+        if view is not None and hasattr(view, "setToolTip"):
+            view.setToolTip(tooltip)
