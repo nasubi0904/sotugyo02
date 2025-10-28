@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import ClassVar, Optional
 
 from PySide6.QtCore import QPointF, Qt, QRectF
@@ -18,6 +19,9 @@ from PySide6.QtWidgets import QGraphicsItem, QSizePolicy, QTextEdit
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class MemoTextWidget(NodeBaseWidget):
@@ -315,6 +319,7 @@ class MemoNode(BaseNode):
             try:
                 previous = self.get_property(name)
             except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug("メモノードのプロパティ %s の取得に失敗しました", name, exc_info=True)
                 previous = None
         super().set_property(name, normalized, push_undo=push_undo)
         if name == "memo_text" and self._text_widget is not None:

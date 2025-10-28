@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Iterable, List, Optional, Sequence
 from weakref import WeakSet
 
@@ -12,6 +13,9 @@ try:  # pragma: no cover - 実行環境に NodeGraphQt が存在しない場合�
     from NodeGraphQt import NodeGraph
 except Exception:  # pragma: no cover - Fallback for 型チェック
     NodeGraph = object  # type: ignore[misc, assignment]
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class NodeSnapController(QObject):
@@ -71,6 +75,7 @@ class NodeSnapController(QObject):
                 for node in nodes_getter():
                     self.register_node(node)
             except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.warning("ノード一覧の同期に失敗しました", exc_info=True)
                 return
 
     # ------------------------------------------------------------------
@@ -104,6 +109,7 @@ class NodeSnapController(QObject):
         try:
             return tuple(selector())
         except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("選択中ノードの取得に失敗しました", exc_info=True)
             return []
 
     def _iter_snap_candidates(self, moving_node: object) -> List[object]:
@@ -116,7 +122,7 @@ class NodeSnapController(QObject):
                     if node is not None and node not in candidates:
                         candidates.append(node)
             except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
-                pass
+                LOGGER.debug("スナップ候補ノードの取得に失敗しました", exc_info=True)
         return [node for node in candidates if node is not moving_node]
 
     def _snap_node(self, node: object) -> None:
@@ -163,6 +169,7 @@ class NodeSnapController(QObject):
         try:
             setter(best_x, best_y)
         except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("ノード位置のスナップ適用に失敗しました", exc_info=True)
             return
 
     def _evaluate_horizontal_snap(
@@ -220,6 +227,7 @@ class NodeSnapController(QObject):
         try:
             pos = pos_getter()
         except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("ノード位置の取得に失敗しました", exc_info=True)
             return None
 
         if isinstance(pos, QPointF):
@@ -229,6 +237,7 @@ class NodeSnapController(QObject):
             try:
                 x, y = map(float, pos)
             except Exception:  # pragma: no cover - 想定外フォーマット
+                LOGGER.debug("ノード位置の変換に失敗しました: %r", pos, exc_info=True)
                 return None
 
         view = getattr(node, "view", None)
@@ -254,4 +263,5 @@ class NodeSnapController(QObject):
         try:
             return float(value)
         except Exception:  # pragma: no cover - 想定外フォーマット
+            LOGGER.debug("ノードビュー寸法の取得に失敗しました: %s", attribute, exc_info=True)
             return 0.0

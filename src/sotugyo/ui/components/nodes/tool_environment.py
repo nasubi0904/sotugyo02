@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from typing import ClassVar
 
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ToolEnvironmentNode(BaseNode):
@@ -82,15 +86,18 @@ class ToolEnvironmentNode(BaseNode):
     def _update_summary(self) -> None:
         try:
             tool_name = str(self.get_property("tool_name"))
-        except Exception:
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("tool_name の取得に失敗しました", exc_info=True)
             tool_name = ""
         try:
             version_label = str(self.get_property("version_label"))
-        except Exception:
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("version_label の取得に失敗しました", exc_info=True)
             version_label = ""
         try:
             executable_path = str(self.get_property("executable_path"))
-        except Exception:
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("executable_path の取得に失敗しました", exc_info=True)
             executable_path = ""
         summary_lines = []
         if tool_name:
