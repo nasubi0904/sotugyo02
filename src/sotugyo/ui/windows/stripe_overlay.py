@@ -145,6 +145,14 @@ class StripeDragController(QObject):
 
         return tuple(self._handles)
 
+    def set_factor(self, factor: int) -> None:
+        """倍率を外部要因で更新しハンドルへ反映する。"""
+
+        normalized = max(int(factor), 1)
+        self._current_factor = normalized
+        for handle in self._handles:
+            handle.set_factor(normalized)
+
     def base_width(self) -> int:
         """基準縞幅を返す。"""
 

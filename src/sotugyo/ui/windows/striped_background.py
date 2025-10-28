@@ -19,6 +19,13 @@ from ..style import (
 )
 from .stripe_overlay import StripeDragController
 
+# 背景タイル生成時の最大幅（px）。視覚上の必要十分な範囲に抑え、Qt が巨大
+# QPixmap を確保しようとしてメモリを圧迫するのを防ぐ。
+_MAX_STRIPE_TILE_WIDTH = 4096
+# ビューサイズに応じた可変上限を設け、ウィンドウサイズに見合った調整幅を
+# 確保する。
+_VIEWER_WIDTH_MULTIPLIER = 2
+
 
 def resolve_stripe_width(node_cls: Type[BaseNode]) -> int:
     """基準ノードのビュー幅から縞幅を取得する。"""
@@ -179,7 +186,19 @@ def enable_stripe_dragging(
     )
 
     def _apply_factor(factor: int) -> None:
-        width = base_width * factor
+        requested_factor = max(int(factor), 1)
+        viewer = graph.viewer()
+        viewer_size = viewer.size()
+        max_dimension = max(viewer_size.width(), viewer_size.height())
+        if max_dimension <= 0:
+            max_dimension = base_width
+        dynamic_limit = max_dimension * _VIEWER_WIDTH_MULTIPLIER
+        max_width = max(base_width, min(dynamic_limit, _MAX_STRIPE_TILE_WIDTH))
+        max_factor = max(max_width // base_width, 1)
+        clamped_factor = min(requested_factor, max_factor)
+        width = base_width * clamped_factor
+        if clamped_factor != requested_factor:
+            controller.set_factor(clamped_factor)
         new_pattern = StripedBackgroundPattern([width])
         apply_stripe_pattern(graph, new_pattern)
         controller.set_stripe_height(new_pattern.height)
