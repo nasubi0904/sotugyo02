@@ -768,14 +768,14 @@ class NodeEditorWindow(QMainWindow):
         if hasattr(node, "set_selected"):
             try:
                 node.set_selected(True)
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ノードの選択状態の更新に失敗しました", exc_info=True)
         view_item = getattr(node, "view", None)
         if hasattr(self._graph_widget, "centerOn") and view_item is not None:
             try:
                 self._graph_widget.centerOn(view_item)
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("グラフビューのセンタリングに失敗しました", exc_info=True)
         self._on_selection_changed()
 
     def _refresh_node_catalog(self) -> None:
@@ -805,6 +805,7 @@ class NodeEditorWindow(QMainWindow):
             try:
                 node_obj = node_getter()
             except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("ポートに紐付くノードの取得に失敗しました", exc_info=True)
                 node_obj = None
         if node_obj is not None:
             node_label = self._safe_node_name(node_obj)
@@ -814,6 +815,7 @@ class NodeEditorWindow(QMainWindow):
             try:
                 port_label = str(name_getter())
             except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("ポート名の取得に失敗しました: %r", port, exc_info=True)
                 port_label = None
         if port_label:
             return f"{node_label}:{port_label}"
@@ -948,6 +950,7 @@ class NodeEditorWindow(QMainWindow):
         try:
             current = self._current_node.get_property("memo_text")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモテキストの取得に失敗しました", exc_info=True)
             current = None
         if current == text:
             return
@@ -964,6 +967,7 @@ class NodeEditorWindow(QMainWindow):
         try:
             current = self._current_node.get_property("memo_font_size")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモフォントサイズの取得に失敗しました", exc_info=True)
             current = None
         if current == value:
             return
@@ -1005,6 +1009,11 @@ class NodeEditorWindow(QMainWindow):
         try:
             ports = list(ports_getter())
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug(
+                "接続先ポート一覧の取得に失敗しました: node=%s",
+                self._safe_node_name(node),
+                exc_info=True,
+            )
             return []
         for port in ports:
             connected_ports = getattr(port, "connected_ports", None)
@@ -1013,6 +1022,7 @@ class NodeEditorWindow(QMainWindow):
             try:
                 links = list(connected_ports())
             except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug("ポート接続の取得に失敗しました: %r", port, exc_info=True)
                 continue
             for link in links:
                 node_getter = getattr(link, "node", None)
@@ -1021,6 +1031,7 @@ class NodeEditorWindow(QMainWindow):
                 try:
                     other = node_getter()
                 except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                    LOGGER.debug("接続先ノードの取得に失敗しました: %r", link, exc_info=True)
                     continue
                 if other is None or other is node:
                     continue
@@ -1088,6 +1099,12 @@ class NodeEditorWindow(QMainWindow):
         try:
             value = getter(name)
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug(
+                "ノードプロパティの取得に失敗しました: node=%s, property=%s",
+                self._safe_node_name(node),
+                name,
+                exc_info=True,
+            )
             return None
         try:
             return float(value)  # type: ignore[arg-type]
@@ -1100,7 +1117,7 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                 return float(pos[0]), float(pos[1])
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
-            pass
+            LOGGER.debug("ノード位置の取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
         return 0.0, 0.0
 
     def _move_node_if_needed(self, node, pos_x: float, pos_y: float) -> bool:
@@ -1125,10 +1142,12 @@ class NodeEditorWindow(QMainWindow):
         try:
             memo_text = node.get_property("memo_text")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモテキストの取得に失敗しました", exc_info=True)
             memo_text = ""
         try:
             font_size = node.get_property("memo_font_size")
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("メモフォントサイズの取得に失敗しました", exc_info=True)
             font_size = MemoNode.DEFAULT_FONT_SIZE
         try:
             normalized_size = int(font_size)
@@ -1207,8 +1226,8 @@ class NodeEditorWindow(QMainWindow):
         if existing_nodes:
             try:
                 self._graph.delete_nodes(existing_nodes)
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.warning("グラフ初期化中のノード削除に失敗しました", exc_info=True)
             self._remove_node_metadata(existing_nodes)
             if self._snap_controller is not None:
                 self._snap_controller.unregister_nodes(existing_nodes)
@@ -1222,8 +1241,8 @@ class NodeEditorWindow(QMainWindow):
         if callable(clear_selection):
             try:
                 clear_selection()
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("グラフ選択状態のリセットに失敗しました", exc_info=True)
         self._on_selection_changed()
         self._refresh_node_catalog()
 
@@ -1392,8 +1411,10 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(position, (list, tuple)) and len(position) >= 2:
                 try:
                     node.set_pos(float(position[0]), float(position[1]))
-                except Exception:
-                    pass
+                except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                    LOGGER.debug(
+                        "ノード位置の復元に失敗しました: node=%s", self._safe_node_name(node), exc_info=True
+                    )
             entry_id = entry.get("id")
             if isinstance(entry_id, int):
                 identifier_map[entry_id] = node
@@ -1509,6 +1530,12 @@ class NodeEditorWindow(QMainWindow):
                 failed_operations.append(
                     f"接続（source={source_label}, target={target_label}）の再現に失敗しました: {exc}"
                 )
+                LOGGER.debug(
+                    "接続情報の復元に失敗しました: source=%s, target=%s",
+                    source_label,
+                    target_label,
+                    exc_info=True,
+                )
                 continue
 
         self._node_spawn_offset = len(self._known_nodes)
@@ -1539,8 +1566,8 @@ class NodeEditorWindow(QMainWindow):
         if hasattr(node, "name"):
             try:
                 return str(node.name())
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ノード名の取得に失敗しました: %r", node, exc_info=True)
         return str(node)
 
     def _node_custom_properties(self, node) -> Dict[str, object]:
@@ -1569,8 +1596,8 @@ class NodeEditorWindow(QMainWindow):
         if callable(type_getter):
             try:
                 return str(type_getter())
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ノードタイプの取得に失敗しました: %r", node, exc_info=True)
         identifier = getattr(node, "__identifier__", "")
         class_name = node.__class__.__name__
         return f"{identifier}.{class_name}" if identifier else class_name
@@ -1582,8 +1609,8 @@ class NodeEditorWindow(QMainWindow):
                 pos = position()
                 if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                     return [float(pos[0]), float(pos[1])]
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ノード位置の取得に失敗しました: %r", node, exc_info=True)
         return [0.0, 0.0]
 
     @staticmethod
@@ -1592,8 +1619,8 @@ class NodeEditorWindow(QMainWindow):
         if callable(name_method):
             try:
                 return str(name_method())
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ポート名の取得に失敗しました: %r", port, exc_info=True)
         return str(port)
 
     @staticmethod
@@ -1603,7 +1630,8 @@ class NodeEditorWindow(QMainWindow):
             return []
         try:
             return list(connected_getter() or [])
-        except Exception:
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("接続ポートの取得に失敗しました: %r", port, exc_info=True)
             return []
 
     def _collect_ports(self, node, *, output: bool) -> List[Port]:
@@ -1613,7 +1641,13 @@ class NodeEditorWindow(QMainWindow):
             return []
         try:
             raw_ports = ports_getter()
-        except Exception:
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug(
+                "ポート一覧の取得に失敗しました: node=%s, accessor=%s",
+                self._safe_node_name(node),
+                accessor,
+                exc_info=True,
+            )
             return []
         if not raw_ports:
             return []
@@ -1734,8 +1768,8 @@ class NodeEditorWindow(QMainWindow):
         if callable(refresher):
             try:
                 refresher()
-            except Exception:
-                pass
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("スタート画面の更新通知に失敗しました", exc_info=True)
 
     def _confirm_discard_changes(self, message: Optional[str] = None) -> bool:
         if not self._is_modified:
