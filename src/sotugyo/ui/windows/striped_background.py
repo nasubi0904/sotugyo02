@@ -53,7 +53,13 @@ def _build_stripe_tile(
     tile_width = sum(sanitized_widths)
     tile_height = max(int(stripe_height), 1)
     pixmap = QPixmap(QSize(tile_width, tile_height))
-    pixmap.fill(dark_color)
+
+    # 8% 明るく／12% 暗くした変種を用意し、隣接する縞のコントラストを
+    # 穏やかに保ちながら視認性を向上させる。
+    light_stripe_color = light_color.lighter(108)
+    dark_stripe_color = dark_color.darker(112)
+
+    pixmap.fill(dark_stripe_color)
 
     painter = QPainter(pixmap)
 
@@ -69,8 +75,8 @@ def _build_stripe_tile(
     painter.setPen(border_pen)
     painter.drawLine(0, 0, 0, tile_height)
     for index, width in enumerate(sanitized_widths):
-        if index % 2 == 0:
-            painter.fillRect(offset, 0, width, tile_height, light_color)
+        stripe_color = light_stripe_color if index % 2 == 0 else dark_stripe_color
+        painter.fillRect(offset, 0, width, tile_height, stripe_color)
         offset += width
         painter.setPen(border_pen)
         painter.drawLine(offset, 0, offset, tile_height)
