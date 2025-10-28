@@ -194,6 +194,12 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._graph_viewer: Optional[QGraphicsView] = None
+        viewer_attr = getattr(self._graph, "viewer", None)
+        if callable(viewer_attr):
+            self._graph_viewer = viewer_attr()
+        elif isinstance(viewer_attr, QGraphicsView):
+            self._graph_viewer = viewer_attr
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -280,12 +286,17 @@ class NodeEditorWindow(QMainWindow):
         central_layout.addWidget(controls_container)
         self.setCentralWidget(central)
         self._stripe_width_slider = stripe_slider
-        self._stripe_drag_controller = StripeWidthDragController(
-            self._graph_widget,
-            base_width_getter=lambda: self._base_stripe_width,
-            step_getter=lambda: self._stripe_step_index,
-            step_setter=self._update_stripe_width,
-        )
+        if self._graph_viewer is not None:
+            self._stripe_drag_controller = StripeWidthDragController(
+                self._graph_viewer,
+                base_width_getter=lambda: self._base_stripe_width,
+                step_getter=lambda: self._stripe_step_index,
+                step_setter=self._update_stripe_width,
+            )
+        else:
+            LOGGER.warning(
+                "StripeWidthDragController を初期化できません: NodeGraph ビューアを取得できませんでした。"
+            )
 
         alignment_toolbar = TimelineAlignmentToolBar(self)
         alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
