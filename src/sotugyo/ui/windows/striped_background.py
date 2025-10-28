@@ -67,12 +67,12 @@ def _build_stripe_tile(
     return pixmap
 
 
-def apply_striped_background(graph: NodeGraph, node_cls: Type[BaseNode]) -> None:
-    """ノードグラフへ縞模様背景とグリッド調整を適用する。"""
+def set_stripe_width(graph: NodeGraph, stripe_width: int) -> int:
+    """指定縞幅で背景タイルを生成し直し適用する。"""
 
-    stripe_width = _resolve_stripe_width(node_cls)
+    resolved_width = max(int(stripe_width), 2)
     tile = _build_stripe_tile(
-        stripe_width,
+        resolved_width,
         light_color=GRAPH_VIEW_STRIPE_LIGHT,
         dark_color=GRAPH_VIEW_STRIPE_DARK,
         border_color=GRAPH_VIEW_STRIPE_BORDER,
@@ -84,3 +84,11 @@ def apply_striped_background(graph: NodeGraph, node_cls: Type[BaseNode]) -> None
     viewer = graph.viewer()
     viewer.setBackgroundBrush(brush)
     graph.scene().setBackgroundBrush(brush)
+    return resolved_width
+
+
+def apply_striped_background(graph: NodeGraph, node_cls: Type[BaseNode]) -> int:
+    """ノードグラフへ縞模様背景とグリッド調整を適用する。"""
+
+    stripe_width = _resolve_stripe_width(node_cls)
+    return set_stripe_width(graph, stripe_width)

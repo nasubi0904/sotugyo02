@@ -29,6 +29,8 @@ from PySide6.QtWidgets import (
     QMenuBar,
     QMessageBox,
     QSizePolicy,
+    QSlider,
+    QVBoxLayout,
     QWidget,
 )
 from NodeGraphQt import NodeGraph, Port
@@ -63,7 +65,7 @@ from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
 from .node_snap_controller import NodeSnapController
-from .striped_background import apply_striped_background
+from .striped_background import apply_striped_background, set_stripe_width
 
 
 class NodeEditorWindow(QMainWindow):
@@ -86,7 +88,9 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
-        apply_striped_background(self._graph, TaskNode)
+        self._base_stripe_width = apply_striped_background(self._graph, TaskNode)
+        self._stripe_step_index = 1
+        self._stripe_width_slider: Optional[QSlider] = None
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -155,11 +159,31 @@ class NodeEditorWindow(QMainWindow):
     def _init_ui(self) -> None:
         central = QWidget(self)
         central.setObjectName("graphCentralContainer")
-        central_layout = QHBoxLayout(central)
+        central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(16, 16, 16, 16)
-        central_layout.setSpacing(16)
+        central_layout.setSpacing(12)
         central_layout.addWidget(self._graph_widget, 1)
+
+        controls_container = QWidget(central)
+        controls_container.setObjectName("graphControlPanel")
+        controls_layout = QHBoxLayout(controls_container)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
+        controls_layout.setSpacing(8)
+
+        stripe_slider = QSlider(Qt.Horizontal, controls_container)
+        stripe_slider.setObjectName("stripeWidthSlider")
+        stripe_slider.setMinimum(1)
+        stripe_slider.setMaximum(6)
+        stripe_slider.setSingleStep(1)
+        stripe_slider.setPageStep(1)
+        stripe_slider.setValue(self._stripe_step_index)
+        stripe_slider.valueChanged.connect(self._update_stripe_width)
+        controls_layout.addWidget(stripe_slider)
+        controls_container.setLayout(controls_layout)
+
+        central_layout.addWidget(controls_container)
         self.setCentralWidget(central)
+        self._stripe_width_slider = stripe_slider
 
         alignment_toolbar = TimelineAlignmentToolBar(self)
         alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
@@ -189,6 +213,21 @@ class NodeEditorWindow(QMainWindow):
 
         self.resizeDocks([content_dock], [220], Qt.Vertical)
         self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
+
+    def _update_stripe_width(self, step_index: int) -> None:
+        """背景の縞幅を基準幅刻みで更新する。"""
+
+        normalized_step = max(int(step_index), 1)
+        if normalized_step != self._stripe_step_index:
+            self._stripe_step_index = normalized_step
+        if self._stripe_width_slider and self._stripe_width_slider.value() != normalized_step:
+            self._stripe_width_slider.blockSignals(True)
+            self._stripe_width_slider.setValue(normalized_step)
+            self._stripe_width_slider.blockSignals(False)
+
+        base_width = max(self._base_stripe_width, 2)
+        stripe_width = max(base_width * self._stripe_step_index, base_width)
+        set_stripe_width(self._graph, stripe_width)
 
     def _create_menus(self) -> None:
         menubar = self.menuBar()
