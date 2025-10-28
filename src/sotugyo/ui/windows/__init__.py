@@ -6,6 +6,7 @@ from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
 from .node_editor_window import NodeEditorWindow
+from .start_controller import StartWindowController
 from .start_window import StartWindow
 
 __all__ = [
@@ -13,5 +14,6 @@ __all__ = [
     "NodeEditorWindow",
     "NodeInspectorDock",
     "StartWindow",
+    "StartWindowController",
     "TimelineAlignmentToolBar",
 ]

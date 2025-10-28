@@ -27,13 +27,11 @@ from PySide6.QtWidgets import (
 )
 
 from ...domain.projects.registry import ProjectRecord
-from ...domain.projects.service import ProjectService
-from ...domain.projects.settings import load_project_settings
 from ...domain.projects.structure import ProjectStructureReport
-from ...domain.users.settings import UserSettingsManager
 from ..dialogs.user_settings_dialog import UserSettingsDialog
 from ..style import START_WINDOW_STYLE, apply_base_style
 from .node_editor_window import NodeEditorWindow
+from .start_controller import StartWindowController
 
 
 class PasswordPromptDialog(QDialog):
@@ -68,8 +66,7 @@ class StartWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self.resize(640, 420)
         self._node_window: Optional[NodeEditorWindow] = None
-        self._project_service = ProjectService()
-        self._user_manager = UserSettingsManager()
+        self._controller = StartWindowController.create_default()
         self._project_records: Dict[int, ProjectRecord] = {}
         self._current_settings_path: Optional[Path] = None
         self._active_project_root: Optional[Path] = None
@@ -211,12 +208,12 @@ class StartWindow(QMainWindow):
         self._project_combo.clear()
         self._project_records.clear()
 
-        records = self._project_service.records()
+        records = self._controller.project_records()
         for index, record in enumerate(records):
             display_name = record.name or record.root.name
             self._project_combo.addItem(display_name, record.root)
             self._project_records[index] = record
-        last_root = self._project_service.last_project_root()
+        last_root = self._controller.last_project_root()
         if last_root is not None:
             for index, record in self._project_records.items():
                 if Path(record.root) == Path(last_root):
@@ -229,7 +226,7 @@ class StartWindow(QMainWindow):
         if self._user_combo is None:
             return
         previous_user = self._user_combo.currentData()
-        accounts = self._user_manager.list_accounts()
+        accounts = self._controller.list_accounts()
         self._user_combo.blockSignals(True)
         self._user_combo.clear()
         for account in accounts:
@@ -245,11 +242,11 @@ class StartWindow(QMainWindow):
             return
         preferred_user: Optional[str] = None
         if self._current_settings_path:
-            settings = load_project_settings(self._current_settings_path)
+            settings = self._controller.load_project_settings(self._current_settings_path)
             if settings.auto_fill_user_id and settings.last_user_id:
                 preferred_user = settings.last_user_id
         if preferred_user is None:
-            preferred_user = self._user_manager.last_user_id()
+            preferred_user = self._controller.last_user_id()
         if preferred_user:
             self._set_user_selection(preferred_user)
 
@@ -265,7 +262,7 @@ class StartWindow(QMainWindow):
         return False
 
     def _open_user_settings(self) -> None:
-        dialog = UserSettingsDialog(self._user_manager, self)
+        dialog = UserSettingsDialog(self._controller.user_manager, self)
         if dialog.exec() == QDialog.Accepted:
             self._reload_users()
 
@@ -279,7 +276,7 @@ class StartWindow(QMainWindow):
             self._update_structure_warning(None)
             return
         self._current_settings_path = Path(record.root)
-        context = self._project_service.load_context(record.root)
+        context = self._controller.load_project_context(record.root)
         settings = context.settings
         info_lines = [
             f"プロジェクト名: {settings.project_name}",
@@ -287,7 +284,7 @@ class StartWindow(QMainWindow):
             f"概要: {settings.description or '（なし）'}",
         ]
         self._project_info_label.setText("\n".join(info_lines))
-        report = self._project_service.validate_structure(record.root)
+        report = self._controller.validate_structure(record.root)
         if report.is_valid:
             self._update_structure_warning("ok", "構成チェック: 問題なし")
         else:
@@ -320,13 +317,13 @@ class StartWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
         try:
-            self._project_service.ensure_structure(project_dir)
+            self._controller.ensure_structure(project_dir)
         except OSError as exc:
             QMessageBox.critical(self, "エラー", f"構成の作成に失敗しました: {exc}")
             return
-        settings = self._project_service.load_settings(project_dir)
+        settings = self._controller.load_project_settings(project_dir)
         settings.project_name = project_name
-        self._project_service.save_settings(settings, set_last=True)
+        self._controller.save_project_settings(settings, set_last=True)
         self.refresh_start_state()
         if self._project_combo is not None:
             for index in range(self._project_combo.count()):
@@ -347,7 +344,7 @@ class StartWindow(QMainWindow):
         if not user_id:
             QMessageBox.warning(self, "警告", "ユーザーを選択してください。")
             return
-        account = self._user_manager.get_account(user_id)
+        account = self._controller.get_account(user_id)
         if account is None:
             QMessageBox.warning(self, "警告", "指定されたユーザーが設定に存在しません。ユーザー設定を確認してください。")
             return
@@ -363,9 +360,9 @@ class StartWindow(QMainWindow):
             if confirm != QMessageBox.StandardButton.Yes:
                 return
 
-        context = self._project_service.load_context(record.root)
+        context = self._controller.load_project_context(record.root)
         settings = context.settings
-        report: ProjectStructureReport = self._project_service.validate_structure(record.root)
+        report: ProjectStructureReport = self._controller.validate_structure(record.root)
         if not report.is_valid:
             proceed = QMessageBox.warning(
                 self,
@@ -397,15 +394,15 @@ class StartWindow(QMainWindow):
             settings.last_user_password = password
         else:
             settings.last_user_password = None
-        self._project_service.save_settings(settings)
-        self._user_manager.set_last_user_id(user_id)
-        self._project_service.set_last_project(record.root)
+        self._controller.save_project_settings(settings)
+        self._controller.set_last_user_id(user_id)
+        self._controller.set_last_project(record.root)
 
         if self._node_window is None:
             self._node_window = NodeEditorWindow(
                 self,
-                project_service=self._project_service,
-                user_manager=self._user_manager,
+                project_service=self._controller.project_service,
+                user_manager=self._controller.user_manager,
             )
             self._node_window.return_to_start_requested.connect(self._on_return_to_start)
         if not self._node_window.prepare_context(context, account, password):

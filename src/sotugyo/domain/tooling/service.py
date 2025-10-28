@@ -1,40 +1,53 @@
-"""ツール登録と環境定義を管理するサービス。"""
+"""ツール登録と環境定義を統合するファサード。"""
 
 from __future__ import annotations
 
-import uuid
-from datetime import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from . import templates
+from .environment_service import ToolEnvironmentRegistryService
 from .models import (
     RegisteredTool,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
 from .repository import ToolConfigRepository
+from .template_gateway import TemplateGateway
+from .tool_registry_service import ToolRegistryService
 
 
+@dataclass(slots=True)
 class ToolEnvironmentService:
-    """マシン上のツール登録と環境ノード定義を扱う。"""
+    """ツール登録と環境定義をまとめて提供する。"""
 
-    def __init__(self, repository: ToolConfigRepository | None = None) -> None:
-        self._repository = repository or ToolConfigRepository()
+    registry_service: ToolRegistryService
+    environment_service: ToolEnvironmentRegistryService
+    template_gateway: TemplateGateway
+
+    def __init__(
+        self,
+        repository: ToolConfigRepository | None = None,
+        *,
+        registry_service: ToolRegistryService | None = None,
+        environment_service: ToolEnvironmentRegistryService | None = None,
+        template_gateway: TemplateGateway | None = None,
+    ) -> None:
+        repo = repository or ToolConfigRepository()
+        self.registry_service = registry_service or ToolRegistryService(repo)
+        self.environment_service = (
+            environment_service or ToolEnvironmentRegistryService(repo)
+        )
+        self.template_gateway = template_gateway or TemplateGateway()
 
     # ------------------------------------------------------------------
     # ツール登録
     # ------------------------------------------------------------------
     def list_tools(self) -> List[RegisteredTool]:
-        tools, _ = self._repository.load_all()
-        return tools
+        return self.registry_service.list_tools()
 
     def get_tool(self, tool_id: str) -> Optional[RegisteredTool]:
-        tools = self.list_tools()
-        for tool in tools:
-            if tool.tool_id == tool_id:
-                return tool
-        return None
+        return self.registry_service.get_tool(tool_id)
 
     def register_tool(
         self,
@@ -47,41 +60,21 @@ class ToolEnvironmentService:
         normalized_path = self._normalize_executable_path(executable_path)
         if not normalized_path.exists():
             raise ValueError(f"実行ファイルが見つかりません: {normalized_path}")
-
-        tools, environments = self._repository.load_all()
-        for tool in tools:
-            if tool.executable_path.resolve() == normalized_path.resolve():
-                raise ValueError("同じ実行ファイルが既に登録されています。")
-
-        now = datetime.utcnow()
-        tool = RegisteredTool(
-            tool_id=str(uuid.uuid4()),
-            display_name=display_name.strip() or normalized_path.stem,
+        return self.registry_service.register(
+            display_name=display_name,
             executable_path=normalized_path,
             template_id=template_id,
-            version=version.strip() if version else None,
-            created_at=now,
-            updated_at=now,
+            version=version,
         )
-        tools.append(tool)
-        self._repository.save_all(tools, environments)
-        return tool
 
     def remove_tool(self, tool_id: str) -> bool:
-        tools, environments = self._repository.load_all()
-        new_tools = [tool for tool in tools if tool.tool_id != tool_id]
-        if len(new_tools) == len(tools):
-            return False
-        new_environments = [env for env in environments if env.tool_id != tool_id]
-        self._repository.save_all(new_tools, new_environments)
-        return True
+        return self.registry_service.remove(tool_id)
 
     # ------------------------------------------------------------------
     # 環境定義
     # ------------------------------------------------------------------
     def list_environments(self) -> List[ToolEnvironmentDefinition]:
-        _, environments = self._repository.load_all()
-        return environments
+        return self.environment_service.list_environments()
 
     def save_environment(
         self,
@@ -91,59 +84,30 @@ class ToolEnvironmentService:
         version_label: str,
         environment_id: Optional[str] = None,
     ) -> ToolEnvironmentDefinition:
-        tools, environments = self._repository.load_all()
-        tool_map: Dict[str, RegisteredTool] = {tool.tool_id: tool for tool in tools}
-        if tool_id not in tool_map:
-            raise ValueError("選択されたツールが登録されていません。")
-
-        now = datetime.utcnow()
-        if environment_id:
-            target = None
-            for env in environments:
-                if env.environment_id == environment_id:
-                    target = env
-                    break
-            if target is None:
-                raise ValueError("指定された環境が存在しません。")
-            target.name = name.strip() or target.name
-            target.tool_id = tool_id
-            target.version_label = version_label.strip()
-            target.updated_at = now
-            environment = target
-        else:
-            environment = ToolEnvironmentDefinition(
-                environment_id=str(uuid.uuid4()),
-                name=name.strip() or "環境",
-                tool_id=tool_id,
-                version_label=version_label.strip(),
-                created_at=now,
-                updated_at=now,
-            )
-            environments.append(environment)
-
-        self._repository.save_all(tools, environments)
-        return environment
+        tools = self.registry_service.list_tools()
+        environments = self.environment_service.list_environments()
+        return self.environment_service.save(
+            name=name,
+            tool_id=tool_id,
+            version_label=version_label,
+            tools=tools,
+            environments=environments,
+            environment_id=environment_id,
+        )
 
     def remove_environment(self, environment_id: str) -> bool:
-        tools, environments = self._repository.load_all()
-        new_environments = [
-            env for env in environments if env.environment_id != environment_id
-        ]
-        if len(new_environments) == len(environments):
-            return False
-        self._repository.save_all(tools, new_environments)
-        return True
+        return self.environment_service.remove(environment_id)
 
     # ------------------------------------------------------------------
     # テンプレート連携
     # ------------------------------------------------------------------
     def list_templates(self) -> List[Dict[str, str]]:
-        return templates.list_templates()
+        return self.template_gateway.list_templates()
 
     def discover_template_installations(
         self, template_id: str
     ) -> List[TemplateInstallationCandidate]:
-        return templates.discover_installations(template_id)
+        return self.template_gateway.discover_installations(template_id)
 
     # ------------------------------------------------------------------
     # ユーティリティ

@@ -43,7 +43,7 @@ from ..components.nodes import (
     TaskNode,
     ToolEnvironmentNode,
 )
-from ...domain.projects.service import ProjectContext, ProjectService
+from ...domain.projects import ProjectContext, ProjectService
 from ...domain.projects.settings import ProjectSettings
 from ...domain.users.settings import UserAccount, UserSettingsManager
 from ...domain.tooling.coordinator import (
