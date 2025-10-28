@@ -226,15 +226,12 @@ class NodeEditorWindow(QMainWindow):
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
         self._alignment_toolbar: Optional[TimelineAlignmentToolBar] = None
-        self._snap_controller: Optional[NodeSnapController] = None
-        self._snap_enabled = True
 
         self._init_ui()
         self._create_menus()
         self._setup_graph_signals()
         self._setup_context_menu()
         self._setup_shortcuts()
-        self._setup_snap_controller()
         self._refresh_tool_configuration()
         self._initialize_content_browser()
         self._update_selected_node_info()
@@ -290,8 +287,6 @@ class NodeEditorWindow(QMainWindow):
         alignment_toolbar = TimelineAlignmentToolBar(self)
         alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
         alignment_toolbar.align_outputs_requested.connect(self._align_output_nodes)
-        alignment_toolbar.snap_toggled.connect(self._handle_snap_toggled)
-        alignment_toolbar.set_snap_enabled(self._snap_enabled)
         self.addToolBar(Qt.LeftToolBarArea, alignment_toolbar)
         self._alignment_toolbar = alignment_toolbar
 
@@ -386,19 +381,6 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._content_dock.toggleViewAction())
         if self._alignment_toolbar is not None:
             view_menu.addAction(self._alignment_toolbar.toggleViewAction())
-
-    def _setup_snap_controller(self) -> None:
-        controller = NodeSnapController(self._graph)
-        controller.set_enabled(self._snap_enabled)
-        controller.sync_graph_nodes()
-        self._snap_controller = controller
-
-    def _handle_snap_toggled(self, enabled: bool) -> None:
-        self._snap_enabled = bool(enabled)
-        if self._snap_controller is not None:
-            self._snap_controller.set_enabled(self._snap_enabled)
-        if self._alignment_toolbar is not None:
-            self._alignment_toolbar.set_snap_enabled(self._snap_enabled)
 
     def _open_project_settings(self) -> None:
         if self._current_project_root is None:
@@ -795,9 +777,6 @@ class NodeEditorWindow(QMainWindow):
         self._ensure_node_metadata(node)
         self._set_modified(True)
 
-        if self._snap_controller is not None:
-            self._snap_controller.register_node(node)
-
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             clear_selection()
@@ -818,9 +797,6 @@ class NodeEditorWindow(QMainWindow):
         self._on_selection_changed()
         self._set_modified(True)
         self._refresh_node_catalog()
-
-        if self._snap_controller is not None:
-            self._snap_controller.unregister_nodes(nodes)
 
     # ------------------------------------------------------------------
     # 接続処理
@@ -1377,8 +1353,6 @@ class NodeEditorWindow(QMainWindow):
             except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
                 LOGGER.warning("グラフ初期化中のノード削除に失敗しました", exc_info=True)
             self._remove_node_metadata(existing_nodes)
-            if self._snap_controller is not None:
-                self._snap_controller.unregister_nodes(existing_nodes)
         self._known_nodes.clear()
         self._node_metadata.clear()
         self._node_spawn_offset = 0
@@ -1535,8 +1509,6 @@ class NodeEditorWindow(QMainWindow):
         if existing_nodes:
             self._graph.delete_nodes(existing_nodes)
             self._remove_node_metadata(existing_nodes)
-            if self._snap_controller is not None:
-                self._snap_controller.unregister_nodes(existing_nodes)
 
         self._known_nodes.clear()
         self._node_metadata.clear()
@@ -1567,8 +1539,6 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(entry_id, int):
                 identifier_map[entry_id] = node
             self._known_nodes.append(node)
-            if self._snap_controller is not None:
-                self._snap_controller.register_node(node)
             node_uuid = entry.get("uuid")
             assigned_at = entry.get("uuid_assigned_at")
             normalized_uuid, _, changed = self._ensure_node_metadata(
@@ -1588,9 +1558,6 @@ class NodeEditorWindow(QMainWindow):
                         LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
 
         failed_operations: List[str] = []
-
-        if self._snap_controller is not None:
-            self._snap_controller.sync_graph_nodes()
 
         for index, connection in enumerate(connections_info):
             if not isinstance(connection, dict):
