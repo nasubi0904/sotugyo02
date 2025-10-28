@@ -879,13 +879,23 @@ class NodeEditorWindow(QMainWindow):
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
         if isinstance(node, ToolEnvironmentNode):
+            payload = {
+                "environment_id": definition.environment_id,
+                "environment_name": definition.name,
+                "tool_id": tool.tool_id,
+                "tool_name": tool.display_name,
+                "version_label": definition.version_label,
+            }
+            if tool.version:
+                payload["tool_version"] = tool.version
+            payload["summary"] = definition.version_label or tool.display_name
             node.configure_environment(
                 environment_id=definition.environment_id,
                 environment_name=definition.name,
                 tool_id=tool.tool_id,
                 tool_name=tool.display_name,
                 version_label=definition.version_label,
-                executable_path=str(tool.executable_path),
+                environment_payload=payload,
             )
 
     def _create_node(self, node_type: str, display_name: str):
