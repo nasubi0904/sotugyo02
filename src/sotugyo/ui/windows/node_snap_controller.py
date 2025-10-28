@@ -221,6 +221,12 @@ class NodeSnapController(QObject):
         return best_y, best_delta
 
     def _node_bounds(self, node: object) -> Optional[QRectF]:
+        view = getattr(node, "view", None)
+        scene_rect = self._scene_bounding_rect(view)
+        if scene_rect is not None:
+            # sceneBoundingRect 系 API は既にシーン座標系の矩形を返す
+            return scene_rect
+
         pos_getter = getattr(node, "pos", None)
         if not callable(pos_getter):
             return None
@@ -240,13 +246,11 @@ class NodeSnapController(QObject):
                 LOGGER.debug("ノード位置の変換に失敗しました: %r", pos, exc_info=True)
                 return None
 
-        view = getattr(node, "view", None)
         width = self._extract_dimension(view, "width")
         height = self._extract_dimension(view, "height")
         if width <= 0.0 or height <= 0.0:
-            rect_getter = getattr(view, "boundingRect", None)
-            if callable(rect_getter):
-                rect = rect_getter()
+            rect = self._view_bounding_rect(view)
+            if rect is not None:
                 width = float(rect.width())
                 height = float(rect.height())
 
@@ -254,6 +258,64 @@ class NodeSnapController(QObject):
             return None
 
         return QRectF(x, y, width, height)
+
+    def _scene_bounding_rect(self, view: object) -> Optional[QRectF]:
+        if view is None:
+            return None
+
+        scene_rect_getter = getattr(view, "sceneBoundingRect", None)
+        if callable(scene_rect_getter):
+            try:
+                rect = scene_rect_getter()
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("sceneBoundingRect の取得に失敗しました", exc_info=True)
+            else:
+                if rect is not None:
+                    try:
+                        width = float(rect.width())
+                        height = float(rect.height())
+                    except Exception:  # pragma: no cover - 想定外フォーマット
+                        LOGGER.debug(
+                            "sceneBoundingRect の値変換に失敗しました", exc_info=True
+                        )
+                    else:
+                        if width > 0.0 and height > 0.0:
+                            return rect
+
+        map_to_scene = getattr(view, "mapToScene", None)
+        bounding_rect_getter = getattr(view, "boundingRect", None)
+        if callable(map_to_scene) and callable(bounding_rect_getter):
+            try:
+                polygon = map_to_scene(bounding_rect_getter())
+                rect = polygon.boundingRect()
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("mapToScene を用いたシーン矩形の取得に失敗しました", exc_info=True)
+            else:
+                try:
+                    width = float(rect.width())
+                    height = float(rect.height())
+                except Exception:  # pragma: no cover - 想定外フォーマット
+                    LOGGER.debug(
+                        "mapToScene の戻り値変換に失敗しました", exc_info=True
+                    )
+                else:
+                    if width > 0.0 and height > 0.0:
+                        return rect
+
+        return None
+
+    def _view_bounding_rect(self, view: object) -> Optional[QRectF]:
+        if view is None:
+            return None
+        rect_getter = getattr(view, "boundingRect", None)
+        if not callable(rect_getter):
+            return None
+        try:
+            rect = rect_getter()
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("boundingRect の取得に失敗しました", exc_info=True)
+            return None
+        return rect
 
     @staticmethod
     def _extract_dimension(view: object, attribute: str) -> float:
