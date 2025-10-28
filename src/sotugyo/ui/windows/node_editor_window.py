@@ -194,6 +194,7 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._graph_viewer = self._graph.viewer()
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -278,7 +279,7 @@ class NodeEditorWindow(QMainWindow):
         self.setCentralWidget(central)
         self._stripe_width_slider = stripe_slider
         self._stripe_drag_controller = StripeWidthDragController(
-            self._graph_widget,
+            self._graph_viewer,
             base_width_getter=lambda: self._base_stripe_width,
             step_getter=lambda: self._stripe_step_index,
             step_setter=self._update_stripe_width,
