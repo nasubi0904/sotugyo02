@@ -34,3 +34,8 @@
 - 現象: タイムラインスナップと日付グリッドが不要になったため、エディタ上に不要な UI が残っていた。
 - 原因: ノード配置を自由化する要件により、従来のスナップ制御および日付オーバーレイが設計上の負債となった。
 - 対応: スナップ制御ロジックとタイムライン描画コンポーネント、関連ドメインモデルとテストを削除し、`NodeEditorWindow` をシンプルな NodeGraph ベースの構成に刷新した。
+
+## 2025-XX-XX ノードエディタ起動時の `viewport` 属性エラー
+- 現象: スタート画面からノードエディタを開くと `NodeGraphWidget` に `viewport` 属性が存在しないとの `AttributeError` で起動できない。
+- 原因: 背景縞幅調整用の `StripeWidthDragController` へ `NodeGraphQt.NodeGraph.widget`（`QTabWidget`）を渡しており、内部で期待される `QGraphicsView` の `viewport()` メソッドが呼び出せなくなっていた。
+- 対応: `NodeGraph` から `viewer()`（`QGraphicsView`）を取得してドラッグコントローラへ渡すよう修正し、縞幅ドラッグのイベントフィルタが適切なビューポートに対して動作するようにした。
