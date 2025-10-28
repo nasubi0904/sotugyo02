@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 #   - "windows": スタイルシートを適用せず Windows 既定の外観を維持
 # `ui.style.available_style_profiles()` で最新の候補一覧を確認し、好みの
 # テーマに差し替えることができる。
-DEFAULT_STYLE_PROFILE = "dark"
+DEFAULT_STYLE_PROFILE = "windows"
 
 
 def _ensure_package_root() -> str:
