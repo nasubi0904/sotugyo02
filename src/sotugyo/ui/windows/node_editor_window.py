@@ -91,6 +91,7 @@ class StripeWidthDragController(QObject):
         self._dragging = False
         self._start_viewport_x = 0.0
         self._start_step = 1
+        self._hover_cursor_active = False
         self._viewport.installEventFilter(self)
 
     def eventFilter(self, obj, event):  # noqa: D401 - Qt のインターフェース準拠
@@ -101,12 +102,17 @@ class StripeWidthDragController(QObject):
         if event_type == QEvent.MouseButtonPress:
             return self._handle_press(event)
         if event_type == QEvent.MouseMove:
-            return self._handle_move(event)
+            if self._dragging:
+                return self._handle_move(event)
+            self._update_hover_cursor(float(event.position().x()))
+            return False
         if event_type == QEvent.MouseButtonRelease:
             return self._handle_release(event)
         if event_type == QEvent.MouseButtonDblClick:
             # ダブルクリックは基底へ委譲
             self._dragging = False
+        if event_type == QEvent.Leave:
+            self._set_hover_cursor(False)
         return super().eventFilter(obj, event)
 
     def _handle_press(self, event: QMouseEvent) -> bool:
@@ -114,24 +120,17 @@ class StripeWidthDragController(QObject):
             return False
 
         base_width = max(self._base_width_getter(), 1)
+        stripe_width, tolerance = self._resolve_stripe_metrics(base_width)
         current_step = max(self._step_getter(), 1)
-        stripe_width = max(base_width * current_step, base_width)
-        tolerance = max(
-            self._MIN_TOLERANCE,
-            min(stripe_width * self._TOLERANCE_RATIO, float(base_width)),
-        )
         position_x = float(event.position().x())
-        if stripe_width <= 0:
-            return False
-
-        offset = position_x % stripe_width
-        distance = min(offset, stripe_width - offset)
-        if distance > tolerance:
+        if not self._is_within_drag_region(position_x, stripe_width, tolerance):
+            self._set_hover_cursor(False)
             return False
 
         self._dragging = True
         self._start_viewport_x = position_x
         self._start_step = current_step
+        self._set_hover_cursor(True)
         event.accept()
         return True
 
@@ -143,6 +142,7 @@ class StripeWidthDragController(QObject):
         if base_width <= 0:
             return False
 
+        self._set_hover_cursor(True)
         delta = float(event.position().x()) - self._start_viewport_x
         step_delta = int(round(delta / base_width))
         new_step = max(1, self._start_step + step_delta)
@@ -157,8 +157,42 @@ class StripeWidthDragController(QObject):
         if event.button() != Qt.MouseButton.LeftButton:
             return False
         self._dragging = False
+        self._update_hover_cursor(float(event.position().x()))
         event.accept()
         return True
+
+    def _resolve_stripe_metrics(self, base_width: int) -> tuple[int, float]:
+        current_step = max(self._step_getter(), 1)
+        stripe_width = max(base_width * current_step, base_width)
+        tolerance = max(
+            self._MIN_TOLERANCE,
+            min(stripe_width * self._TOLERANCE_RATIO, float(base_width)),
+        )
+        return stripe_width, tolerance
+
+    def _is_within_drag_region(
+        self, position_x: float, stripe_width: int, tolerance: float
+    ) -> bool:
+        if stripe_width <= 0:
+            return False
+        offset = position_x % stripe_width
+        distance = min(offset, stripe_width - offset)
+        return distance <= tolerance
+
+    def _update_hover_cursor(self, position_x: float) -> None:
+        base_width = max(self._base_width_getter(), 1)
+        stripe_width, tolerance = self._resolve_stripe_metrics(base_width)
+        should_activate = self._is_within_drag_region(position_x, stripe_width, tolerance)
+        self._set_hover_cursor(should_activate)
+
+    def _set_hover_cursor(self, active: bool) -> None:
+        if active == self._hover_cursor_active:
+            return
+        if active:
+            self._viewport.setCursor(Qt.SplitHCursor)
+        else:
+            self._viewport.unsetCursor()
+        self._hover_cursor_active = active
 
 
 class NodeEditorWindow(QMainWindow):
