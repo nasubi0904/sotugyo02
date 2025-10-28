@@ -9,14 +9,13 @@ import uuid
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
-from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QObject, QPoint, Qt, Signal, QEvent
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import (
     QAction,
     QCloseEvent,
     QKeySequence,
-    QMouseEvent,
     QResizeEvent,
     QShortcut,
     QShowEvent,
@@ -24,14 +23,11 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
-    QHBoxLayout,
-    QGraphicsView,
     QMainWindow,
     QMenu,
     QMenuBar,
     QMessageBox,
     QSizePolicy,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -66,175 +62,7 @@ from ..style import apply_base_style
 from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
-from .striped_background import (
-    StripedBackgroundPattern,
-    apply_stripe_pattern,
-    resolve_stripe_width,
-)
-
-
-class StripeWidthDragController(QObject):
-    """グラフ背景の縞境界をドラッグして幅を調整する制御。"""
-
-    _TOLERANCE_RATIO = 0.25
-    _MIN_TOLERANCE = 4.0
-
-    def __init__(
-        self,
-        viewer: QGraphicsView,
-        base_width_getter: Callable[[], int],
-        widths_getter: Callable[[], Iterable[int]],
-        active_index_getter: Callable[[], int],
-        active_index_setter: Callable[[int], None],
-        step_setter: Callable[[int], None],
-    ) -> None:
-        super().__init__(viewer)
-        self._viewer = viewer
-        self._viewport = viewer.viewport()
-        self._base_width_getter = base_width_getter
-        self._widths_getter = widths_getter
-        self._active_index_getter = active_index_getter
-        self._active_index_setter = active_index_setter
-        self._step_setter = step_setter
-        self._dragging = False
-        self._dragging_index: int | None = None
-        self._start_viewport_x = 0.0
-        self._start_step = 1
-        self._current_drag_step = 1
-        self._hover_cursor_active = False
-        self._viewport.installEventFilter(self)
-
-    def eventFilter(self, obj, event):  # noqa: D401 - Qt のインターフェース準拠
-        if obj is not self._viewport:
-            return super().eventFilter(obj, event)
-
-        event_type = event.type()
-        if event_type == QEvent.MouseButtonPress:
-            return self._handle_press(event)
-        if event_type == QEvent.MouseMove:
-            if self._dragging:
-                return self._handle_move(event)
-            self._update_hover_cursor(float(event.position().x()))
-            return False
-        if event_type == QEvent.MouseButtonRelease:
-            return self._handle_release(event)
-        if event_type == QEvent.MouseButtonDblClick:
-            # ダブルクリックは基底へ委譲
-            self._dragging = False
-        if event_type == QEvent.Leave:
-            self._set_hover_cursor(False)
-        return super().eventFilter(obj, event)
-
-    def _handle_press(self, event: QMouseEvent) -> bool:
-        if event.button() != Qt.MouseButton.LeftButton:
-            return False
-
-        base_width = max(self._base_width_getter(), 1)
-        position_x = float(event.position().x())
-        tolerance = self._resolve_tolerance(base_width)
-        hit = self._detect_boundary(position_x, tolerance)
-        if hit is None:
-            self._set_hover_cursor(False)
-            return False
-
-        stripe_index, boundary_position = hit
-        widths = self._get_stripe_widths()
-        if not widths:
-            return False
-        current_width = widths[stripe_index]
-        current_step = max(1, int(round(current_width / base_width)))
-        self._active_index_setter(stripe_index)
-        self._dragging = True
-        self._dragging_index = stripe_index
-        self._start_viewport_x = boundary_position
-        self._start_step = current_step
-        self._current_drag_step = current_step
-        self._set_hover_cursor(True)
-        event.accept()
-        return True
-
-    def _handle_move(self, event: QMouseEvent) -> bool:
-        if not self._dragging or self._dragging_index is None:
-            return False
-
-        base_width = max(self._base_width_getter(), 1)
-        if base_width <= 0:
-            return False
-
-        self._set_hover_cursor(True)
-        delta = float(event.position().x()) - self._start_viewport_x
-        step_delta = int(round(delta / base_width))
-        new_step = max(1, self._start_step + step_delta)
-        if self._active_index_getter() != self._dragging_index:
-            self._active_index_setter(self._dragging_index)
-        if new_step != self._current_drag_step:
-            self._step_setter(new_step)
-            self._current_drag_step = new_step
-        event.accept()
-        return True
-
-    def _handle_release(self, event: QMouseEvent) -> bool:
-        if not self._dragging:
-            return False
-        if event.button() != Qt.MouseButton.LeftButton:
-            return False
-        self._dragging = False
-        self._dragging_index = None
-        self._update_hover_cursor(float(event.position().x()))
-        event.accept()
-        return True
-
-    def _get_stripe_widths(self) -> tuple[int, ...]:
-        widths = tuple(int(width) for width in self._widths_getter())
-        return widths
-
-    def _resolve_tolerance(self, base_width: int) -> float:
-        return max(
-            self._MIN_TOLERANCE,
-            min(base_width * self._TOLERANCE_RATIO, float(base_width)),
-        )
-
-    def _detect_boundary(
-        self, position_x: float, tolerance: float
-    ) -> tuple[int, float] | None:
-        widths = self._get_stripe_widths()
-        if not widths:
-            return None
-        total_width = sum(widths)
-        if total_width <= 0:
-            return None
-
-        normalized = position_x % total_width
-        cycle_offset = position_x - normalized
-
-        if normalized <= tolerance:
-            return len(widths) - 1, cycle_offset
-        if total_width - normalized <= tolerance:
-            return len(widths) - 1, cycle_offset + total_width
-
-        accumulated = 0.0
-        for index, width in enumerate(widths[:-1]):
-            accumulated += float(width)
-            if abs(normalized - accumulated) <= tolerance:
-                boundary_position = cycle_offset + accumulated
-                return index, boundary_position
-        return None
-
-    def _update_hover_cursor(self, position_x: float) -> None:
-        base_width = max(self._base_width_getter(), 1)
-        tolerance = self._resolve_tolerance(base_width)
-        should_activate = self._detect_boundary(position_x, tolerance) is not None
-        self._set_hover_cursor(should_activate)
-
-    def _set_hover_cursor(self, active: bool) -> None:
-        if active == self._hover_cursor_active:
-            return
-        if active:
-            self._viewport.setCursor(Qt.SplitHCursor)
-        else:
-            self._viewport.unsetCursor()
-        self._hover_cursor_active = active
-
+from .striped_background import apply_striped_background
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -256,19 +84,7 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
-        self._base_stripe_width = resolve_stripe_width(TaskNode)
-        initial_widths = [self._base_stripe_width * step for step in (1, 2, 3)]
-        self._stripe_pattern: StripedBackgroundPattern = StripedBackgroundPattern(
-            initial_widths,
-            stripe_height=self._base_stripe_width,
-        )
-        apply_stripe_pattern(self._graph, self._stripe_pattern)
-        self._active_stripe_index = 0
-        self._stripe_step_index = self._resolve_step_from_width(
-            self._stripe_pattern.width_at(self._active_stripe_index)
-        )
-        self._stripe_width_slider: Optional[QSlider] = None
-        self._stripe_drag_controller: Optional[StripeWidthDragController] = None
+        apply_striped_background(self._graph, TaskNode)
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -276,7 +92,6 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._graph_viewer = self._graph.viewer()
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -340,35 +155,7 @@ class NodeEditorWindow(QMainWindow):
         central_layout.setSpacing(12)
         central_layout.addWidget(self._graph_widget, 1)
 
-        controls_container = QWidget(central)
-        controls_container.setObjectName("graphControlPanel")
-        controls_layout = QHBoxLayout(controls_container)
-        controls_layout.setContentsMargins(0, 0, 0, 0)
-        controls_layout.setSpacing(8)
-
-        stripe_slider = QSlider(Qt.Horizontal, controls_container)
-        stripe_slider.setObjectName("stripeWidthSlider")
-        stripe_slider.setMinimum(1)
-        stripe_slider.setMaximum(6)
-        stripe_slider.setSingleStep(1)
-        stripe_slider.setPageStep(1)
-        stripe_slider.setValue(self._stripe_step_index)
-        stripe_slider.valueChanged.connect(self._update_stripe_width)
-        controls_layout.addWidget(stripe_slider)
-        controls_container.setLayout(controls_layout)
-
-        central_layout.addWidget(controls_container)
         self.setCentralWidget(central)
-        self._stripe_width_slider = stripe_slider
-        self._stripe_drag_controller = StripeWidthDragController(
-            self._graph_viewer,
-            base_width_getter=lambda: self._base_stripe_width,
-            widths_getter=lambda: self._stripe_pattern.widths,
-            active_index_getter=lambda: self._active_stripe_index,
-            active_index_setter=self._set_active_stripe_index,
-            step_setter=self._update_stripe_width,
-        )
-        self._set_active_stripe_index(self._active_stripe_index)
 
         alignment_toolbar = TimelineAlignmentToolBar(self)
         alignment_toolbar.align_inputs_requested.connect(self._align_input_nodes)
@@ -396,61 +183,6 @@ class NodeEditorWindow(QMainWindow):
 
         self.resizeDocks([content_dock], [220], Qt.Vertical)
         self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
-
-    def _set_active_stripe_index(self, index: int) -> None:
-        """ドラッグ操作に応じてアクティブな縞インデックスを更新する。"""
-
-        widths = self._stripe_pattern.widths
-        if not widths:
-            return
-        normalized = max(0, min(int(index), len(widths) - 1))
-        self._active_stripe_index = normalized
-        current_width = self._stripe_pattern.width_at(normalized)
-        step = self._resolve_step_from_width(current_width)
-        if step != self._stripe_step_index:
-            self._stripe_step_index = step
-        self._sync_stripe_slider(step)
-
-    def _resolve_step_from_width(self, width: int) -> int:
-        base_width = max(self._base_stripe_width, 1)
-        if base_width <= 0:
-            return 1
-        return max(1, int(round(width / base_width)))
-
-    def _sync_stripe_slider(self, step: int) -> None:
-        if self._stripe_width_slider is None:
-            return
-        if step > self._stripe_width_slider.maximum():
-            self._stripe_width_slider.setMaximum(step)
-        if self._stripe_width_slider.value() != step:
-            self._stripe_width_slider.blockSignals(True)
-            self._stripe_width_slider.setValue(step)
-            self._stripe_width_slider.blockSignals(False)
-
-    def _update_stripe_width(self, step_index: int) -> None:
-        """背景の縞幅を基準幅刻みで更新する。"""
-
-        normalized_step = max(int(step_index), 1)
-        if normalized_step != self._stripe_step_index:
-            self._stripe_step_index = normalized_step
-        self._sync_stripe_slider(normalized_step)
-
-        base_width = max(self._base_stripe_width, 2)
-        target_width = max(base_width * self._stripe_step_index, base_width)
-        current_width = self._stripe_pattern.width_at(self._active_stripe_index)
-        if target_width != current_width:
-            updated_width = self._stripe_pattern.update_width(
-                self._active_stripe_index,
-                target_width,
-            )
-            if updated_width != current_width:
-                apply_stripe_pattern(self._graph, self._stripe_pattern)
-
-        actual_width = self._stripe_pattern.width_at(self._active_stripe_index)
-        resolved_step = self._resolve_step_from_width(actual_width)
-        if resolved_step != self._stripe_step_index:
-            self._stripe_step_index = resolved_step
-            self._sync_stripe_slider(resolved_step)
 
     def _create_menus(self) -> None:
         menubar = self.menuBar()

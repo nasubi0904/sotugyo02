@@ -116,13 +116,6 @@ class StripedBackgroundPattern:
 
         return self._widths[index]
 
-    def update_width(self, index: int, width: int) -> int:
-        """縞幅を更新し、正規化された値を返す。"""
-
-        normalized = max(int(width), 2)
-        self._widths[index] = normalized
-        return normalized
-
     def build_brush(self) -> QBrush:
         """現在の設定から背景ブラシを生成する。"""
 
