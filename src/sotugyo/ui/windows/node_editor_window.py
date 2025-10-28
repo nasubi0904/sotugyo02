@@ -62,8 +62,7 @@ from ..style import apply_base_style
 from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
-from .striped_background import apply_striped_background, enable_stripe_dragging
-from .stripe_overlay import StripeDragController
+from .striped_background import apply_striped_background
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -85,12 +84,7 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
-        pattern = apply_striped_background(self._graph, TaskNode)
-        self._stripe_controller: Optional[StripeDragController] = enable_stripe_dragging(
-            self._graph,
-            TaskNode,
-            pattern,
-        )
+        apply_striped_background(self._graph, TaskNode)
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -1776,9 +1770,5 @@ class NodeEditorWindow(QMainWindow):
         if not self._confirm_discard_changes("未保存の変更があります。ウィンドウを閉じますか？"):
             event.ignore()
             return
-        controller = getattr(self, "_stripe_controller", None)
-        if controller is not None:
-            controller.dispose()
-            self._stripe_controller = None
         super().closeEvent(event)
         self.return_to_start_requested.emit()

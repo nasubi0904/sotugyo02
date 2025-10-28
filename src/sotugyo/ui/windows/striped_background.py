@@ -17,7 +17,6 @@ from ..style import (
     GRAPH_VIEW_STRIPE_DARK,
     GRAPH_VIEW_STRIPE_LIGHT,
 )
-from .stripe_overlay import StripeDragController
 
 
 def resolve_stripe_width(node_cls: Type[BaseNode]) -> int:
@@ -157,32 +156,3 @@ def apply_striped_background(graph: NodeGraph, node_cls: Type[BaseNode]) -> Stri
     pattern = StripedBackgroundPattern([stripe_width], stripe_height=stripe_width)
     apply_stripe_pattern(graph, pattern)
     return pattern
-
-
-def enable_stripe_dragging(
-    graph: NodeGraph,
-    node_cls: Type[BaseNode],
-    pattern: StripedBackgroundPattern,
-) -> StripeDragController:
-    """縞幅をドラッグで変更できるようにハンドルを設定する。"""
-
-    base_width = resolve_stripe_width(node_cls)
-    scene = graph.scene()
-    initial_factor = 1
-    if pattern.widths:
-        initial_factor = max(int(round(pattern.widths[0] / base_width)), 1)
-    controller = StripeDragController(
-        scene,
-        base_width=base_width,
-        stripe_height=pattern.height,
-        initial_factor=initial_factor,
-    )
-
-    def _apply_factor(factor: int) -> None:
-        width = base_width * factor
-        new_pattern = StripedBackgroundPattern([width])
-        apply_stripe_pattern(graph, new_pattern)
-        controller.set_stripe_height(new_pattern.height)
-
-    controller.factor_changed.connect(_apply_factor)
-    return controller
