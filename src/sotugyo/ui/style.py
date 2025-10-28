@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QWidget
 
 
@@ -834,6 +835,13 @@ QLabel#startDescription {
     font-size: 13px;
 }
 """
+
+
+# ノードエディタ用の背景配色。縞模様タイルを描画する際に利用する。
+GRAPH_VIEW_STRIPE_LIGHT = QColor("#101a32")
+GRAPH_VIEW_STRIPE_DARK = QColor("#0b1527")
+GRAPH_VIEW_STRIPE_BORDER = QColor("#1f2c49")
+GRAPH_VIEW_STRIPE_ACCENT = QColor("#233757")
 
 
 _STYLE_PROFILES: Dict[str, StyleProfile] = {

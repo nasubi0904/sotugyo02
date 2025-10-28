@@ -63,6 +63,7 @@ from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
 from .node_snap_controller import NodeSnapController
+from .striped_background import apply_striped_background
 
 
 class NodeEditorWindow(QMainWindow):
@@ -85,6 +86,7 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
+        apply_striped_background(self._graph, TaskNode)
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
