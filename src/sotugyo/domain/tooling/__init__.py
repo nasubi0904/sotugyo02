@@ -2,6 +2,14 @@
 
 from __future__ import annotations
 
+from .environment_service import ToolEnvironmentRegistryService
 from .service import ToolEnvironmentService
+from .template_gateway import TemplateGateway
+from .tool_registry_service import ToolRegistryService
 
-__all__ = ["ToolEnvironmentService"]
+__all__ = [
+    "TemplateGateway",
+    "ToolEnvironmentRegistryService",
+    "ToolEnvironmentService",
+    "ToolRegistryService",
+]

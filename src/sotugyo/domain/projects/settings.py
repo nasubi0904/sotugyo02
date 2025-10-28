@@ -41,6 +41,13 @@ class ProjectSettings:
     last_user_id: Optional[str] = None
     last_user_password: Optional[str] = None
 
+    def to_record(self) -> "ProjectRecord":
+        """レジストリへ登録可能なレコードへ変換する。"""
+
+        from .registry import ProjectRecord
+
+        return ProjectRecord(name=self.project_name, root=self.project_root)
+
     @property
     def settings_path(self) -> Path:
         return self.project_root / PROJECT_SETTINGS_FILENAME
