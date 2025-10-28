@@ -66,7 +66,6 @@ from ..style import apply_base_style
 from .alignment_toolbar import TimelineAlignmentToolBar
 from .content_browser_dock import NodeContentBrowserDock
 from .inspector_panel import NodeInspectorDock
-from .node_snap_controller import NodeSnapController
 from .striped_background import apply_striped_background, set_stripe_width
 
 

@@ -39,3 +39,8 @@
 - 現象: スタート画面からノードエディタを開くと `NodeGraphWidget` に `viewport` 属性が存在しないとの `AttributeError` で起動できない。
 - 原因: 背景縞幅調整用の `StripeWidthDragController` へ `NodeGraphQt.NodeGraph.widget`（`QTabWidget`）を渡しており、内部で期待される `QGraphicsView` の `viewport()` メソッドが呼び出せなくなっていた。
 - 対応: `NodeGraph` から `viewer()`（`QGraphicsView`）を取得してドラッグコントローラへ渡すよう修正し、縞幅ドラッグのイベントフィルタが適切なビューポートに対して動作するようにした。
+
+## 2025-XX-XX ノードエディタ起動時の `ModuleNotFoundError`
+- 現象: アプリケーション起動時に `sotugyo.ui.windows.node_snap_controller` が見つからず `ModuleNotFoundError` が発生する。
+- 原因: スナップ機能廃止に伴いモジュールが削除されていたにもかかわらず、`NodeEditorWindow` が不要なインポートを保持していた。
+- 対応: 不要な `NodeSnapController` のインポートを削除し、欠落モジュールへの依存を解消した。
