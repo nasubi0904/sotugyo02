@@ -2,7 +2,7 @@
 
 このディレクトリはユーザーアカウントの永続化と認証補助機能を提供します。
 
-- `settings.py` に `UserSettingsManager` を定義し、Qt の `QSettings` を用いたユーザー情報の保存・取得を担当します。
+- `settings.py` に `UserSettingsManager` を定義し、`infrastructure.settings` の `SettingsStore` 抽象を用いてユーザー情報の保存・取得を担当します。
 - `hash_password()` および `UserAccount.verify_password()` でパスワードハッシュ処理を一元管理します。
 
 ## 編集時の指針
@@ -11,5 +11,5 @@
 - UI 層からの利用を想定し、例外ではなく戻り値でエラー状況を表現する既存方針を維持する。
 
 ## 依存関係の考慮
-- Qt 以外の永続化方式へ切り替える場合でも、`UserSettingsManager` の公開 API は互換性を保つ。
-- ドメイン間でのユーザー参照は `UserSettingsManager` 経由で行い、他ドメインから直接 `QSettings` に触れない。
+- Qt バックエンドの詳細へ依存せず、`SettingsStore` 抽象を介して永続化方式を切り替え可能に保つ。
+- ドメイン間でのユーザー参照は `UserSettingsManager` 経由で行い、他ドメインから直接 `SettingsStore` を操作しない。
