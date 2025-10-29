@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from ..models import (
     RegisteredTool,
@@ -83,6 +83,11 @@ class ToolEnvironmentService:
         tool_id: str,
         version_label: str,
         environment_id: Optional[str] = None,
+        template_id: Optional[str] = None,
+        rez_packages: Optional[Iterable[str]] = None,
+        rez_variants: Optional[Iterable[str]] = None,
+        rez_environment: Optional[Dict[str, str]] = None,
+        metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
         tools = self.registry_service.list_tools()
         environments = self.environment_service.list_environments()
@@ -93,6 +98,11 @@ class ToolEnvironmentService:
             tools=tools,
             environments=environments,
             environment_id=environment_id,
+            template_id=template_id,
+            rez_packages=rez_packages,
+            rez_variants=rez_variants,
+            rez_environment=rez_environment,
+            metadata=metadata,
         )
 
     def remove_environment(self, environment_id: str) -> bool:
@@ -108,6 +118,22 @@ class ToolEnvironmentService:
         self, template_id: str
     ) -> List[TemplateInstallationCandidate]:
         return self.template_gateway.discover_installations(template_id)
+
+    def load_template_environment(self, template_id: str) -> Dict[str, object]:
+        return self.template_gateway.load_environment_payload(template_id)
+
+    def validate_rez_environment(
+        self,
+        *,
+        packages: Iterable[str],
+        variants: Iterable[str] | None = None,
+        environment: Optional[Dict[str, str]] = None,
+    ):
+        return self.environment_service.validate_rez_environment(
+            packages=packages,
+            variants=variants,
+            environment=environment,
+        )
 
     # ------------------------------------------------------------------
     # ユーティリティ

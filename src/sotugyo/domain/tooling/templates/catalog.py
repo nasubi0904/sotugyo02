@@ -53,6 +53,22 @@ TEMPLATE_METADATA: Dict[str, Dict[str, str]] = {
     },
 }
 
+TEMPLATE_ENVIRONMENT_PAYLOADS: Dict[str, Dict[str, object]] = {
+    "autodesk.maya": {
+        "rez_packages": ["maya"],
+        "rez_variants": ["platform-windows"],
+        "rez_environment": {"MAYA_APP_DIR": "{PROJECT_ROOT}/maya"},
+    },
+    "adobe.after_effects": {
+        "rez_packages": ["after_effects"],
+        "rez_variants": ["platform-windows"],
+    },
+    "dcc.blender": {
+        "rez_packages": ["blender"],
+        "rez_variants": ["platform-windows"],
+    },
+}
+
 
 def list_templates() -> List[Dict[str, str]]:
     """利用可能なテンプレート情報を返す。"""
@@ -87,6 +103,41 @@ def discover_installations(template_id: str) -> List[TemplateInstallationCandida
     if template_id == "dcc.nuke":
         return _discover_nuke_installations()
     return []
+
+
+def load_environment_payload(template_id: str) -> Dict[str, object]:
+    """テンプレートに紐づく Rez 環境設定を返す。"""
+
+    payload = TEMPLATE_ENVIRONMENT_PAYLOADS.get(template_id)
+    if payload:
+        result: Dict[str, object] = {}
+        packages = payload.get("rez_packages")
+        if isinstance(packages, Iterable):
+            result["rez_packages"] = [
+                str(entry).strip()
+                for entry in packages
+                if isinstance(entry, str) and entry.strip()
+            ]
+        variants = payload.get("rez_variants")
+        if isinstance(variants, Iterable):
+            result["rez_variants"] = [
+                str(entry).strip()
+                for entry in variants
+                if isinstance(entry, str) and entry.strip()
+            ]
+        env_map = payload.get("rez_environment")
+        if isinstance(env_map, dict):
+            result["rez_environment"] = {
+                str(key): str(value)
+                for key, value in env_map.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        return result
+
+    generic_package = template_id.replace(".", "_") if template_id else ""
+    if generic_package:
+        return {"rez_packages": [generic_package]}
+    return {}
 
 
 def _collect_search_roots(

@@ -18,3 +18,6 @@ class TemplateGateway:
 
     def discover_installations(self, template_id: str) -> List[TemplateInstallationCandidate]:
         return catalog.discover_installations(template_id)
+
+    def load_environment_payload(self, template_id: str) -> Dict[str, object]:
+        return catalog.load_environment_payload(template_id)
