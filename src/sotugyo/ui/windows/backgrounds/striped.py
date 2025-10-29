@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Iterable, Sequence, Type
 
 from qtpy import QtCore, QtGui
@@ -41,8 +42,25 @@ def resolve_stripe_width(node_cls: Type[BaseNode]) -> int:
     return max(width, 32)
 
 
+@dataclass(frozen=True)
+class StripeSegment:
+    """背景縞1本分の設定を表すデータコンテナ。"""
+
+    width: int
+    color: QColor | None = None
+
+    def __post_init__(self) -> None:
+        width = int(self.width)
+        if width <= 0:
+            raise ValueError("StripeSegment.width must be a positive integer.")
+        object.__setattr__(self, "width", max(width, 2))
+        color = self.color
+        if color is not None and not isinstance(color, QColor):
+            object.__setattr__(self, "color", QColor(color))
+
+
 def _build_stripe_tile(
-    stripe_widths: Sequence[int],
+    stripe_segments: Sequence[StripeSegment],
     *,
     stripe_height: int,
     light_color: QColor,
@@ -52,16 +70,16 @@ def _build_stripe_tile(
 ) -> QPixmap:
     """縞模様用のタイル画像を生成する。"""
 
-    sanitized_widths: list[int] = []
-    for width in stripe_widths:
-        value = int(width)
-        if value <= 0:
+    sanitized_segments: list[StripeSegment] = []
+    for segment in stripe_segments:
+        try:
+            sanitized_segments.append(StripeSegment(segment.width, segment.color))
+        except ValueError:
             continue
-        sanitized_widths.append(max(value, 2))
-    if not sanitized_widths:
-        raise ValueError("stripe_widths must contain at least one positive value.")
+    if not sanitized_segments:
+        raise ValueError("stripe_segments must contain at least one positive width.")
 
-    tile_width = sum(sanitized_widths)
+    tile_width = sum(segment.width for segment in sanitized_segments)
     tile_height = max(int(stripe_height), 1)
     pixmap = QPixmap(QSize(tile_width, tile_height))
 
@@ -85,13 +103,15 @@ def _build_stripe_tile(
     offset = 0
     painter.setPen(border_pen)
     painter.drawLine(0, 0, 0, tile_height)
-    for index, width in enumerate(sanitized_widths):
-        stripe_color = light_stripe_color if index % 2 == 0 else dark_stripe_color
-        painter.fillRect(offset, 0, width, tile_height, stripe_color)
-        offset += width
+    for index, segment in enumerate(sanitized_segments):
+        stripe_color = segment.color
+        if stripe_color is None:
+            stripe_color = light_stripe_color if index % 2 == 0 else dark_stripe_color
+        painter.fillRect(offset, 0, segment.width, tile_height, stripe_color)
+        offset += segment.width
         painter.setPen(border_pen)
         painter.drawLine(offset, 0, offset, tile_height)
-        if index % 2 == 0:
+        if segment.color is None and index % 2 == 0:
             accent_x = max(offset - 1, 0)
             painter.setPen(accent_pen)
             painter.drawLine(accent_x, 0, accent_x, tile_height)
@@ -103,19 +123,31 @@ def _build_stripe_tile(
 class StripedBackgroundPattern:
     """縞幅のシーケンスを保持しブラシ生成を担うヘルパー。"""
 
-    def __init__(self, stripe_widths: Iterable[int], *, stripe_height: int | None = None) -> None:
-        widths = [max(int(width), 2) for width in stripe_widths if int(width) > 0]
-        if not widths:
-            raise ValueError("stripe_widths must contain at least one positive integer.")
-        self._widths = widths
-        height = int(stripe_height) if stripe_height is not None else widths[0]
+    def __init__(
+        self,
+        stripe_segments: Iterable[int | StripeSegment],
+        *,
+        stripe_height: int | None = None,
+    ) -> None:
+        segments = self._normalize_segments(stripe_segments)
+        if not segments:
+            raise ValueError("stripe_segments must contain at least one positive width.")
+        self._segments = segments
+        height = int(stripe_height) if stripe_height is not None else segments[0].width
         self._height = max(height, 2)
+        self._brush_cache: QBrush | None = None
 
     @property
     def widths(self) -> tuple[int, ...]:
         """現在の縞幅シーケンスを返す。"""
 
-        return tuple(self._widths)
+        return tuple(segment.width for segment in self._segments)
+
+    @property
+    def segments(self) -> tuple[StripeSegment, ...]:
+        """現在の縞セグメントを返す。"""
+
+        return tuple(self._segments)
 
     @property
     def height(self) -> int:
@@ -126,25 +158,63 @@ class StripedBackgroundPattern:
     def total_width(self) -> int:
         """タイル全体の幅を返す。"""
 
-        return sum(self._widths)
+        return sum(self.widths)
 
     def width_at(self, index: int) -> int:
         """指定インデックスの縞幅を取得する。"""
 
-        return self._widths[index]
+        return self._segments[index].width
+
+    def update_segments(
+        self,
+        stripe_segments: Iterable[int | StripeSegment],
+        *,
+        stripe_height: int | None = None,
+    ) -> None:
+        """縞設定を更新し、必要に応じて高さも再計算する。"""
+
+        segments = self._normalize_segments(stripe_segments)
+        if not segments:
+            raise ValueError("stripe_segments must contain at least one positive width.")
+        self._segments = segments
+        if stripe_height is not None:
+            height = int(stripe_height)
+            self._height = max(height, 2)
+        else:
+            self._height = max(segments[0].width, 2)
+        self._brush_cache = None
 
     def build_brush(self) -> QBrush:
         """現在の設定から背景ブラシを生成する。"""
 
+        if self._brush_cache is not None:
+            return self._brush_cache
+
         tile = _build_stripe_tile(
-            self._widths,
+            self._segments,
             stripe_height=self._height,
             light_color=GRAPH_VIEW_STRIPE_LIGHT,
             dark_color=GRAPH_VIEW_STRIPE_DARK,
             border_color=GRAPH_VIEW_STRIPE_BORDER,
             accent_color=GRAPH_VIEW_STRIPE_ACCENT,
         )
-        return QBrush(tile)
+        self._brush_cache = QBrush(tile)
+        return self._brush_cache
+
+    @staticmethod
+    def _normalize_segments(
+        stripe_segments: Iterable[int | StripeSegment],
+    ) -> list[StripeSegment]:
+        normalized: list[StripeSegment] = []
+        for segment in stripe_segments:
+            if isinstance(segment, StripeSegment):
+                normalized.append(segment)
+                continue
+            width = int(segment)
+            if width <= 0:
+                continue
+            normalized.append(StripeSegment(width))
+        return normalized
 
 
 def apply_stripe_pattern(graph: NodeGraph, pattern: StripedBackgroundPattern) -> QBrush:
@@ -163,10 +233,29 @@ def apply_stripe_pattern(graph: NodeGraph, pattern: StripedBackgroundPattern) ->
     return brush
 
 
+def apply_dynamic_striped_background(
+    graph: NodeGraph,
+    stripe_segments: Iterable[int | StripeSegment],
+    stripe_height: int | None = None,
+    *,
+    pattern: StripedBackgroundPattern | None = None,
+) -> StripedBackgroundPattern:
+    """任意セグメントの縞模様を適用する。"""
+
+    if pattern is None:
+        pattern = StripedBackgroundPattern(stripe_segments, stripe_height=stripe_height)
+    else:
+        pattern.update_segments(stripe_segments, stripe_height=stripe_height)
+    apply_stripe_pattern(graph, pattern)
+    return pattern
+
+
 def apply_striped_background(graph: NodeGraph, node_cls: Type[BaseNode]) -> StripedBackgroundPattern:
     """基準ノード幅から単一縞パターンを生成して適用する。"""
 
     stripe_width = resolve_stripe_width(node_cls)
-    pattern = StripedBackgroundPattern([stripe_width], stripe_height=stripe_width)
-    apply_stripe_pattern(graph, pattern)
-    return pattern
+    return apply_dynamic_striped_background(
+        graph,
+        [stripe_width],
+        stripe_height=stripe_width,
+    )
