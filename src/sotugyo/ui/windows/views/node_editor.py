@@ -62,7 +62,12 @@ from ...dialogs import (
     UserSettingsDialog,
 )
 from ...style import apply_base_style
-from ..backgrounds.striped import apply_striped_background
+from ..backgrounds.striped import (
+    StripeSegment,
+    StripedBackgroundPattern,
+    apply_dynamic_striped_background,
+    apply_striped_background,
+)
 from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
@@ -87,7 +92,8 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
-        apply_striped_background(self._graph, TaskNode)
+        self._background_pattern: StripedBackgroundPattern | None = None
+        self._background_pattern = apply_striped_background(self._graph, TaskNode)
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -139,6 +145,31 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_node_catalog()
         self._set_modified(False)
         apply_base_style(self)
+
+    # ------------------------------------------------------------------
+    # 背景パターン
+    # ------------------------------------------------------------------
+    def set_background_stripes(
+        self,
+        segments: Iterable[StripeSegment | int],
+        *,
+        stripe_height: int | None = None,
+    ) -> None:
+        """グラフ背景の縞模様を外部入力に従って更新する。"""
+
+        segment_list = list(segments)
+        if not segment_list:
+            raise ValueError("segments must contain at least one stripe definition.")
+
+        pattern = apply_dynamic_striped_background(
+            self._graph,
+            segment_list,
+            stripe_height=stripe_height,
+            pattern=self._background_pattern,
+        )
+        self._background_pattern = pattern
+        self._graph.scene().update()
+        self._graph_widget.viewport().update()
 
     def showEvent(self, event: QShowEvent) -> None:
         """ウィンドウ表示時に全画面状態を維持する。"""
