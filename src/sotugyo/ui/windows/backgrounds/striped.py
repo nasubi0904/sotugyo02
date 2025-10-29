@@ -11,7 +11,7 @@ from NodeGraphQt import NodeGraph
 from NodeGraphQt.constants import ViewerEnum
 from NodeGraphQt.nodes.base_node import BaseNode
 
-from ..style import (
+from ...style import (
     GRAPH_VIEW_STRIPE_ACCENT,
     GRAPH_VIEW_STRIPE_BORDER,
     GRAPH_VIEW_STRIPE_DARK,

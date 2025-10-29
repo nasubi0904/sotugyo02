@@ -7,7 +7,7 @@ from typing import Iterable, Optional
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDockWidget, QVBoxLayout, QWidget
 
-from ..components.content_browser import NodeCatalogEntry, NodeContentBrowser
+from ...components.content_browser import NodeCatalogEntry, NodeContentBrowser
 
 
 class NodeContentBrowserDock(QDockWidget):

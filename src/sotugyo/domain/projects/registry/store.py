@@ -3,28 +3,15 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from ...infrastructure.paths import get_app_config_dir
+from ....infrastructure.paths import get_app_config_dir
+from .models import ProjectRecord
 
 REGISTRY_FILENAME = "projects.json"
 
-__all__ = ["ProjectRecord", "ProjectRegistry"]
-
-
-@dataclass
-class ProjectRecord:
-    name: str
-    root: Path
-
-    def to_payload(self) -> Dict[str, str]:
-        return {"name": self.name, "root": str(self.root)}
-
-    @classmethod
-    def from_payload(cls, payload: Dict[str, str]) -> "ProjectRecord":
-        return cls(name=payload.get("name", ""), root=Path(payload.get("root", "")))
+__all__ = ["ProjectRegistry"]
 
 
 class ProjectRegistry:

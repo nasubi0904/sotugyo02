@@ -43,7 +43,7 @@
           - `timeline/`（`__init__.py`、`graph.py`、`snap.py`）
         - `dialogs/`（`__init__.py`、`about.md`、`project_settings_dialog.py`、`tool_environment_dialog.py`、`tool_registry_dialog.py`、`user_settings_dialog.py`）
         - `style.py`
-        - `windows/`（`__init__.py`、`about.md`、`node_editor_window.py`、`start_window.py`）
+        - `windows/`（`__init__.py`、`about.md`、`controllers/`、`docks/`、`toolbars/`、`views/`）
   - `tests/`
     - `domain/`
       - `projects/`（`test_timeline.py`）

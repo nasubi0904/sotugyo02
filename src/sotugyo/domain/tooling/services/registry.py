@@ -7,8 +7,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List
 
-from .models import RegisteredTool
-from .repository import ToolConfigRepository
+from ..models import RegisteredTool
+from ..repositories.config import ToolConfigRepository
 
 
 @dataclass(slots=True)

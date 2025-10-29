@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List, Tuple
 from ..projects.service import ProjectService
 from ..users.settings import UserSettingsManager
 from .models import RegisteredTool, ToolEnvironmentDefinition
-from .service import ToolEnvironmentService
+from .services import ToolEnvironmentService
 
 LOGGER = logging.getLogger(__name__)
 

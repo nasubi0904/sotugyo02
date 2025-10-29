@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from .models import RegisteredTool, ToolEnvironmentDefinition
-from .repository import ToolConfigRepository
+from ..models import RegisteredTool, ToolEnvironmentDefinition
+from ..repositories.config import ToolConfigRepository
 
 
 @dataclass(slots=True)

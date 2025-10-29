@@ -22,8 +22,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ...domain.projects.settings import ProjectSettings
-from ...domain.projects.structure import ProjectStructureReport, validate_project_structure
+from ....domain.projects import ProjectSettings, ProjectStructureReport, validate_structure
 from ..style import apply_base_style
 
 
@@ -156,7 +155,7 @@ class ProjectSettingsDialog(QDialog):
             self._set_structure_status("error")
             self._structure_report = None
             return
-        report = validate_project_structure(root)
+        report = validate_structure(root)
         self._structure_report = report
         if report.is_valid:
             self._structure_label.setText("既定の構成を満たしています。")

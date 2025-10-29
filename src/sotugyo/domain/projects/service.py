@@ -8,12 +8,9 @@ from pathlib import Path
 from typing import Optional, Union
 
 from .context import ProjectContext
-from .registry import ProjectRecord, ProjectRegistry
-from .registry_service import ProjectRegistryService
-from .settings import ProjectSettings
-from .settings_service import ProjectSettingsService
-from .structure import ProjectStructureReport
-from .structure_service import ProjectStructureService
+from .registry import ProjectRecord, ProjectRegistry, ProjectRegistryService
+from .settings import ProjectSettings, ProjectSettingsService
+from .structure import ProjectStructureReport, ProjectStructureService
 
 __all__ = ["ProjectService"]
 

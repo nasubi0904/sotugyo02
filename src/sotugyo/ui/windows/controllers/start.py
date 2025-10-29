@@ -6,9 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from ...domain.projects import ProjectContext, ProjectRecord, ProjectService, ProjectSettings
-from ...domain.projects.structure import ProjectStructureReport
-from ...domain.users.settings import UserAccount, UserSettingsManager
+from ....domain.projects import (
+    ProjectContext,
+    ProjectRecord,
+    ProjectService,
+    ProjectSettings,
+    ProjectStructureReport,
+)
+from ....domain.users.settings import UserAccount, UserSettingsManager
 
 
 @dataclass(slots=True)

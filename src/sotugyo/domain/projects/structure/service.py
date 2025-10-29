@@ -5,11 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from .structure import (
-    ProjectStructureReport,
-    ensure_project_structure,
-    validate_project_structure,
-)
+from .operations import ensure_structure, validate_structure
+from .report import ProjectStructureReport
 
 
 @dataclass(slots=True)
@@ -19,9 +16,9 @@ class ProjectStructureService:
     def ensure(self, root: Path) -> ProjectStructureReport:
         """既定構成を満たすよう生成しつつレポートを返す。"""
 
-        return ensure_project_structure(root)
+        return ensure_structure(root)
 
     def validate(self, root: Path) -> ProjectStructureReport:
         """既定構成との差分レポートを返す。"""
 
-        return validate_project_structure(root)
+        return validate_structure(root)

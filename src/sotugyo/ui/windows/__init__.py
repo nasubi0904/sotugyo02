@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from .alignment_toolbar import TimelineAlignmentToolBar
-from .content_browser_dock import NodeContentBrowserDock
-from .inspector_panel import NodeInspectorDock
-from .node_editor_window import NodeEditorWindow
-from .start_controller import StartWindowController
-from .start_window import StartWindow
+from .controllers.start import StartWindowController
+from .docks.content_browser import NodeContentBrowserDock
+from .docks.inspector import NodeInspectorDock
+from .toolbars.timeline_alignment import TimelineAlignmentToolBar
+from .views.node_editor import NodeEditorWindow
+from .views.start import StartWindow
 
 __all__ = [
     "NodeContentBrowserDock",
