@@ -22,8 +22,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
-from ...domain.tooling.service import ToolEnvironmentService
+from ...domain.tooling import (
+    RegisteredTool,
+    ToolEnvironmentDefinition,
+    ToolEnvironmentService,
+)
 
 
 class ToolEnvironmentManagerDialog(QDialog):
