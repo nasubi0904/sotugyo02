@@ -28,8 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...domain.tooling.models import TemplateInstallationCandidate
-from ...domain.tooling.service import ToolEnvironmentService
+from ...domain.tooling import TemplateInstallationCandidate, ToolEnvironmentService
 
 
 class ToolRegistryDialog(QDialog):
