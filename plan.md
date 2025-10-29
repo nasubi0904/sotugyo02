@@ -73,3 +73,14 @@
 2. ビルドスクリプトのドラフト作成と、必要なアーティファクト（PySide6 の Wheel ファイル、ランタイム ZIP）のドキュメント化。
 3. パッケージングの検証用に PySide6 の GUI スケルトン（アバウトダイアログ等）を作成。
 4. インストール手順とトラブルシュートをまとめた利用者向け README を作成。
+
+## 9. 現在の Python パッケージ構成（`pip list` 2025-10-21 実行結果）
+- NodeGraphQt 0.6.43
+- OdenGraphQt 0.7.4
+- packaging 25.0
+- pip 25.2 / setuptools 80.9.0 / wheel 0.45.1
+- PySide6 6.10.0 / PySide6_Addons 6.10.0 / PySide6_Essentials 6.10.0
+- QtPy 2.4.3
+- shiboken6 6.10.0
+- types-pyside2 5.15.2.1.7
+- typing_extensions 4.15.0

@@ -16,7 +16,6 @@ DEPENDENCIES: Sequence[Dependency] = (
     ("shiboken6", "6.10.0"),
     ("NodeGraphQt", "0.6.43"),
     ("OdenGraphQt", "0.7.4"),
-    ("Qt.py", "1.4.8"),
     ("QtPy", "2.4.3"),
     ("types-pyside2", "5.15.2.1.7"),
     ("typing_extensions", "4.15.0"),
