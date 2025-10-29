@@ -62,6 +62,11 @@
 - **原因**: ウィンドウカテゴリ内で部品ごとにモジュールを分離せず、全機能を単一クラスに実装していたため再利用性が低くなっていた。
 - **対応**: コンテンツブラウザとインスペクタ、整列ツールバーをそれぞれ専用の `QDockWidget`/`QToolBar` 実装へ切り出し、`NodeEditorWindow` はイベント仲介と状態管理に専念するよう再設計した。
 
+#### 2025-XX-XX Ctrl+S 上書き保存の確認ダイアログが存在しない
+- **現象**: ノードエディタで `Ctrl+S` による保存を実行すると即座にプロジェクトが上書きされ、意図しない保存を防ぐ手段がなかった。
+- **原因**: `NodeEditorWindow._file_save` が保存前の確認ダイアログを表示せず、キーボードショートカットとメニュー操作がそのまま保存処理を呼び出していた。
+- **対応**: 保存対象ファイルの有無に応じたメッセージを提示する `_confirm_save_overwrite` を追加し、保存前に必ず `QMessageBox` でユーザー確認を行うよう修正した。
+
 #### 2025-XX-XX ノードエディタ起動時の `viewport` 属性エラー
 - **現象**: スタート画面からノードエディタを開くと `NodeGraphWidget` に `viewport` 属性が存在しないとの `AttributeError` で起動できない。
 - **原因**: 背景縞幅調整用の `StripeWidthDragController` へ `NodeGraphQt.NodeGraph.widget`（`QTabWidget`）を渡しており、内部で期待される `QGraphicsView` の `viewport()` メソッドが呼び出せなくなっていた。

@@ -1186,6 +1186,8 @@ class NodeEditorWindow(QMainWindow):
         if graph_path is None:
             self._show_error_dialog("プロジェクトが選択されていません。")
             return
+        if not self._confirm_save_overwrite(graph_path):
+            return
         if self._current_project_root is not None:
             self._project_service.ensure_structure(self._current_project_root)
         try:
@@ -1837,6 +1839,26 @@ class NodeEditorWindow(QMainWindow):
         result = QMessageBox.warning(
             self,
             "確認",
+            text,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
+
+    def _confirm_save_overwrite(self, target: Path) -> bool:
+        if target.exists():
+            text = (
+                f"ファイル「{target.name}」を上書き保存しますか？\n"
+                f"保存先: {target}"
+            )
+        else:
+            text = (
+                f"ファイル「{target.name}」を新規作成して保存しますか？\n"
+                f"保存先: {target}"
+            )
+        result = QMessageBox.question(
+            self,
+            "保存の確認",
             text,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
