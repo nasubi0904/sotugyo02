@@ -4,9 +4,81 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
-from PySide6.QtCore import QSettings
+try:
+    from qtpy import QtCore
+except Exception:  # pragma: no cover - Qt バインディングが無い環境向けフォールバック
+    QtCore = None  # type: ignore[assignment]
+    if TYPE_CHECKING:  # pragma: no cover - 型チェック専用
+        from qtpy import QtCore as _QtCore  # noqa: F401
+else:
+    QSettings = QtCore.QSettings
+
+
+if QtCore is None:
+    class QSettings:  # type: ignore[override]
+        """QtPy が利用できない環境向けの簡易 QSettings 代替。"""
+
+        def __init__(self, *args, **kwargs) -> None:
+            self._store: dict[str, object] = {}
+            self._group_stack: list[str] = []
+
+        # グループ操作 --------------------------------------------------
+        def beginGroup(self, prefix: str) -> None:
+            self._ensure_group(prefix)
+            self._group_stack.append(prefix)
+
+        def endGroup(self) -> None:
+            if self._group_stack:
+                self._group_stack.pop()
+
+        def childGroups(self) -> list[str]:
+            current = self._resolve_group(create=False)
+            return [
+                key
+                for key, value in current.items()
+                if isinstance(value, dict)
+            ]
+
+        # 値アクセス ----------------------------------------------------
+        def value(self, key: str, default: object | None = None) -> object | None:
+            current = self._resolve_group(create=False)
+            return current.get(key, default)
+
+        def setValue(self, key: str, value: object) -> None:
+            current = self._resolve_group(create=True)
+            current[key] = value
+
+        def contains(self, key: str) -> bool:
+            current = self._resolve_group(create=False)
+            return key in current
+
+        def remove(self, key: str) -> None:
+            current = self._resolve_group(create=False)
+            current.pop(key, None)
+
+        def sync(self) -> None:
+            return
+
+        # 内部ユーティリティ ------------------------------------------
+        def _resolve_group(self, *, create: bool) -> dict[str, object]:
+            group = self._store
+            for name in self._group_stack:
+                next_group = group.get(name)
+                if not isinstance(next_group, dict):
+                    if not create:
+                        next_group = {}
+                    else:
+                        next_group = {}
+                        group[name] = next_group
+                group = next_group
+            return group
+
+        def _ensure_group(self, name: str) -> None:
+            group = self._resolve_group(create=True)
+            if name not in group or not isinstance(group[name], dict):
+                group[name] = {}
 
 __all__ = ["UserAccount", "UserSettingsManager", "hash_password"]
 

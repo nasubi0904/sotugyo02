@@ -6,7 +6,7 @@ import os
 import sys
 from typing import Type
 
-from PySide6.QtWidgets import QApplication
+from qtpy import QtWidgets
 
 
 # 起動時に適用するスタイルプロファイル名。
@@ -54,7 +54,7 @@ def _apply_style_profile(profile_name: str) -> None:
 def main() -> int:
     """スタート画面を表示してアプリケーションを起動する。"""
 
-    app = QApplication.instance() or QApplication(sys.argv)
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     _apply_style_profile(DEFAULT_STYLE_PROFILE)
     start_window_cls = _resolve_start_window()
     window = start_window_cls()

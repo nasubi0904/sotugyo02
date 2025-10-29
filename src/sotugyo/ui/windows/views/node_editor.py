@@ -11,26 +11,26 @@ from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import (
-    QAction,
-    QCloseEvent,
-    QKeySequence,
-    QResizeEvent,
-    QShortcut,
-    QShowEvent,
-)
-from PySide6.QtWidgets import (
-    QDialog,
-    QFileDialog,
-    QMainWindow,
-    QMenu,
-    QMenuBar,
-    QMessageBox,
-    QSizePolicy,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy import QtCore, QtGui, QtWidgets
+
+QPoint = QtCore.QPoint
+Qt = QtCore.Qt
+Signal = QtCore.Signal
+QAction = QtGui.QAction
+QCloseEvent = QtGui.QCloseEvent
+QKeySequence = QtGui.QKeySequence
+QResizeEvent = QtGui.QResizeEvent
+QShortcut = QtGui.QShortcut
+QShowEvent = QtGui.QShowEvent
+QDialog = QtWidgets.QDialog
+QFileDialog = QtWidgets.QFileDialog
+QMainWindow = QtWidgets.QMainWindow
+QMenu = QtWidgets.QMenu
+QMenuBar = QtWidgets.QMenuBar
+QMessageBox = QtWidgets.QMessageBox
+QSizePolicy = QtWidgets.QSizePolicy
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 from NodeGraphQt import NodeGraph, Port
 
 

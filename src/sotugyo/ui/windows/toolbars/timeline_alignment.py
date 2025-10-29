@@ -4,8 +4,16 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtWidgets import QSizePolicy, QStyle, QToolBar, QToolButton, QWidget
+from qtpy import QtCore, QtWidgets
+
+QSize = QtCore.QSize
+Qt = QtCore.Qt
+Signal = QtCore.Signal
+QSizePolicy = QtWidgets.QSizePolicy
+QStyle = QtWidgets.QStyle
+QToolBar = QtWidgets.QToolBar
+QToolButton = QtWidgets.QToolButton
+QWidget = QtWidgets.QWidget
 
 
 class TimelineAlignmentToolBar(QToolBar):

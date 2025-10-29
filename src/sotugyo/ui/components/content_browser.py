@@ -5,37 +5,38 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
-from PySide6.QtCore import Qt, Signal, QSize, QFileInfo
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QFontMetrics,
-    QIcon,
-    QPainter,
-    QPen,
-    QPixmap,
-    QResizeEvent,
-)
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QBoxLayout,
-    QComboBox,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListView,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
-    QFileIconProvider,
-    QSizePolicy,
-    QSlider,
-    QSpinBox,
-    QSpacerItem,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy import QtCore, QtGui, QtWidgets
+
+Qt = QtCore.Qt
+Signal = QtCore.Signal
+QSize = QtCore.QSize
+QFileInfo = QtCore.QFileInfo
+QColor = QtGui.QColor
+QFont = QtGui.QFont
+QFontMetrics = QtGui.QFontMetrics
+QIcon = QtGui.QIcon
+QPainter = QtGui.QPainter
+QPen = QtGui.QPen
+QPixmap = QtGui.QPixmap
+QResizeEvent = QtGui.QResizeEvent
+QAbstractItemView = QtWidgets.QAbstractItemView
+QBoxLayout = QtWidgets.QBoxLayout
+QComboBox = QtWidgets.QComboBox
+QFrame = QtWidgets.QFrame
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QLineEdit = QtWidgets.QLineEdit
+QListView = QtWidgets.QListView
+QListWidget = QtWidgets.QListWidget
+QListWidgetItem = QtWidgets.QListWidgetItem
+QPushButton = QtWidgets.QPushButton
+QFileIconProvider = QtWidgets.QFileIconProvider
+QSizePolicy = QtWidgets.QSizePolicy
+QSlider = QtWidgets.QSlider
+QSpinBox = QtWidgets.QSpinBox
+QSpacerItem = QtWidgets.QSpacerItem
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 
 @dataclass(frozen=True)

@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, List, Optional
 
-try:  # pragma: no cover - 環境に PySide6 が存在する場合は実際の実装を利用
-    from PySide6.QtGui import QColor  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - テスト環境ではダミーを使用
+try:  # pragma: no cover - QtPy が利用できる環境では実際の実装を利用
+    from qtpy import QtGui  # type: ignore
+except Exception:  # pragma: no cover - テスト環境ではダミーを使用
     @dataclass
     class QColor:  # type: ignore
         """テスト用の簡易 QColor 代替。"""
@@ -24,6 +24,9 @@ except ModuleNotFoundError:  # pragma: no cover - テスト環境ではダミー
             if not isinstance(other, QColor):
                 return NotImplemented
             return self.name.lower() == other.name.lower()
+
+else:  # pragma: no cover - QtPy 環境で使用
+    QColor = QtGui.QColor
 
 
 class ThemeProvider:

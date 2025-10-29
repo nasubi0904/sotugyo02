@@ -5,28 +5,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QAbstractItemView,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QGridLayout,
-    QGroupBox,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QMenu,
-    QMessageBox,
-    QPushButton,
-    QTabWidget,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+QAbstractItemView = QtWidgets.QAbstractItemView
+QDialog = QtWidgets.QDialog
+QDialogButtonBox = QtWidgets.QDialogButtonBox
+QFileDialog = QtWidgets.QFileDialog
+QGridLayout = QtWidgets.QGridLayout
+QGroupBox = QtWidgets.QGroupBox
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QLineEdit = QtWidgets.QLineEdit
+QListWidget = QtWidgets.QListWidget
+QListWidgetItem = QtWidgets.QListWidgetItem
+QMenu = QtWidgets.QMenu
+QMessageBox = QtWidgets.QMessageBox
+QPushButton = QtWidgets.QPushButton
+QTabWidget = QtWidgets.QTabWidget
+QTreeWidget = QtWidgets.QTreeWidget
+QTreeWidgetItem = QtWidgets.QTreeWidgetItem
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 from ...domain.tooling import TemplateInstallationCandidate, ToolEnvironmentService
 

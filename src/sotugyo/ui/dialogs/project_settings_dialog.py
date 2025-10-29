@@ -5,22 +5,22 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QCheckBox,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMessageBox,
-    QPushButton,
-    QTextEdit,
-    QVBoxLayout,
-)
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+QCheckBox = QtWidgets.QCheckBox
+QDialog = QtWidgets.QDialog
+QDialogButtonBox = QtWidgets.QDialogButtonBox
+QFileDialog = QtWidgets.QFileDialog
+QFormLayout = QtWidgets.QFormLayout
+QFrame = QtWidgets.QFrame
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QLineEdit = QtWidgets.QLineEdit
+QMessageBox = QtWidgets.QMessageBox
+QPushButton = QtWidgets.QPushButton
+QTextEdit = QtWidgets.QTextEdit
+QVBoxLayout = QtWidgets.QVBoxLayout
 
 from sotugyo.domain.projects import (
     ProjectSettings,
