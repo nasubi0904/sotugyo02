@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional, Tuple
 
 ISO_FORMAT: ClassVar[str] = "%Y-%m-%dT%H:%M:%S"
 
@@ -69,6 +69,11 @@ class ToolEnvironmentDefinition:
     name: str
     tool_id: str
     version_label: str
+    template_id: Optional[str] = None
+    rez_packages: Tuple[str, ...] = field(default_factory=tuple)
+    rez_variants: Tuple[str, ...] = field(default_factory=tuple)
+    rez_environment: Dict[str, str] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
@@ -78,20 +83,80 @@ class ToolEnvironmentDefinition:
             "name": self.name,
             "tool_id": self.tool_id,
             "version_label": self.version_label,
+            "template_id": self.template_id,
+            "rez_packages": list(self.rez_packages),
+            "rez_variants": list(self.rez_variants),
+            "rez_environment": dict(self.rez_environment),
+            "metadata": dict(self.metadata),
             "created_at": _format_timestamp(self.created_at),
             "updated_at": _format_timestamp(self.updated_at),
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ToolEnvironmentDefinition":
+        packages = tuple(
+            str(entry).strip()
+            for entry in data.get("rez_packages", [])
+            if isinstance(entry, str) and entry.strip()
+        )
+        variants = tuple(
+            str(entry).strip()
+            for entry in data.get("rez_variants", [])
+            if isinstance(entry, str) and entry.strip()
+        )
+        env_map = {}
+        raw_env = data.get("rez_environment")
+        if isinstance(raw_env, dict):
+            env_map = {
+                str(key): str(value)
+                for key, value in raw_env.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+        metadata = {}
+        raw_metadata = data.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata = dict(raw_metadata)
         return cls(
             environment_id=str(data.get("environment_id", "")),
             name=str(data.get("name", "")),
             tool_id=str(data.get("tool_id", "")),
             version_label=str(data.get("version_label", "")),
+            template_id=(
+                str(data.get("template_id")) if data.get("template_id") is not None else None
+            ),
+            rez_packages=packages,
+            rez_variants=variants,
+            rez_environment=env_map,
+            metadata=metadata,
             created_at=_parse_timestamp(data.get("created_at")),
             updated_at=_parse_timestamp(data.get("updated_at")),
         )
+
+    def build_payload(self, tool: Optional[RegisteredTool] = None) -> Dict[str, Any]:
+        """ノードへ伝播する環境情報を構築する。"""
+
+        payload: Dict[str, Any] = {
+            "environment_id": self.environment_id,
+            "environment_name": self.name,
+            "tool_id": self.tool_id,
+            "version_label": self.version_label,
+        }
+        if tool is not None:
+            payload["tool_name"] = tool.display_name
+            if tool.version:
+                payload["tool_version"] = tool.version
+        if self.template_id:
+            payload["template_id"] = self.template_id
+        if self.rez_packages:
+            payload["rez_packages"] = list(self.rez_packages)
+        if self.rez_variants:
+            payload["rez_variants"] = list(self.rez_variants)
+        if self.rez_environment:
+            payload["rez_environment"] = dict(self.rez_environment)
+        if self.metadata:
+            payload["metadata"] = dict(self.metadata)
+        payload.setdefault("summary", self.version_label or payload.get("tool_name", ""))
+        return payload
 
 
 @dataclass(slots=True)

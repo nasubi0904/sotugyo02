@@ -645,16 +645,7 @@ class NodeEditorWindow(QMainWindow):
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
         if isinstance(node, ToolEnvironmentNode):
-            payload = {
-                "environment_id": definition.environment_id,
-                "environment_name": definition.name,
-                "tool_id": tool.tool_id,
-                "tool_name": tool.display_name,
-                "version_label": definition.version_label,
-            }
-            if tool.version:
-                payload["tool_version"] = tool.version
-            payload["summary"] = definition.version_label or tool.display_name
+            payload = definition.build_payload(tool)
             node.configure_environment(
                 environment_id=definition.environment_id,
                 environment_name=definition.name,
@@ -1274,6 +1265,7 @@ class NodeEditorWindow(QMainWindow):
         try:
             metadata_changed = self._load_project_from_path(graph_path)
             self._set_modified(bool(metadata_changed))
+            self._check_rez_environments_in_project()
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._show_error_dialog(f"プロジェクトの読み込みに失敗しました: {exc}")
             self._reset_graph()
@@ -1283,6 +1275,57 @@ class NodeEditorWindow(QMainWindow):
         with path.open("r", encoding="utf-8") as handle:
             state = json.load(handle)
         return self._apply_project_state(state)
+
+    def _check_rez_environments_in_project(self) -> None:
+        nodes = self._collect_all_nodes()
+        if not nodes:
+            return
+        issues: List[tuple[str, List[str], str]] = []
+        for node in nodes:
+            if not isinstance(node, ToolEnvironmentNode):
+                continue
+            payload = node.get_environment_payload()
+            packages_raw = payload.get("rez_packages")
+            if not isinstance(packages_raw, (list, tuple)):
+                continue
+            packages = [str(pkg) for pkg in packages_raw if str(pkg).strip()]
+            if not packages:
+                continue
+            variants_raw = payload.get("rez_variants")
+            if isinstance(variants_raw, (list, tuple)):
+                variants = [str(var) for var in variants_raw if str(var).strip()]
+            else:
+                variants = []
+            env_map = payload.get("rez_environment")
+            environment = (
+                {str(key): str(value) for key, value in env_map.items()}
+                if isinstance(env_map, dict)
+                else {}
+            )
+            try:
+                result = self._coordinator.tool_service.validate_rez_environment(
+                    packages=packages,
+                    variants=variants,
+                    environment=environment,
+                )
+            except Exception as exc:  # pragma: no cover - 外部ツール依存
+                LOGGER.error(
+                    "Rez 環境検証に失敗しました: node=%s, error=%s",
+                    self._safe_node_name(node),
+                    exc,
+                    exc_info=True,
+                )
+                issues.append((self._safe_node_name(node), packages, str(exc)))
+                continue
+            if not result.success:
+                issues.append((self._safe_node_name(node), packages, result.message()))
+        if not issues:
+            return
+        lines = ["次のツール環境を Rez で再現できませんでした。"]
+        for name, packages, message in issues:
+            pkg_text = ", ".join(packages)
+            lines.append(f"・{name} ({pkg_text}) : {message}")
+        self._show_warning_dialog("\n".join(lines))
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()

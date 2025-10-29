@@ -79,13 +79,17 @@ class ToolEnvironmentNode(BaseNode):
         self.set_property("tool_id", tool_id, push_undo=False)
         self.set_property("tool_name", tool_name, push_undo=False)
         self.set_property("version_label", version_label, push_undo=False)
-        payload = environment_payload or {
+        payload = {
             "environment_id": environment_id,
             "tool_id": tool_id,
             "tool_name": tool_name,
             "version_label": version_label,
         }
-        self.set_property("environment_payload", self._serialize_payload(payload), push_undo=False)
+        if environment_payload:
+            payload.update(environment_payload)
+        self.set_property(
+            "environment_payload", self._serialize_payload(payload), push_undo=False
+        )
         self._update_summary()
 
     def set_property(self, name, value, push_undo: bool = True):  # type: ignore[override]
@@ -132,6 +136,12 @@ class ToolEnvironmentNode(BaseNode):
             version_label = ""
         payload = self.get_environment_payload()
         summary_hint = payload.get("summary")
+        packages = payload.get("rez_packages")
+        validation = None
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict):
+            validation = metadata.get("rez_validation")
+        validation_status = payload.get("rez_validation")
         summary_lines = []
         if tool_name:
             summary_lines.append(tool_name)
@@ -139,6 +149,24 @@ class ToolEnvironmentNode(BaseNode):
             summary_lines.append(f"Version: {version_label}")
         if summary_hint:
             summary_lines.append(str(summary_hint))
+        if isinstance(packages, (list, tuple)) and packages:
+            preview = ", ".join(str(pkg) for pkg in packages[:3])
+            if len(packages) > 3:
+                preview += " …"
+            summary_lines.append(f"Rez: {preview}")
+        validation_map = None
+        if isinstance(validation, dict):
+            validation_map = validation
+        elif isinstance(validation_status, dict):
+            validation_map = validation_status
+        if isinstance(validation_map, dict) and not validation_map.get("success", False):
+            message = (
+                validation_map.get("stderr")
+                or validation_map.get("stdout")
+                or validation_map.get("message")
+                or "Rez 環境の解決に失敗しました。"
+            )
+            summary_lines.append(f"⚠️ {message}")
         tooltip = "\n".join(summary_lines) if summary_lines else "ツール環境"
         view = getattr(self, "view", None)
         if view is not None and hasattr(view, "setToolTip"):
