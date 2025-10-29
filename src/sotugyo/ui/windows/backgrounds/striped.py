@@ -144,6 +144,11 @@ def apply_stripe_pattern(graph: NodeGraph, pattern: StripedBackgroundPattern) ->
     brush = pattern.build_brush()
     graph.set_grid_mode(ViewerEnum.GRID_DISPLAY_NONE.value)
     viewer = graph.viewer()
+    # ズームアウト時にブラシが縮小される際のチラつきを抑えるため、
+    # `SmoothPixmapTransform` を有効化して補間描画を行う。
+    current_hints = viewer.renderHints()
+    if not (current_hints & QPainter.SmoothPixmapTransform):
+        viewer.setRenderHints(current_hints | QPainter.SmoothPixmapTransform)
     viewer.setBackgroundBrush(brush)
     graph.scene().setBackgroundBrush(brush)
     return brush
