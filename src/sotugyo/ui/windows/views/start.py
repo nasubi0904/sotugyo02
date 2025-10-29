@@ -124,9 +124,12 @@ class StartWindow(QMainWindow):
         project_button_row = QHBoxLayout()
         create_button = QPushButton("新規プロジェクト...", card)
         create_button.clicked.connect(self._create_project)
+        import_button = QPushButton("既存プロジェクトを追加...", card)
+        import_button.clicked.connect(self._add_existing_project)
         refresh_button = QPushButton("再読み込み", card)
         refresh_button.clicked.connect(self.refresh_start_state)
         project_button_row.addWidget(create_button)
+        project_button_row.addWidget(import_button)
         project_button_row.addWidget(refresh_button)
         project_button_label = QLabel("", card)
         project_button_label.setObjectName("formLabel")
@@ -329,6 +332,34 @@ class StartWindow(QMainWindow):
                 if Path(self._project_combo.itemData(index)) == project_dir:
                     self._project_combo.setCurrentIndex(index)
                     break
+
+    def _add_existing_project(self) -> None:
+        directory = QFileDialog.getExistingDirectory(self, "既存プロジェクトのルートを選択")
+        if not directory:
+            return
+        root = Path(directory)
+        if not root.exists() or not root.is_dir():
+            QMessageBox.critical(self, "エラー", "選択したディレクトリが存在しないか、フォルダーではありません。")
+            return
+        report = self._controller.validate_structure(root)
+        if not self._confirm_project_registration(report):
+            return
+        settings = self._controller.load_project_settings(root)
+        self._controller.register_project(settings.to_record(), set_last=True)
+        self.refresh_start_state()
+
+    def _confirm_project_registration(self, report: ProjectStructureReport) -> bool:
+        if report.is_valid:
+            return True
+        message = "既定の構成に不足があります。登録を続行しますか？\n\n" + report.summary()
+        response = QMessageBox.warning(
+            self,
+            "警告",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return response == QMessageBox.StandardButton.Yes
 
     # ノードエディタ起動 -------------------------------------------------
     def _open_node_editor(self) -> None:
