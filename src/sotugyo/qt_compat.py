@@ -13,6 +13,35 @@ except ImportError:  # pragma: no cover - QtSvg が無効な環境向けフォ�
     QtSvg = None  # type: ignore
 
 
+def _assign_module_attribute(
+    target: ModuleType, source: ModuleType, name: str
+) -> None:
+    """ソースモジュールの属性をターゲットへフォールバック登録する。"""
+
+    if hasattr(target, name):
+        return
+    try:
+        attribute = getattr(source, name)
+    except AttributeError:
+        return
+    setattr(target, name, attribute)
+
+
+def _patch_qtpy_widgets_module() -> None:
+    """QtWidgets に存在しない QtGui 由来の API を補完する。"""
+
+    fallback_attributes = (
+        "QAction",
+        "QActionGroup",
+        "QShortcut",
+        "QUndoCommand",
+        "QUndoGroup",
+        "QUndoStack",
+    )
+    for attr_name in fallback_attributes:
+        _assign_module_attribute(QtWidgets, QtGui, attr_name)
+
+
 class _QtCompat:
     """QtCompat 互換 API を提供するヘルパー。"""
 
@@ -45,6 +74,8 @@ def ensure_qt_module_alias() -> None:
 
     if "Qt" in sys.modules:
         return
+
+    _patch_qtpy_widgets_module()
 
     qt_module = ModuleType("Qt")
     qt_module.QtCore = QtCore
