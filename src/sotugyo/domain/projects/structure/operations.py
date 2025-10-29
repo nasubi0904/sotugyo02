@@ -1,58 +1,14 @@
-"""プロジェクトルートの既定構成と検証機能。"""
+"""プロジェクト構造の検証・生成ロジック。"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
 
-__all__ = [
-    "DEFAULT_DIRECTORIES",
-    "DEFAULT_FILES",
-    "ProjectStructureReport",
-    "validate_project_structure",
-    "ensure_project_structure",
-]
+from .policy import DEFAULT_DIRECTORIES, DEFAULT_FILE_CONTENT, DEFAULT_FILES
+from .report import ProjectStructureReport
 
-# プロジェクトルート配下に必須となるディレクトリとファイル
-DEFAULT_DIRECTORIES: List[str] = [
-    "assets",
-    "assets/source",
-    "assets/published",
-    "renders",
-    "reviews",
-    "config",
-]
-DEFAULT_FILES: List[str] = [
-    "config/project_settings.json",
-    "config/node_graph.json",
-]
-DEFAULT_FILE_CONTENT = {
-    "config/project_settings.json": "{}\n",
-    "config/node_graph.json": "{\n  \"nodes\": [],\n  \"connections\": []\n}\n",
-}
-
-
-@dataclass
-class ProjectStructureReport:
-    """構成チェックの結果。"""
-
-    missing_directories: List[str]
-    missing_files: List[str]
-
-    @property
-    def is_valid(self) -> bool:
-        return not self.missing_directories and not self.missing_files
-
-    def summary(self) -> str:
-        messages: List[str] = []
-        if self.missing_directories:
-            messages.append(
-                "未作成のディレクトリ: " + ", ".join(sorted(self.missing_directories))
-            )
-        if self.missing_files:
-            messages.append("未作成のファイル: " + ", ".join(sorted(self.missing_files)))
-        return "\n".join(messages) if messages else "既定構成を満たしています。"
+__all__ = ["ensure_structure", "validate_structure"]
 
 
 def _normalise(root: Path, entries: Iterable[str]) -> List[Path]:
@@ -61,13 +17,12 @@ def _normalise(root: Path, entries: Iterable[str]) -> List[Path]:
         if not entry:
             continue
         entry_path = Path(entry)
-        full_path = root.joinpath(entry_path)
-        paths.append(full_path)
+        paths.append(root.joinpath(entry_path))
     return paths
 
 
-def validate_project_structure(root: Path) -> ProjectStructureReport:
-    """既定の構成と比較して不足している要素を報告する。"""
+def validate_structure(root: Path) -> ProjectStructureReport:
+    """既定の構成と比較して不足要素を抽出する。"""
 
     missing_dirs: List[str] = []
     missing_files: List[str] = []
@@ -83,7 +38,7 @@ def validate_project_structure(root: Path) -> ProjectStructureReport:
     return ProjectStructureReport(missing_directories=missing_dirs, missing_files=missing_files)
 
 
-def ensure_project_structure(root: Path) -> ProjectStructureReport:
+def ensure_structure(root: Path) -> ProjectStructureReport:
     """不足している要素を生成しつつレポートを返す。"""
 
     root.mkdir(parents=True, exist_ok=True)

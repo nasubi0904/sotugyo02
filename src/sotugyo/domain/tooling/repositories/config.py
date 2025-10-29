@@ -6,8 +6,8 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-from ...infrastructure.paths.storage import get_machine_config_dir
-from .models import RegisteredTool, ToolEnvironmentDefinition
+from ....infrastructure.paths.storage import get_machine_config_dir
+from ..models import RegisteredTool, ToolEnvironmentDefinition
 
 DEFAULT_DATA = {"version": 1, "tools": [], "environments": []}
 

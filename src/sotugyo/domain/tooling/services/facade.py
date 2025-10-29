@@ -6,15 +6,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .environment_service import ToolEnvironmentRegistryService
-from .models import (
+from ..models import (
     RegisteredTool,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
-from .repository import ToolConfigRepository
-from .template_gateway import TemplateGateway
-from .tool_registry_service import ToolRegistryService
+from ..repositories.config import ToolConfigRepository
+from ..templates.gateway import TemplateGateway
+from .environment import ToolEnvironmentRegistryService
+from .registry import ToolRegistryService
 
 
 @dataclass(slots=True)

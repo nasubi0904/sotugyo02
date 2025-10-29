@@ -2,13 +2,25 @@
 
 from __future__ import annotations
 
-from .environment_service import ToolEnvironmentRegistryService
-from .service import ToolEnvironmentService
-from .template_gateway import TemplateGateway
-from .tool_registry_service import ToolRegistryService
+from .models import (
+    RegisteredTool,
+    TemplateInstallationCandidate,
+    ToolEnvironmentDefinition,
+)
+from .repositories import ToolConfigRepository
+from .services import (
+    ToolEnvironmentRegistryService,
+    ToolEnvironmentService,
+    ToolRegistryService,
+)
+from .templates import TemplateGateway
 
 __all__ = [
+    "RegisteredTool",
     "TemplateGateway",
+    "TemplateInstallationCandidate",
+    "ToolConfigRepository",
+    "ToolEnvironmentDefinition",
     "ToolEnvironmentRegistryService",
     "ToolEnvironmentService",
     "ToolRegistryService",

@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
-from .registry import ProjectRecord, ProjectRegistry
+from .models import ProjectRecord
+from .store import ProjectRegistry
 
 
 @dataclass(slots=True)

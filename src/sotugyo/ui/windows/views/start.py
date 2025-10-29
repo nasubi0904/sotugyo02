@@ -26,12 +26,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ...domain.projects.registry import ProjectRecord
-from ...domain.projects.structure import ProjectStructureReport
-from ..dialogs.user_settings_dialog import UserSettingsDialog
-from ..style import START_WINDOW_STYLE, apply_base_style
-from .node_editor_window import NodeEditorWindow
-from .start_controller import StartWindowController
+from ....domain.projects import ProjectRecord, ProjectStructureReport
+from ...dialogs.user_settings_dialog import UserSettingsDialog
+from ...style import START_WINDOW_STYLE, apply_base_style
+from ..controllers.start import StartWindowController
+from .node_editor import NodeEditorWindow
 
 
 class PasswordPromptDialog(QDialog):

@@ -53,7 +53,7 @@ if "PySide6" not in sys.modules:
     sys.modules["PySide6"] = stub_module
     sys.modules["PySide6.QtCore"] = qtcore_module
 
-from sotugyo.domain.tooling import templates
+from sotugyo.domain.tooling.templates import catalog
 
 if original_pyside6 is None:
     sys.modules.pop("PySide6", None)
@@ -67,7 +67,7 @@ else:
 
 
 def _force_windows(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(templates.sys, "platform", "win32", raising=False)
+    monkeypatch.setattr(catalog.sys, "platform", "win32", raising=False)
 
 
 def test_discover_3ds_max_from_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -81,7 +81,7 @@ def test_discover_3ds_max_from_environment(monkeypatch: pytest.MonkeyPatch, tmp_
     monkeypatch.setitem(os.environ, "AUTODESK_3DSMAX_DIR", str(install_root))
     monkeypatch.delenv("PROGRAMFILES", raising=False)
 
-    candidates = templates.discover_installations("autodesk.3ds_max")
+    candidates = catalog.discover_installations("autodesk.3ds_max")
 
     assert len(candidates) == 1
     candidate = candidates[0]
@@ -101,7 +101,7 @@ def test_discover_photoshop_from_environment(monkeypatch: pytest.MonkeyPatch, tm
     monkeypatch.setitem(os.environ, "ADOBE_PHOTOSHOP_DIR", str(install_root))
     monkeypatch.delenv("PROGRAMFILES", raising=False)
 
-    candidates = templates.discover_installations("adobe.photoshop")
+    candidates = catalog.discover_installations("adobe.photoshop")
 
     assert len(candidates) == 1
     candidate = candidates[0]
@@ -115,6 +115,6 @@ def test_discover_blender_returns_empty_when_missing(monkeypatch: pytest.MonkeyP
     monkeypatch.delenv("BLENDER_DIR", raising=False)
     monkeypatch.setitem(os.environ, "PROGRAMFILES", str(tmp_path / "ProgramFiles"))
 
-    candidates = templates.discover_installations("dcc.blender")
+    candidates = catalog.discover_installations("dcc.blender")
 
     assert candidates == []

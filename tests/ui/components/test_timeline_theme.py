@@ -1,9 +1,9 @@
 from types import SimpleNamespace
 
-import pytest
-
-PySide6 = pytest.importorskip("PySide6")
-from PySide6.QtGui import QColor
+try:  # pragma: no cover - 実環境では本物の QColor を使用
+    from PySide6.QtGui import QColor  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - テスト環境では簡易実装を利用
+    from sotugyo.ui.components.timeline.graph import QColor
 
 from sotugyo.ui.components.timeline.graph import (
     GridTileLayer,

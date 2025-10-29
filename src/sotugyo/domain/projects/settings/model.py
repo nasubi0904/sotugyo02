@@ -1,16 +1,15 @@
-"""プロジェクト単位の設定ファイルを扱うユーティリティ。"""
+"""プロジェクト設定モデル。"""
 
 from __future__ import annotations
 
 import base64
-import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 PROJECT_SETTINGS_FILENAME = "project_settings.json"
 
-__all__ = ["ProjectSettings", "load_project_settings", "save_project_settings"]
+__all__ = ["ProjectSettings", "PROJECT_SETTINGS_FILENAME"]
 
 
 def _encode_password(password: str | None) -> str | None:
@@ -29,7 +28,7 @@ def _decode_password(payload: str | None) -> str | None:
         return None
 
 
-@dataclass
+@dataclass(slots=True)
 class ProjectSettings:
     """プロジェクトごとの設定情報。"""
 
@@ -44,7 +43,7 @@ class ProjectSettings:
     def to_record(self) -> "ProjectRecord":
         """レジストリへ登録可能なレコードへ変換する。"""
 
-        from .registry import ProjectRecord
+        from ..registry import ProjectRecord
 
         return ProjectRecord(name=self.project_name, root=self.project_root)
 
@@ -94,36 +93,12 @@ class ProjectSettings:
             last_user_id=last_user_id,
             last_user_password=last_user_password,
         )
+    @classmethod
+    def default(cls, root: Path) -> "ProjectSettings":
+        """ルートディレクトリから既定値を生成する。"""
 
-
-def _default_settings(root: Path) -> ProjectSettings:
-    return ProjectSettings(
-        project_name=root.name or "新規プロジェクト",
-        description="",
-        project_root=root,
-    )
-
-
-def load_project_settings(root: Path) -> ProjectSettings:
-    """プロジェクト設定を読み込む。"""
-
-    settings_path = root / PROJECT_SETTINGS_FILENAME
-    if not settings_path.exists():
-        return _default_settings(root)
-    try:
-        with settings_path.open("r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return _default_settings(root)
-    if not isinstance(payload, dict):
-        return _default_settings(root)
-    return ProjectSettings.from_payload(root, payload)
-
-
-def save_project_settings(settings: ProjectSettings) -> None:
-    """プロジェクト設定を保存する。"""
-
-    settings_path = settings.settings_path
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    with settings_path.open("w", encoding="utf-8") as handle:
-        json.dump(settings.to_payload(), handle, ensure_ascii=False, indent=2)
+        return cls(
+            project_name=root.name or "新規プロジェクト",
+            description="",
+            project_root=root,
+        )

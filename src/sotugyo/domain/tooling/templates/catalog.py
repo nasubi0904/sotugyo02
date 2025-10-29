@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
-from .models import TemplateInstallationCandidate
+from ..models import TemplateInstallationCandidate
 
 TEMPLATE_METADATA: Dict[str, Dict[str, str]] = {
     "autodesk.maya": {

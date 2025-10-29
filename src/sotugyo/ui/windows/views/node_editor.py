@@ -36,33 +36,32 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ..components.content_browser import NodeCatalogEntry
-from ..components.nodes import (
+from ...components.content_browser import NodeCatalogEntry
+from ...components.nodes import (
     MemoNode,
     ReviewNode,
     TaskNode,
     ToolEnvironmentNode,
 )
-from ...domain.projects import ProjectContext, ProjectService
-from ...domain.projects.settings import ProjectSettings
-from ...domain.users.settings import UserAccount, UserSettingsManager
-from ...domain.tooling.coordinator import (
+from ....domain.projects import ProjectContext, ProjectService, ProjectSettings
+from ....domain.users.settings import UserAccount, UserSettingsManager
+from ....domain.tooling import RegisteredTool, ToolEnvironmentDefinition
+from ....domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
     ToolEnvironmentSnapshot,
 )
-from ...domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
-from ..dialogs import (
+from ...dialogs import (
     ProjectSettingsDialog,
     ToolEnvironmentManagerDialog,
     ToolRegistryDialog,
     UserSettingsDialog,
 )
-from ..style import apply_base_style
-from .alignment_toolbar import TimelineAlignmentToolBar
-from .content_browser_dock import NodeContentBrowserDock
-from .inspector_panel import NodeInspectorDock
-from .striped_background import apply_striped_background
+from ...style import apply_base_style
+from ..backgrounds.striped import apply_striped_background
+from ..docks.content_browser import NodeContentBrowserDock
+from ..docks.inspector import NodeInspectorDock
+from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
