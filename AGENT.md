@@ -41,6 +41,7 @@
       - `infrastructure/`
         - `__init__.py`
         - `paths/`（`about.md`、`storage.py`）
+        - `settings/`（`about.md`、`__init__.py`、`stores.py`）
       - `ui/`
         - `__init__.py`
         - `components/`
