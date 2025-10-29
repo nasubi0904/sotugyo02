@@ -7,6 +7,8 @@ from typing import ClassVar, Optional
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from sotugyo.qt_compat import ensure_qt_module_alias
+
 QPointF = QtCore.QPointF
 Qt = QtCore.Qt
 QRectF = QtCore.QRectF
@@ -20,6 +22,8 @@ QUndoCommand = QtGui.QUndoCommand
 QGraphicsItem = QtWidgets.QGraphicsItem
 QSizePolicy = QtWidgets.QSizePolicy
 QTextEdit = QtWidgets.QTextEdit
+
+ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget

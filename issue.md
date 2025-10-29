@@ -67,6 +67,12 @@
 - **原因**: スナップ機能廃止に伴いモジュールが削除されていたにもかかわらず、`NodeEditorWindow` が不要なインポートを保持していた。
 - **対応**: 不要な `NodeSnapController` のインポートを削除し、欠落モジュールへの依存を解消した。
 
+#### 2025-XX-XX NodeGraphQt が要求する `Qt` モジュールが存在しない
+- **現象**: `NodeGraphQt` の import 時に `from Qt import QtCore` が解決できず、`ModuleNotFoundError: No module named 'Qt'` が発生する。
+- **原因**: プロジェクトが QtPy ベースへ移行した際に、NodeGraphQt が前提とする `Qt.py` 互換モジュールを提供していなかった。
+- **対応**: QtPy から `Qt` 名前空間を生成する `sotugyo.qt_compat.ensure_qt_module_alias()` を追加し、NodeGraphQt import 前に呼び出す
+  運用に改めて互換性を確保した。
+
 ### ツール環境関連
 
 #### 2025-XX-XX ツール環境ノードが実行ファイルパスに依存する

@@ -15,6 +15,8 @@
 - **依存関係**: PySide6 などのサードパーティライブラリを `site-packages` ディレクトリに配置し、`_pth` から参照する。
 - **Qt ラッパーの採用**: アプリケーションコードの Qt 参照は `QtPy` を経由させ、`from qtpy import QtCore, QtGui, QtWidgets`
   の形式で統一する。これにより将来的に PySide 以外のバインディングへ切り替える際の影響を最小限に抑える。
+- **NodeGraphQt 互換レイヤー**: NodeGraphQt が `Qt.py` を要求するため、`sotugyo.qt_compat.ensure_qt_module_alias()` で QtPy から
+  構成した `Qt` 名前空間をエクスポートし、NodeGraphQt import 前に初期化する。
 - **アプリケーションコード**: 内製スクリプトは `zipapp` でまとめた `app.pyz` として提供する。
 - **ランチャー**: `pythonw.exe` を用いて zipapp を実行し、ユーザーはショートカットやバッチをダブルクリックするだけで起動できるようにする。
 

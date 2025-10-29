@@ -13,6 +13,8 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
 
+from sotugyo.qt_compat import ensure_qt_module_alias
+
 QPoint = QtCore.QPoint
 Qt = QtCore.Qt
 Signal = QtCore.Signal
@@ -31,6 +33,8 @@ QMessageBox = QtWidgets.QMessageBox
 QSizePolicy = QtWidgets.QSizePolicy
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
+
+ensure_qt_module_alias()
 from NodeGraphQt import NodeGraph, Port
 
 
