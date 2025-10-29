@@ -4,22 +4,22 @@ from __future__ import annotations
 
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QDialog,
-    QDialogButtonBox,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QInputDialog,
-    QLineEdit,
-    QListWidget,
-    QListWidgetItem,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
-)
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+QDialog = QtWidgets.QDialog
+QDialogButtonBox = QtWidgets.QDialogButtonBox
+QFormLayout = QtWidgets.QFormLayout
+QFrame = QtWidgets.QFrame
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QInputDialog = QtWidgets.QInputDialog
+QLineEdit = QtWidgets.QLineEdit
+QListWidget = QtWidgets.QListWidget
+QListWidgetItem = QtWidgets.QListWidgetItem
+QMessageBox = QtWidgets.QMessageBox
+QPushButton = QtWidgets.QPushButton
+QVBoxLayout = QtWidgets.QVBoxLayout
 
 from ...domain.users.settings import UserAccount, UserSettingsManager
 from ..style import apply_base_style

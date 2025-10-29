@@ -1,9 +1,11 @@
 from types import SimpleNamespace
 
-try:  # pragma: no cover - 実環境では本物の QColor を使用
-    from PySide6.QtGui import QColor  # type: ignore
-except ModuleNotFoundError:  # pragma: no cover - テスト環境では簡易実装を利用
+try:  # pragma: no cover - 実環境では QtPy 経由の QColor を使用
+    from qtpy import QtGui  # type: ignore
+except Exception:  # pragma: no cover - テスト環境では簡易実装を利用
     from sotugyo.ui.components.timeline.graph import QColor
+else:  # pragma: no cover - QtPy が使用可能な環境
+    QColor = QtGui.QColor
 
 from sotugyo.ui.components.timeline.graph import (
     GridTileLayer,

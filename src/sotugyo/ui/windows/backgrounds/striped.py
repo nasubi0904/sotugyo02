@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from typing import Iterable, Sequence, Type
 
-from PySide6.QtCore import QSize
-from PySide6.QtGui import QBrush, QColor, QPainter, QPen, QPixmap
+from qtpy import QtCore, QtGui
 
+from sotugyo.qt_compat import ensure_qt_module_alias
+
+QSize = QtCore.QSize
+QBrush = QtGui.QBrush
+QColor = QtGui.QColor
+QPainter = QtGui.QPainter
+QPen = QtGui.QPen
+QPixmap = QtGui.QPixmap
+
+ensure_qt_module_alias()
 from NodeGraphQt import NodeGraph
 from NodeGraphQt.constants import ViewerEnum
 from NodeGraphQt.nodes.base_node import BaseNode

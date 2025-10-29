@@ -67,6 +67,17 @@
 - **原因**: スナップ機能廃止に伴いモジュールが削除されていたにもかかわらず、`NodeEditorWindow` が不要なインポートを保持していた。
 - **対応**: 不要な `NodeSnapController` のインポートを削除し、欠落モジュールへの依存を解消した。
 
+#### 2025-XX-XX NodeGraphQt が要求する `Qt` モジュールが存在しない
+- **現象**: `NodeGraphQt` の import 時に `from Qt import QtCore` が解決できず、`ModuleNotFoundError: No module named 'Qt'` が発生する。
+- **原因**: プロジェクトが QtPy ベースへ移行した際に、NodeGraphQt が前提とする `Qt.py` 互換モジュールを提供していなかった。
+- **対応**: QtPy から `Qt` 名前空間を生成する `sotugyo.qt_compat.ensure_qt_module_alias()` を追加し、NodeGraphQt import 前に呼び出す
+  運用に改めて互換性を確保した。
+
+#### 2025-XX-XX NodeGraphQt 初期化時に `QtWidgets.QUndoStack` が欠落する
+- **現象**: スタート画面からノードエディタを開くと `QtWidgets.QUndoStack` が存在しないとの `AttributeError` が発生し、`NodeGraph` の初期化に失敗する。
+- **原因**: QtPy では Qt6 バインディングにおいて `QUndoStack` や `QActionGroup` などが `QtGui` へ移動しており、`QtWidgets` モジュールに再エクスポートされていなかった。
+- **対応**: `sotugyo.qt_compat.ensure_qt_module_alias()` 実行時に `QtGui` 由来のアクション／アンドゥ系クラスを `QtWidgets` へフォールバック登録し、NodeGraphQt が期待する API を提供するよう修正した。
+
 ### ツール環境関連
 
 #### 2025-XX-XX ツール環境ノードが実行ファイルパスに依存する

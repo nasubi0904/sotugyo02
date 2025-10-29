@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import ClassVar
 
+from sotugyo.qt_compat import ensure_qt_module_alias
+
+ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 
 

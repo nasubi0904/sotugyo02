@@ -4,8 +4,13 @@ from __future__ import annotations
 
 from typing import Iterable, Optional
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QDockWidget, QVBoxLayout, QWidget
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+Signal = QtCore.Signal
+QDockWidget = QtWidgets.QDockWidget
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 from ...components.content_browser import NodeCatalogEntry, NodeContentBrowser
 

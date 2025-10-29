@@ -4,21 +4,22 @@ from __future__ import annotations
 
 from typing import Optional, Tuple
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import (
-    QDockWidget,
-    QFrame,
-    QFormLayout,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QPushButton,
-    QSpinBox,
-    QTabWidget,
-    QTextEdit,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+Signal = QtCore.Signal
+QDockWidget = QtWidgets.QDockWidget
+QFrame = QtWidgets.QFrame
+QFormLayout = QtWidgets.QFormLayout
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QLineEdit = QtWidgets.QLineEdit
+QPushButton = QtWidgets.QPushButton
+QSpinBox = QtWidgets.QSpinBox
+QTabWidget = QtWidgets.QTabWidget
+QTextEdit = QtWidgets.QTextEdit
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 
 class NodeInspectorPanel(QWidget):

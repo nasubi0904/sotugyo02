@@ -16,6 +16,8 @@
 4. Python コードは可能な限り PEP 8 に準拠し、実用的な範囲で型ヒントを付与する。
 5. パッケージングスクリプトを変更する際は、スタジオ固有のディレクトリをハードコードせず、環境変数や設定ファイルで経路を調整できるようにする。
 6. プレーンテキストのドキュメントや説明は絶対にすべて日本語で記述する。
+7. Qt 関連のモジュールは QtPy 経由（例: `from qtpy import QtCore, QtGui, QtWidgets`）でインポートし、PySide6 へ直接依存しないコードスタイルを維持する。
+8. NodeGraphQt が要求する `Qt` 名前空間は `sotugyo.qt_compat.ensure_qt_module_alias()` を介して提供されるため、NodeGraphQt を import する前に同関数を呼び出すこと。
 
 ## 運用・検証手順
 1. 作業開始前に `python scripts/setup_env.py` を実行し、定義済みの依存関係をインストールして最新状態へ更新すること。

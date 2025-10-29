@@ -5,17 +5,25 @@ from __future__ import annotations
 import logging
 from typing import ClassVar, Optional
 
-from PySide6.QtCore import QPointF, Qt, QRectF
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QPainter,
-    QPainterPath,
-    QTextCursor,
-    QTextOption,
-    QUndoCommand,
-)
-from PySide6.QtWidgets import QGraphicsItem, QSizePolicy, QTextEdit
+from qtpy import QtCore, QtGui, QtWidgets
+
+from sotugyo.qt_compat import ensure_qt_module_alias
+
+QPointF = QtCore.QPointF
+Qt = QtCore.Qt
+QRectF = QtCore.QRectF
+QColor = QtGui.QColor
+QFont = QtGui.QFont
+QPainter = QtGui.QPainter
+QPainterPath = QtGui.QPainterPath
+QTextCursor = QtGui.QTextCursor
+QTextOption = QtGui.QTextOption
+QUndoCommand = QtGui.QUndoCommand
+QGraphicsItem = QtWidgets.QGraphicsItem
+QSizePolicy = QtWidgets.QSizePolicy
+QTextEdit = QtWidgets.QTextEdit
+
+ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
 from NodeGraphQt.widgets.node_widgets import NodeBaseWidget

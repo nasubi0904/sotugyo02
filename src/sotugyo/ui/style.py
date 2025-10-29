@@ -5,8 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Mapping
 
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QWidget
+from qtpy import QtGui, QtWidgets
+
+QColor = QtGui.QColor
+QWidget = QtWidgets.QWidget
 
 
 @dataclass(frozen=True)

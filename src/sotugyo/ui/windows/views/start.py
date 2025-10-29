@@ -5,26 +5,26 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Dict, Optional
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (
-    QComboBox,
-    QDialog,
-    QDialogButtonBox,
-    QFileDialog,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QInputDialog,
-    QPushButton,
-    QSizePolicy,
-    QSpacerItem,
-    QVBoxLayout,
-    QWidget,
-)
+from qtpy import QtCore, QtWidgets
+
+Qt = QtCore.Qt
+QComboBox = QtWidgets.QComboBox
+QDialog = QtWidgets.QDialog
+QDialogButtonBox = QtWidgets.QDialogButtonBox
+QFileDialog = QtWidgets.QFileDialog
+QFormLayout = QtWidgets.QFormLayout
+QFrame = QtWidgets.QFrame
+QHBoxLayout = QtWidgets.QHBoxLayout
+QLabel = QtWidgets.QLabel
+QLineEdit = QtWidgets.QLineEdit
+QMainWindow = QtWidgets.QMainWindow
+QMessageBox = QtWidgets.QMessageBox
+QInputDialog = QtWidgets.QInputDialog
+QPushButton = QtWidgets.QPushButton
+QSizePolicy = QtWidgets.QSizePolicy
+QSpacerItem = QtWidgets.QSpacerItem
+QVBoxLayout = QtWidgets.QVBoxLayout
+QWidget = QtWidgets.QWidget
 
 from sotugyo.domain.projects import ProjectRecord, ProjectStructureReport
 from ...dialogs.user_settings_dialog import UserSettingsDialog

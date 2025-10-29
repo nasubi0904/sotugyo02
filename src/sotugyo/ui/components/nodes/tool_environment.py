@@ -6,6 +6,9 @@ import json
 import logging
 from typing import Any, ClassVar, Dict, Mapping
 
+from sotugyo.qt_compat import ensure_qt_module_alias
+
+ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 from NodeGraphQt.constants import NodePropWidgetEnum
 
