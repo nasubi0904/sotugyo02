@@ -1278,6 +1278,39 @@ class NodeEditorWindow(QMainWindow):
             state = json.load(handle)
         return self._apply_project_state(state)
 
+    def _refresh_tool_environment_node_from_definition(
+        self,
+        node: ToolEnvironmentNode,
+        definition: ToolEnvironmentDefinition,
+        payload: Mapping[str, object] | None,
+    ) -> None:
+        """ローカル定義から環境ノードの表示を更新する。"""
+
+        tool = self._registered_tools.get(definition.tool_id)
+        base_payload = definition.build_payload(tool)
+        source_payload = dict(payload) if isinstance(payload, Mapping) else {}
+
+        if tool is not None:
+            tool_name = tool.display_name
+        else:
+            existing_tool_name = source_payload.get("tool_name")
+            tool_name = str(existing_tool_name).strip() if existing_tool_name else ""
+
+        if not tool_name:
+            tool_name = definition.tool_id
+
+        if tool is None and tool_name:
+            base_payload.setdefault("tool_name", tool_name)
+
+        node.configure_environment(
+            environment_id=definition.environment_id,
+            environment_name=definition.name,
+            tool_id=definition.tool_id,
+            tool_name=tool_name,
+            version_label=definition.version_label,
+            environment_payload=base_payload,
+        )
+
     def _check_rez_environments_in_project(self) -> None:
         nodes = self._collect_all_nodes()
         if not nodes:
@@ -1287,6 +1320,27 @@ class NodeEditorWindow(QMainWindow):
             if not isinstance(node, ToolEnvironmentNode):
                 continue
             payload = node.get_environment_payload()
+            if not isinstance(payload, Mapping):
+                payload = {}
+            environment_id_raw = payload.get("environment_id")
+            environment_id = ""
+            if isinstance(environment_id_raw, str):
+                environment_id = environment_id_raw.strip()
+            elif environment_id_raw is not None:
+                environment_id = str(environment_id_raw).strip()
+            if environment_id and environment_id in self._tool_environments:
+                definition = self._tool_environments[environment_id]
+                try:
+                    self._refresh_tool_environment_node_from_definition(
+                        node, definition, payload
+                    )
+                except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                    LOGGER.debug(
+                        "ローカル環境定義からノード更新に失敗しました: %s",
+                        self._safe_node_name(node),
+                        exc_info=True,
+                    )
+                continue
             packages_raw = payload.get("rez_packages")
             if not isinstance(packages_raw, (list, tuple)):
                 continue
@@ -1320,7 +1374,16 @@ class NodeEditorWindow(QMainWindow):
                 issues.append((self._safe_node_name(node), packages, str(exc)))
                 continue
             if not result.success:
-                issues.append((self._safe_node_name(node), packages, result.message()))
+                message = result.message()
+                if (
+                    getattr(result, "return_code", None) == 127
+                    or "rez コマンドが見つかりません" in message
+                ):
+                    message = (
+                        "ローカル環境定義が見つからない場合に Rez による再現が必要です。"
+                        "rez コマンドを利用可能にしてください。"
+                    )
+                issues.append((self._safe_node_name(node), packages, message))
         if not issues:
             return
         lines = ["次のツール環境を Rez で再現できませんでした。"]
