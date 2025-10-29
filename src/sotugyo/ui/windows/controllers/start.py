@@ -6,14 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from ....domain.projects import (
+from sotugyo.domain.projects import (
     ProjectContext,
     ProjectRecord,
     ProjectService,
     ProjectSettings,
     ProjectStructureReport,
 )
-from ....domain.users.settings import UserAccount, UserSettingsManager
+from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 
 
 @dataclass(slots=True)

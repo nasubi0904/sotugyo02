@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ....domain.projects import ProjectRecord, ProjectStructureReport
+from sotugyo.domain.projects import ProjectRecord, ProjectStructureReport
 from ...dialogs.user_settings_dialog import UserSettingsDialog
 from ...style import START_WINDOW_STYLE, apply_base_style
 from ..controllers.start import StartWindowController
