@@ -43,14 +43,14 @@ from ...components.nodes import (
     TaskNode,
     ToolEnvironmentNode,
 )
-from ....domain.projects import ProjectContext, ProjectService, ProjectSettings
-from ....domain.users.settings import UserAccount, UserSettingsManager
-from ....domain.tooling import RegisteredTool, ToolEnvironmentDefinition
-from ....domain.tooling.coordinator import (
+from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
+from sotugyo.domain.tooling import RegisteredTool, ToolEnvironmentDefinition
+from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
     ToolEnvironmentSnapshot,
 )
+from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
     ToolEnvironmentManagerDialog,

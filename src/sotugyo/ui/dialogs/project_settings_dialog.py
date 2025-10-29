@@ -22,7 +22,11 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from ....domain.projects import ProjectSettings, ProjectStructureReport, validate_structure
+from sotugyo.domain.projects import (
+    ProjectSettings,
+    ProjectStructureReport,
+    validate_structure,
+)
 from ..style import apply_base_style
 
 
