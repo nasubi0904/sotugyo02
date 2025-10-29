@@ -18,6 +18,7 @@
 6. プレーンテキストのドキュメントや説明は絶対にすべて日本語で記述する。
 7. Qt 関連のモジュールは QtPy 経由（例: `from qtpy import QtCore, QtGui, QtWidgets`）でインポートし、PySide6 へ直接依存しないコードスタイルを維持する。
 8. NodeGraphQt が要求する `Qt` 名前空間は `sotugyo.qt_compat.ensure_qt_module_alias()` を介して提供されるため、NodeGraphQt を import する前に同関数を呼び出すこと。
+9. コード編集やリファクタリングを行う際は、必ずリポジトリ直下の `module.md` を参照し、必要に応じて追加調査を実施した上で安全にタスクを進めること。調査結果は `module.md` に追記して更新履歴を残す。
 
 ## 運用・検証手順
 1. 作業開始前に `python scripts/setup_env.py` を実行し、定義済みの依存関係をインストールして最新状態へ更新すること。
