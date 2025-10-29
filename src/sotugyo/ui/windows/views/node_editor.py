@@ -47,7 +47,14 @@ from ...components.nodes import (
     TaskNode,
     ToolEnvironmentNode,
 )
-from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
+from sotugyo.domain.projects import (
+    ProjectContext,
+    ProjectRezPackage,
+    ProjectRezPackageRepository,
+    ProjectService,
+    ProjectSettings,
+    SOFTWARE_DIRECTORY_ENV_KEY,
+)
 from sotugyo.domain.tooling import RegisteredTool, ToolEnvironmentDefinition
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
@@ -114,6 +121,8 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
+        self._project_rez_repository: Optional[ProjectRezPackageRepository] = None
+        self._project_rez_packages: Dict[str, ProjectRezPackage] = {}
         self._coordinator = NodeEditorCoordinator(
             project_service=project_service,
             user_manager=user_manager,
@@ -301,6 +310,8 @@ class NodeEditorWindow(QMainWindow):
             if not self._confirm_project_change(updated.project_name):
                 return
             self._current_project_root = updated.project_root
+            self._project_rez_repository = ProjectRezPackageRepository(updated.project_root)
+            self._project_rez_packages = {}
             self._load_project_graph()
         self._refresh_window_title()
         if name_changed or root_changed:
@@ -382,6 +393,8 @@ class NodeEditorWindow(QMainWindow):
         self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
         self._refresh_content_browser_entries()
+        if self._current_project_root is not None:
+            self._synchronize_project_rez_packages(persist=True)
 
     def _refresh_content_browser_entries(self) -> None:
         if self._content_dock is None:
@@ -439,6 +452,8 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings = settings
         self._current_user = user
         self._current_user_password = password
+        self._project_rez_repository = ProjectRezPackageRepository(project_root)
+        self._project_rez_packages = {}
 
         self._project_service.register_project(context.record, set_last=True)
         self._project_service.ensure_structure(project_root)
@@ -1175,6 +1190,8 @@ class NodeEditorWindow(QMainWindow):
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
             return
+        self._project_rez_repository = None
+        self._project_rez_packages = {}
         self.hide()
         self.return_to_start_requested.emit()
 
@@ -1229,6 +1246,7 @@ class NodeEditorWindow(QMainWindow):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
             json.dump(state, handle, ensure_ascii=True, indent=2)
+        self._synchronize_project_rez_packages(persist=True)
 
     def _graph_file_path(self) -> Optional[Path]:
         if self._current_project_root is None:
@@ -1249,6 +1267,7 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._project_rez_packages = {}
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             try:
@@ -1262,15 +1281,18 @@ class NodeEditorWindow(QMainWindow):
         graph_path = self._graph_file_path()
         self._reset_graph()
         if graph_path is None or not graph_path.exists():
+            self._synchronize_project_rez_packages(persist=True)
             self._set_modified(False)
             return
         try:
             metadata_changed = self._load_project_from_path(graph_path)
+            packages = self._synchronize_project_rez_packages(persist=True)
             self._set_modified(bool(metadata_changed))
-            self._check_rez_environments_in_project()
+            self._check_rez_environments_in_project(packages)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
             self._show_error_dialog(f"プロジェクトの読み込みに失敗しました: {exc}")
             self._reset_graph()
+            self._synchronize_project_rez_packages(persist=True)
             self._set_modified(False)
 
     def _load_project_from_path(self, path: Path) -> bool:
@@ -1278,32 +1300,190 @@ class NodeEditorWindow(QMainWindow):
             state = json.load(handle)
         return self._apply_project_state(state)
 
-    def _check_rez_environments_in_project(self) -> None:
+    def _synchronize_project_rez_packages(
+        self,
+        *,
+        persist: bool,
+    ) -> List[ProjectRezPackage]:
+        if self._project_rez_repository is None or self._current_project_root is None:
+            self._project_rez_packages = {}
+            return []
+
+        repository = self._project_rez_repository
+        existing_entries = {
+            entry.environment_id: entry for entry in repository.load_all()
+        }
+        nodes = self._collect_all_nodes()
+        entry_map: Dict[str, ProjectRezPackage] = {}
+        changed = False
+
+        for node in nodes:
+            if not isinstance(node, ToolEnvironmentNode):
+                continue
+            payload = node.get_environment_payload()
+            environment_id = str(payload.get("environment_id") or "").strip()
+            if not environment_id:
+                try:
+                    environment_id = str(node.get_property("environment_id") or "").strip()
+                except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                    environment_id = ""
+            if not environment_id:
+                continue
+            tool_id = str(payload.get("tool_id") or "").strip()
+            if not tool_id:
+                try:
+                    tool_id = str(node.get_property("tool_id") or "").strip()
+                except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                    tool_id = ""
+            if not tool_id:
+                continue
+
+            packages_raw = payload.get("rez_packages")
+            if isinstance(packages_raw, (list, tuple)):
+                packages = tuple(
+                    str(pkg).strip() for pkg in packages_raw if str(pkg).strip()
+                )
+            else:
+                packages = ()
+
+            variants_raw = payload.get("rez_variants")
+            if isinstance(variants_raw, (list, tuple)):
+                variants = tuple(
+                    str(var).strip() for var in variants_raw if str(var).strip()
+                )
+            else:
+                variants = ()
+
+            env_raw = payload.get("rez_environment")
+            env_map: Dict[str, str] = {}
+            if isinstance(env_raw, dict):
+                for key, value in env_raw.items():
+                    if isinstance(key, str):
+                        normalized_key = key.strip()
+                        if not normalized_key:
+                            continue
+                        env_map[normalized_key] = str(value)
+
+            entry = entry_map.get(environment_id)
+            if entry is None:
+                entry = existing_entries.get(environment_id)
+                if entry is None:
+                    entry = ProjectRezPackage(
+                        environment_id=environment_id,
+                        tool_id=tool_id,
+                        rez_packages=packages,
+                        rez_variants=variants,
+                        rez_environment=dict(env_map),
+                    )
+                    changed = True
+                else:
+                    if entry.update_from_node(
+                        tool_id=tool_id,
+                        packages=packages,
+                        variants=variants,
+                        environment=env_map,
+                    ):
+                        changed = True
+            else:
+                if entry.update_from_node(
+                    tool_id=tool_id,
+                    packages=packages,
+                    variants=variants,
+                    environment=env_map,
+                ):
+                    changed = True
+
+            software_dir = self._resolve_tool_directory(tool_id)
+            if software_dir is not None:
+                if entry.update_environment_variable(
+                    SOFTWARE_DIRECTORY_ENV_KEY, software_dir
+                ):
+                    changed = True
+
+            entry_map[environment_id] = entry
+
+        if persist:
+            existing_ids = set(existing_entries.keys())
+            current_ids = set(entry_map.keys())
+            if existing_ids != current_ids:
+                changed = True
+            if changed:
+                repository.save_all(entry_map.values())
+
+        self._project_rez_packages = entry_map
+        return list(entry_map.values())
+
+    def _check_rez_environments_in_project(
+        self,
+        entries: Optional[Iterable[ProjectRezPackage]] = None,
+    ) -> None:
         nodes = self._collect_all_nodes()
         if not nodes:
             return
+
+        entry_map: Dict[str, ProjectRezPackage] = {}
+        if entries is not None:
+            for entry in entries:
+                entry_map[entry.environment_id] = entry
+        elif self._project_rez_packages:
+            entry_map = dict(self._project_rez_packages)
+
         issues: List[tuple[str, List[str], str]] = []
         for node in nodes:
             if not isinstance(node, ToolEnvironmentNode):
                 continue
             payload = node.get_environment_payload()
-            packages_raw = payload.get("rez_packages")
-            if not isinstance(packages_raw, (list, tuple)):
+            environment_id = str(payload.get("environment_id") or "").strip()
+            if not environment_id:
+                try:
+                    environment_id = str(node.get_property("environment_id") or "").strip()
+                except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                    environment_id = ""
+            if not environment_id:
                 continue
-            packages = [str(pkg) for pkg in packages_raw if str(pkg).strip()]
+
+            entry = entry_map.get(environment_id)
+            if entry is not None:
+                packages = [pkg for pkg in entry.rez_packages if pkg]
+                variants = [variant for variant in entry.rez_variants if variant]
+                environment = dict(entry.rez_environment)
+            else:
+                packages_raw = payload.get("rez_packages")
+                if isinstance(packages_raw, (list, tuple)):
+                    packages = [str(pkg).strip() for pkg in packages_raw if str(pkg).strip()]
+                else:
+                    packages = []
+                if not packages:
+                    continue
+                variants_raw = payload.get("rez_variants")
+                if isinstance(variants_raw, (list, tuple)):
+                    variants = [
+                        str(variant).strip()
+                        for variant in variants_raw
+                        if str(variant).strip()
+                    ]
+                else:
+                    variants = []
+                env_raw = payload.get("rez_environment")
+                environment = {}
+                if isinstance(env_raw, dict):
+                    environment = {}
+                    for key, value in env_raw.items():
+                        if not isinstance(key, str):
+                            continue
+                        normalized_key = key.strip()
+                        if not normalized_key:
+                            continue
+                        environment[normalized_key] = str(value)
+                software_dir = self._resolve_tool_directory(
+                    str(payload.get("tool_id") or "")
+                )
+                if software_dir:
+                    environment[SOFTWARE_DIRECTORY_ENV_KEY] = software_dir
+
             if not packages:
                 continue
-            variants_raw = payload.get("rez_variants")
-            if isinstance(variants_raw, (list, tuple)):
-                variants = [str(var) for var in variants_raw if str(var).strip()]
-            else:
-                variants = []
-            env_map = payload.get("rez_environment")
-            environment = (
-                {str(key): str(value) for key, value in env_map.items()}
-                if isinstance(env_map, dict)
-                else {}
-            )
+
             try:
                 result = self._coordinator.tool_service.validate_rez_environment(
                     packages=packages,
@@ -1328,6 +1508,33 @@ class NodeEditorWindow(QMainWindow):
             pkg_text = ", ".join(packages)
             lines.append(f"・{name} ({pkg_text}) : {message}")
         self._show_warning_dialog("\n".join(lines))
+
+    def _resolve_tool_directory(self, tool_id: str) -> Optional[str]:
+        if not tool_id:
+            return None
+        tool = self._registered_tools.get(tool_id)
+        if tool is None:
+            return None
+        path = tool.executable_path
+        try:
+            resolved = path.expanduser()
+        except RuntimeError:
+            resolved = path
+        try:
+            resolved = resolved.resolve()
+        except (OSError, RuntimeError):
+            pass
+        directory = resolved
+        try:
+            if resolved.exists() and resolved.is_dir():
+                directory = resolved
+            else:
+                directory = resolved.parent
+        except OSError:
+            directory = resolved.parent
+        if not str(directory):
+            return None
+        return str(directory)
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()

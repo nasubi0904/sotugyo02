@@ -20,12 +20,20 @@ from .structure import (
     ensure_structure,
     validate_structure,
 )
+from .envs import (
+    SOFTWARE_DIRECTORY_ENV_KEY,
+    ProjectRezPackage,
+    ProjectRezPackageRepository,
+)
 
 __all__ = [
     "DEFAULT_DIRECTORIES",
     "DEFAULT_FILES",
     "DEFAULT_FILE_CONTENT",
+    "SOFTWARE_DIRECTORY_ENV_KEY",
     "PROJECT_SETTINGS_FILENAME",
+    "ProjectRezPackage",
+    "ProjectRezPackageRepository",
     "ProjectContext",
     "ProjectRecord",
     "ProjectRegistry",
