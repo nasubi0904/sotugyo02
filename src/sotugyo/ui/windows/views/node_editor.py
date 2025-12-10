@@ -82,7 +82,9 @@ class NodeSnapSettings:
     enabled: bool = True
     grid_size: float = 32.0
 
-    def snap_value(self, value: float) -> float:
+    def snap_horizontal(self, value: float) -> float:
+        """x 座標のみを縦グリッドへ揃える。"""
+
         if self.grid_size <= 0:
             return value
         return round(value / self.grid_size) * self.grid_size
@@ -1082,21 +1084,23 @@ class NodeEditorWindow(QMainWindow):
         return updated
 
     def _snap_point(self, pos_x: float, pos_y: float) -> Tuple[float, float]:
+        """縦グリッドへ矛盾なく揃えた座標を返す。"""
+
         return (
-            self._snap_settings.snap_value(pos_x),
-            self._snap_settings.snap_value(pos_y),
+            self._snap_settings.snap_horizontal(pos_x),
+            pos_y,
         )
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
-        label = f"ノードをスナップ ({spacing}px)"
+        label = f"ノードを縦グリッドにスナップ ({spacing}px)"
         if self._snap_action is not None:
             self._snap_action.setText(label)
             self._snap_action.setChecked(self._snap_settings.enabled)
-            self._snap_action.setToolTip("ノード移動時に指定間隔へ揃えます。")
+            self._snap_action.setToolTip("ノードの x 座標を指定間隔の縦グリッドへ揃えます。")
         if self._snap_spacing_action is not None:
             self._snap_spacing_action.setToolTip(
-                "スナップのグリッド間隔を変更します。"
+                "縦グリッドの間隔を変更します。"
             )
 
     def _toggle_snap_enabled(self, enabled: bool) -> None:
