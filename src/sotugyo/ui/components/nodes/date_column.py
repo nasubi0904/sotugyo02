@@ -33,7 +33,7 @@ class DateColumnNode(BaseNode):
         self.create_property(
             "index",
             0,
-            widget_type=NodePropWidgetEnum.SPIN_BOX.value,
+            widget_type=NodePropWidgetEnum.QSPIN_BOX.value,
             widget_tooltip="タイムライン上の列インデックス (0 ベース)",
         )
         self.create_property(
@@ -45,7 +45,7 @@ class DateColumnNode(BaseNode):
         self.create_property(
             "width_units",
             self.DEFAULT_WIDTH_UNITS,
-            widget_type=NodePropWidgetEnum.DOUBLE_SPIN_BOX.value,
+            widget_type=NodePropWidgetEnum.QDOUBLESPIN_BOX.value,
             range=(0.1, 10.0),
             widget_tooltip="列の論理幅 (単位数)",
             step=0.1,
