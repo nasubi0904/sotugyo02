@@ -48,7 +48,6 @@ class DateColumnNode(BaseNode):
             widget_type=NodePropWidgetEnum.QDOUBLESPIN_BOX.value,
             range=(0.1, 10.0),
             widget_tooltip="列の論理幅 (単位数)",
-            step=0.1,
         )
         self.create_property(
             "attached_nodes",

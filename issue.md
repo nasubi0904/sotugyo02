@@ -54,3 +54,8 @@
 - **現象**: NodeEditorWindow 起動時に日付列ノード生成で `NodePropWidgetEnum` の `SPIN_BOX` が存在せず `AttributeError` が発生する。
 - **原因**: NodeGraphQt 0.6.43 の定義では整数スピンボックスが `QSPIN_BOX`、浮動小数スピンボックスが `QDOUBLESPIN_BOX` として提供されており、新規ノードのプロパティ作成で存在しない列挙子を参照していた。
 - **対応**: 日付列ノードのプロパティ定義を実際の列挙子名に合わせ、`index` に `QSPIN_BOX`、`width_units` に `QDOUBLESPIN_BOX` を使用するよう修正した。
+
+#### 日付列ノード初期化時の `step` 指定エラー
+- **現象**: NodeEditorWindow 起動時、日付列ノードのプロパティ作成で `create_property()` が `step` キーワードを受け付けず `TypeError` が発生する。
+- **原因**: NodeGraphQt 0.6.43 の `create_property` ではスピンボックスのステップ幅を `step` 引数で指定する機能がサポートされていないにもかかわらず、`width_units` プロパティ作成時に `step=0.1` を与えていた。
+- **対応**: `step` 指定を削除し、デフォルトステップ幅で初期化するよう修正した。
