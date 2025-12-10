@@ -64,3 +64,8 @@
 - **現象**: NodeEditorWindow 起動時に日付列ノード生成が失敗し、`AttributeError: 'DateColumnNode' object has no attribute 'set_border_color'` が発生する。
 - **原因**: NodeGraphQt 0.6.43 の `BaseNode` には `set_border_color` メソッドが存在せず、非対応 API を呼び出していた。
 - **対応**: 境界線色の設定を `GraphicsNodeBase` 側の `border_color` プロパティ直接設定に統一し、`set_border_color` 呼び出しを削除した。
+
+#### 日付列ノード初期化時のテキスト色設定エラー
+- **現象**: NodeEditorWindow 起動時に日付列ノード生成で `AttributeError: 'DateColumnNode' object has no attribute 'set_text_color'` が発生する。
+- **原因**: NodeGraphQt 0.6.43 の `BaseNode` にはテキスト色を設定するメソッドが用意されておらず、存在しない API を呼び出していた。
+- **対応**: ノードモデルの `text_color` プロパティを直接設定する形へ変更し、初期化時の例外を解消した。

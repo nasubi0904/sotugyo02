@@ -94,7 +94,7 @@ class DateColumnNode(BaseNode):
 
     def _apply_base_style(self) -> None:
         self.set_color(232, 240, 250)
-        self.set_text_color(70, 80, 90)
+        self.set_property("text_color", (70, 80, 90, 255), push_undo=False)
         if hasattr(self.view, "setZValue"):
             self.view.setZValue(-5000)
         gradient = QtGui.QLinearGradient(0, 0, 0, 1)
