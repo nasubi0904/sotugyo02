@@ -69,3 +69,8 @@
 - **現象**: NodeEditorWindow 起動時に日付列ノード生成で `AttributeError: 'DateColumnNode' object has no attribute 'set_text_color'` が発生する。
 - **原因**: NodeGraphQt 0.6.43 の `BaseNode` にはテキスト色を設定するメソッドが用意されておらず、存在しない API を呼び出していた。
 - **対応**: ノードモデルの `text_color` プロパティを直接設定する形へ変更し、初期化時の例外を解消した。
+
+#### 日付列ノード初期化時のレイアウト方向設定エラー
+- **現象**: NodeEditorWindow 起動時に日付列ノード生成で `RuntimeError: Node graph layout direction not valid!` が発生する。
+- **原因**: ノードビューの `layout_direction` に `Qt.LeftToRight` を与えており、NodeGraphQt が期待する列挙値 (`LayoutDirectionEnum.HORIZONTAL/VERTICAL`) と異なるため描画処理で例外が投げられていた。
+- **対応**: デモ段階ではレイアウト方向を変更しないため設定自体を撤去し、既定のレイアウト値をそのまま利用して初期化エラーを防止した。

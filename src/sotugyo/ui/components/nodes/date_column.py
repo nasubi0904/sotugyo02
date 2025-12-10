@@ -103,7 +103,6 @@ class DateColumnNode(BaseNode):
         self.view.gradient = gradient
         self.view.border_color = QtGui.QColor(190, 200, 210, 80)
         self.view.roundness = 2
-        self.view.layout_direction = QtCore.Qt.LeftToRight
 
 
 def decode_attached_nodes(raw_value: object) -> list[str]:
