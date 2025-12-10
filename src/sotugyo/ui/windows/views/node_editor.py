@@ -31,7 +31,6 @@ QMainWindow = QtWidgets.QMainWindow
 QMenu = QtWidgets.QMenu
 QMenuBar = QtWidgets.QMenuBar
 QMessageBox = QtWidgets.QMessageBox
-QInputDialog = QtWidgets.QInputDialog
 QSizePolicy = QtWidgets.QSizePolicy
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
@@ -111,6 +110,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph = NodeGraph()
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
+        self._sync_snap_spacing_with_background()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -129,7 +129,6 @@ class NodeEditorWindow(QMainWindow):
         self._node_metadata: Dict[object, Dict[str, str]] = {}
         self._snap_settings = NodeSnapSettings()
         self._snap_action: QAction | None = None
-        self._snap_spacing_action: QAction | None = None
         self._is_modified = False
         self._current_project_root: Optional[Path] = None
         self._current_project_settings: Optional[ProjectSettings] = None
@@ -294,11 +293,6 @@ class NodeEditorWindow(QMainWindow):
         self._snap_action.setChecked(self._snap_settings.enabled)
         self._snap_action.triggered.connect(self._toggle_snap_enabled)
         view_menu.addAction(self._snap_action)
-
-        spacing_action = QAction("スナップ間隔を設定...", self)
-        spacing_action.triggered.connect(self._configure_snap_spacing)
-        view_menu.addAction(spacing_action)
-        self._snap_spacing_action = spacing_action
 
         self._refresh_snap_actions()
 
@@ -1091,36 +1085,26 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _sync_snap_spacing_with_background(self) -> None:
+        """背景縞パターンと同じピクセル幅で縦スナップを行う。"""
+
+        if self._background_pattern is None:
+            return
+        spacing = max(1, int(self._background_pattern.total_width()))
+        self._snap_settings.grid_size = float(spacing)
+
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
-        label = f"ノードを縦グリッドにスナップ ({spacing}px)"
+        label = f"ノードを縦グリッドにスナップ (背景幅 {spacing}px)"
         if self._snap_action is not None:
             self._snap_action.setText(label)
             self._snap_action.setChecked(self._snap_settings.enabled)
-            self._snap_action.setToolTip("ノードの x 座標を指定間隔の縦グリッドへ揃えます。")
-        if self._snap_spacing_action is not None:
-            self._snap_spacing_action.setToolTip(
-                "縦グリッドの間隔を変更します。"
+            self._snap_action.setToolTip(
+                "背景縞パターンの幅に合わせてノードの x 座標を縦グリッドへ揃えます。"
             )
 
     def _toggle_snap_enabled(self, enabled: bool) -> None:
         self._snap_settings.enabled = bool(enabled)
-        self._refresh_snap_actions()
-
-    def _configure_snap_spacing(self) -> None:
-        current = max(1, int(self._snap_settings.grid_size))
-        spacing, accepted = QInputDialog.getInt(
-            self,
-            "スナップ間隔の設定",
-            "グリッド間隔 (ピクセル)",
-            value=current,
-            min=8,
-            max=512,
-            step=4,
-        )
-        if not accepted:
-            return
-        self._snap_settings.grid_size = float(spacing)
         self._refresh_snap_actions()
 
     def _collect_connected_nodes(self, node, *, direction: str) -> List:
