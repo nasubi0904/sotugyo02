@@ -94,7 +94,6 @@ class DateColumnNode(BaseNode):
 
     def _apply_base_style(self) -> None:
         self.set_color(232, 240, 250)
-        self.set_border_color(190, 200, 210)
         self.set_text_color(70, 80, 90)
         if hasattr(self.view, "setZValue"):
             self.view.setZValue(-5000)

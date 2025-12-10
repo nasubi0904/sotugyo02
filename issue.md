@@ -59,3 +59,8 @@
 - **現象**: NodeEditorWindow 起動時、日付列ノードのプロパティ作成で `create_property()` が `step` キーワードを受け付けず `TypeError` が発生する。
 - **原因**: NodeGraphQt 0.6.43 の `create_property` ではスピンボックスのステップ幅を `step` 引数で指定する機能がサポートされていないにもかかわらず、`width_units` プロパティ作成時に `step=0.1` を与えていた。
 - **対応**: `step` 指定を削除し、デフォルトステップ幅で初期化するよう修正した。
+
+#### 日付列ノード初期化時の境界色設定エラー
+- **現象**: NodeEditorWindow 起動時に日付列ノード生成が失敗し、`AttributeError: 'DateColumnNode' object has no attribute 'set_border_color'` が発生する。
+- **原因**: NodeGraphQt 0.6.43 の `BaseNode` には `set_border_color` メソッドが存在せず、非対応 API を呼び出していた。
+- **対応**: 境界線色の設定を `GraphicsNodeBase` 側の `border_color` プロパティ直接設定に統一し、`set_border_color` 呼び出しを削除した。
