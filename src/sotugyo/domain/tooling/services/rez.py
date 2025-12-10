@@ -41,8 +41,15 @@ class RezResolveResult:
 class RezEnvironmentResolver:
     """Rez CLI を呼び出してパッケージ解決を検証する。"""
 
-    def __init__(self, executable: str = "rez") -> None:
+    def __init__(
+        self,
+        executable: str = "rez",
+        *,
+        path_env_var: str = "SOTUGYO_REZ_PATH",
+    ) -> None:
         self._executable = executable
+        self._path_env_var = path_env_var
+        self._apply_rez_path_hint()
 
     def resolve(
         self,
@@ -115,6 +122,24 @@ class RezEnvironmentResolver:
             return ()
         joined = ",".join(normalized)
         return ("--variants", joined)
+
+    def _apply_rez_path_hint(self) -> None:
+        """環境変数から Rez バイナリの検索パスを先頭に追加する。"""
+
+        rez_path_raw = os.environ.get(self._path_env_var, "")
+        if not rez_path_raw:
+            return
+
+        hint_paths = [entry for entry in rez_path_raw.split(os.pathsep) if entry]
+        if not hint_paths:
+            return
+
+        current_path = os.environ.get("PATH") or os.environ.get("Path") or ""
+        existing_entries = [entry for entry in current_path.split(os.pathsep) if entry]
+        merged_entries = list(dict.fromkeys([*hint_paths, *existing_entries]))
+        normalized = os.pathsep.join(merged_entries)
+        os.environ["PATH"] = normalized
+        os.environ["Path"] = normalized
 
 
 __all__ = ["RezEnvironmentResolver", "RezResolveResult"]
