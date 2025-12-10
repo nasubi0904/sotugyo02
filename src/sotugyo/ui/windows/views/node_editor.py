@@ -42,11 +42,13 @@ LOGGER = logging.getLogger(__name__)
 
 from ...components.content_browser import NodeCatalogEntry
 from ...components.nodes import (
+    DateColumnNode,
     MemoNode,
     ReviewNode,
     TaskNode,
     ToolEnvironmentNode,
 )
+from ...components.nodes.date_column import decode_attached_nodes, encode_attached_nodes
 from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
 from sotugyo.domain.tooling import RegisteredTool, ToolEnvironmentDefinition
 from sotugyo.domain.tooling.coordinator import (
@@ -98,6 +100,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
         self._graph.register_node(ToolEnvironmentNode)
+        self._graph.register_node(DateColumnNode)
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -106,10 +109,14 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._date_column_count = 0
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
         self._is_modified = False
+        self._pixels_per_unit: float = 200.0
+        self._timeline_origin_x: float = 0.0
+        self._snap_threshold: float = 60.0
         self._current_project_root: Optional[Path] = None
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
@@ -139,6 +146,7 @@ class NodeEditorWindow(QMainWindow):
         self._setup_graph_signals()
         self._setup_context_menu()
         self._setup_shortcuts()
+        self._create_initial_date_columns()
         self._refresh_tool_configuration()
         self._initialize_content_browser()
         self._update_selected_node_info()
@@ -261,6 +269,11 @@ class NodeEditorWindow(QMainWindow):
         environment_action.triggered.connect(self._open_tool_environment_manager)
         tools_menu.addAction(environment_action)
 
+        timeline_menu = menubar.addMenu("Timeline")
+        add_date_column_action = QAction("日付列を追加", self)
+        add_date_column_action.triggered.connect(self._create_next_date_column)
+        timeline_menu.addAction(add_date_column_action)
+
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
             view_menu.addAction(self._inspector_dock.toggleViewAction())
@@ -345,6 +358,10 @@ class NodeEditorWindow(QMainWindow):
         for signal in connection_signals:
             if signal is not None and hasattr(signal, "connect"):
                 signal.connect(self._on_port_connection_changed)
+
+        viewer = getattr(self._graph, "_viewer", None)
+        if viewer is not None and hasattr(viewer, "moved_nodes"):
+            viewer.moved_nodes.connect(self._on_nodes_moved)
 
     def _setup_context_menu(self) -> None:
         if hasattr(self._graph_widget, "setContextMenuPolicy"):
@@ -674,6 +691,83 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_node_catalog()
         return node
 
+    def _create_date_column_node(
+        self,
+        index: int,
+        label: str,
+        *,
+        set_modified: bool = True,
+    ):
+        node = self._graph.create_node(
+            DateColumnNode.node_type_identifier(),
+            name=label,
+        )
+        node.set_property("index", index, push_undo=False)
+        node.set_property("date_label", label, push_undo=False)
+        node.set_name(label)
+        height = self._date_column_scene_height()
+        pos_x = self._timeline_origin_x + index * self._pixels_per_unit
+        pos_y = -height / 2.0
+        try:
+            node.set_pos(pos_x, pos_y)
+        except Exception:
+            LOGGER.debug("日付列ノードの配置に失敗しました", exc_info=True)
+        if isinstance(node, DateColumnNode):
+            node.update_geometry(
+                pixels_per_unit=self._pixels_per_unit,
+                scene_height=height,
+            )
+        if node not in self._known_nodes:
+            self._known_nodes.append(node)
+        self._ensure_node_metadata(node)
+        self._date_column_count = max(self._date_column_count, index + 1)
+        if set_modified:
+            self._set_modified(True)
+        return node
+
+    def _create_initial_date_columns(self) -> None:
+        if self._collect_date_nodes():
+            return
+        labels = ["Day 1", "Day 2", "Day 3"]
+        for index, label in enumerate(labels):
+            self._create_date_column_node(index, label, set_modified=False)
+
+    def _create_next_date_column(self) -> None:
+        next_index = self._next_date_column_index()
+        label = f"Day {next_index + 1}"
+        self._create_date_column_node(next_index, label)
+
+    def _next_date_column_index(self) -> int:
+        indices = [
+            int(self._read_numeric_property(node, "index") or 0)
+            for node in self._collect_date_nodes()
+        ]
+        if not indices:
+            return 0
+        return max(indices) + 1
+
+    def _date_column_scene_height(self) -> float:
+        viewport = getattr(self._graph_widget, "viewport", None)
+        viewport_height = 0.0
+        if callable(viewport):
+            try:
+                viewport_height = float(self._graph_widget.viewport().height())
+            except Exception:
+                viewport_height = 0.0
+        try:
+            scene_rect = self._graph_widget.sceneRect()
+            viewport_height = max(viewport_height, float(scene_rect.height()))
+        except Exception:
+            pass
+        return max(viewport_height * 1.5, 1200.0)
+
+    def _collect_date_nodes(self) -> list:
+        return [
+            node
+            for node in self._collect_all_nodes()
+            if isinstance(node, DateColumnNode)
+        ]
+
     def _delete_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
         if not nodes:
@@ -888,6 +982,117 @@ class NodeEditorWindow(QMainWindow):
         if not nodes:
             nodes = list(self._known_nodes)
         return nodes
+
+    def _on_nodes_moved(self, node_data) -> None:
+        nodes = []
+        get_node = getattr(self._graph, "get_node_by_id", None)
+        for view_item in node_data.keys():
+            node = None
+            if callable(get_node) and hasattr(view_item, "id"):
+                try:
+                    node = get_node(view_item.id)
+                except Exception:
+                    LOGGER.debug("ノード移動の解決に失敗しました", exc_info=True)
+            if node is not None:
+                nodes.append(node)
+        changed = False
+        for node in nodes:
+            if self._snap_node_to_date_column(node):
+                changed = True
+        if changed:
+            self._set_modified(True)
+            self._update_selected_node_info()
+
+    def _snap_node_to_date_column(self, node) -> bool:
+        if isinstance(node, DateColumnNode):
+            return False
+        date_nodes = self._collect_date_nodes()
+        if not date_nodes:
+            return False
+        node_x, node_y = self._safe_node_pos(node)
+        closest = None
+        closest_x = 0.0
+        min_distance = None
+        for date_node in date_nodes:
+            if not isinstance(date_node, DateColumnNode):
+                continue
+            snap_x = date_node.snap_position_x(self._pixels_per_unit)
+            distance = abs(node_x - snap_x)
+            if min_distance is None or distance < min_distance:
+                min_distance = distance
+                closest = date_node
+                closest_x = snap_x
+        if closest is None or min_distance is None:
+            return False
+        if min_distance > self._snap_threshold:
+            return self._detach_node_from_dates(node, date_nodes)
+        moved = self._move_node_if_needed(node, closest_x, node_y)
+        attached = self._assign_node_to_date(node, closest, date_nodes)
+        return moved or attached
+
+    def _assign_node_to_date(self, node, date_node: DateColumnNode, date_nodes: list) -> bool:
+        node_id = getattr(node, "id", None)
+        if node_id is None:
+            return False
+        changed = False
+        for existing in date_nodes:
+            attached = decode_attached_nodes(self._safe_date_attached_nodes(existing))
+            if node_id in attached and existing is not date_node:
+                attached = [entry for entry in attached if entry != node_id]
+                existing.set_property(
+                    "attached_nodes", encode_attached_nodes(attached), push_undo=False
+                )
+                changed = True
+        target_nodes = decode_attached_nodes(self._safe_date_attached_nodes(date_node))
+        if node_id not in target_nodes:
+            target_nodes.append(str(node_id))
+            date_node.set_property(
+                "attached_nodes",
+                encode_attached_nodes(target_nodes),
+                push_undo=False,
+            )
+            changed = True
+        try:
+            date_id = date_node.get_property("date_id")
+            node.set_property("date_id", date_id, push_undo=False)
+            node.set_property(
+                "date_index",
+                int(self._read_numeric_property(date_node, "index") or 0),
+                push_undo=False,
+            )
+        except Exception:
+            LOGGER.debug("日付スナップのメタデータ更新に失敗しました", exc_info=True)
+        return changed
+
+    def _detach_node_from_dates(self, node, date_nodes: list) -> bool:
+        node_id = getattr(node, "id", None)
+        if node_id is None:
+            return False
+        changed = False
+        for date_node in date_nodes:
+            attached = decode_attached_nodes(self._safe_date_attached_nodes(date_node))
+            if node_id in attached:
+                attached = [entry for entry in attached if entry != node_id]
+                date_node.set_property(
+                    "attached_nodes", encode_attached_nodes(attached), push_undo=False
+                )
+                changed = True
+        try:
+            previous_date = node.get_property("date_id")
+            if previous_date:
+                node.set_property("date_id", "", push_undo=False)
+                changed = True
+            node.set_property("date_index", None, push_undo=False)
+        except Exception:
+            LOGGER.debug("日付スナップ解除のメタデータ更新に失敗しました", exc_info=True)
+        return changed
+
+    def _safe_date_attached_nodes(self, date_node: DateColumnNode):
+        try:
+            return date_node.get_property("attached_nodes")
+        except Exception:
+            LOGGER.debug("attached_nodes の取得に失敗しました", exc_info=True)
+            return "[]"
 
     def _on_selection_changed(self, *_args, **_kwargs) -> None:
         self._update_selected_node_info()
@@ -1249,6 +1454,7 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._date_column_count = 0
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
             try:
@@ -1262,6 +1468,7 @@ class NodeEditorWindow(QMainWindow):
         graph_path = self._graph_file_path()
         self._reset_graph()
         if graph_path is None or not graph_path.exists():
+            self._create_initial_date_columns()
             self._set_modified(False)
             return
         try:
