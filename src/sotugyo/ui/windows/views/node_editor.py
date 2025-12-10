@@ -6,6 +6,7 @@ import json
 import logging
 import shutil
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
@@ -72,6 +73,21 @@ from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
 
+
+@dataclass
+class NodeSnapSettings:
+    """ノードスナップの設定値。"""
+
+    enabled: bool = True
+    grid_size: float = 32.0
+
+    def snap_horizontal(self, value: float) -> float:
+        """x 座標のみを縦グリッドへ揃える。"""
+
+        if self.grid_size <= 0:
+            return value
+        return round(value / self.grid_size) * self.grid_size
+
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
 
@@ -92,12 +108,17 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
+        self._snap_settings = NodeSnapSettings()
+        self._snap_action: QAction | None = None
+
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
+        self._sync_snap_spacing_with_background()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
         self._graph.register_node(ToolEnvironmentNode)
+        self._nodes_moved_handler = getattr(self._graph, "_on_nodes_moved", None)
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -268,6 +289,13 @@ class NodeEditorWindow(QMainWindow):
             view_menu.addAction(self._content_dock.toggleViewAction())
         if self._alignment_toolbar is not None:
             view_menu.addAction(self._alignment_toolbar.toggleViewAction())
+        self._snap_action = QAction(self)
+        self._snap_action.setCheckable(True)
+        self._snap_action.setChecked(self._snap_settings.enabled)
+        self._snap_action.triggered.connect(self._toggle_snap_enabled)
+        view_menu.addAction(self._snap_action)
+
+        self._refresh_snap_actions()
 
     def _open_project_settings(self) -> None:
         if self._current_project_root is None:
@@ -345,6 +373,19 @@ class NodeEditorWindow(QMainWindow):
         for signal in connection_signals:
             if signal is not None and hasattr(signal, "connect"):
                 signal.connect(self._on_port_connection_changed)
+
+        viewer_getter = getattr(self._graph, "viewer", None)
+        viewer = viewer_getter() if callable(viewer_getter) else None
+        if viewer is None:
+            viewer = getattr(self._graph, "_viewer", None)
+        moved_signal = getattr(viewer, "moved_nodes", None)
+        if moved_signal is not None and hasattr(moved_signal, "connect"):
+            if callable(self._nodes_moved_handler):
+                try:
+                    moved_signal.disconnect(self._nodes_moved_handler)
+                except (TypeError, RuntimeError):
+                    pass
+            moved_signal.connect(self._handle_nodes_moved)
 
     def _setup_context_menu(self) -> None:
         if hasattr(self._graph_widget, "setContextMenuPolicy"):
@@ -1009,6 +1050,63 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("整列するノードを選択してください。")
             return
         self._align_connected_nodes(self._current_node, direction="outputs")
+
+    def _handle_nodes_moved(self, node_data) -> None:
+        node_views = list(node_data.keys()) if isinstance(node_data, Mapping) else []
+        snapped = self._apply_snap_to_views(node_views)
+        if callable(self._nodes_moved_handler):
+            self._nodes_moved_handler(node_data)
+        if snapped:
+            self._set_modified(True)
+
+    def _apply_snap_to_views(self, node_views: Iterable) -> bool:
+        if not self._snap_settings.enabled:
+            return False
+        updated = False
+        for node_view in node_views:
+            node_id = getattr(node_view, "id", None)
+            if not node_id:
+                continue
+            node = self._graph.get_node_by_id(node_id)
+            if node is None:
+                continue
+            pos_x, pos_y = self._safe_node_pos(node)
+            snap_x, snap_y = self._snap_point(pos_x, pos_y)
+            if self._move_node_if_needed(node, snap_x, snap_y):
+                updated = True
+        if updated:
+            self._update_selected_node_info()
+        return updated
+
+    def _snap_point(self, pos_x: float, pos_y: float) -> Tuple[float, float]:
+        """縦グリッドへ矛盾なく揃えた座標を返す。"""
+
+        return (
+            self._snap_settings.snap_horizontal(pos_x),
+            pos_y,
+        )
+
+    def _sync_snap_spacing_with_background(self) -> None:
+        """背景縞パターンと同じピクセル幅で縦スナップを行う。"""
+
+        if self._background_pattern is None:
+            return
+        spacing = max(1, int(self._background_pattern.total_width()))
+        self._snap_settings.grid_size = float(spacing)
+
+    def _refresh_snap_actions(self) -> None:
+        spacing = max(1, int(self._snap_settings.grid_size))
+        label = f"ノードを縦グリッドにスナップ (背景幅 {spacing}px)"
+        if self._snap_action is not None:
+            self._snap_action.setText(label)
+            self._snap_action.setChecked(self._snap_settings.enabled)
+            self._snap_action.setToolTip(
+                "背景縞パターンの幅に合わせてノードの x 座標を縦グリッドへ揃えます。"
+            )
+
+    def _toggle_snap_enabled(self, enabled: bool) -> None:
+        self._snap_settings.enabled = bool(enabled)
+        self._refresh_snap_actions()
 
     def _collect_connected_nodes(self, node, *, direction: str) -> List:
         if node is None:
