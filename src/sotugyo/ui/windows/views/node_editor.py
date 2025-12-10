@@ -108,6 +108,9 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
+        self._snap_settings = NodeSnapSettings()
+        self._snap_action: QAction | None = None
+
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
         self._sync_snap_spacing_with_background()
@@ -127,8 +130,6 @@ class NodeEditorWindow(QMainWindow):
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
-        self._snap_settings = NodeSnapSettings()
-        self._snap_action: QAction | None = None
         self._is_modified = False
         self._current_project_root: Optional[Path] = None
         self._current_project_settings: Optional[ProjectSettings] = None
