@@ -296,12 +296,23 @@ class ToolRegistrationDialog(QDialog):
         template_layout.setContentsMargins(0, 0, 0, 0)
         template_layout.setSpacing(8)
 
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(8)
+
         instructions = QLabel(
             "テンプレートを選択し、検出されたインストールから登録します。",
             template_page,
         )
         instructions.setWordWrap(True)
-        template_layout.addWidget(instructions)
+        header_row.addWidget(instructions, 1)
+
+        refresh_button = QPushButton("テンプレート再検証", template_page)
+        refresh_button.setToolTip("テンプレート一覧とインストール候補を再検証します。")
+        refresh_button.clicked.connect(self._refresh_templates)
+        header_row.addWidget(refresh_button, 0, Qt.AlignTop)
+
+        template_layout.addLayout(header_row)
 
         self._template_selector = QListWidget(template_page)
         self._template_selector.itemSelectionChanged.connect(self._on_template_changed)
@@ -367,15 +378,58 @@ class ToolRegistrationDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        for template in self._service.list_templates():
-            item = QListWidgetItem(template.get("label", "テンプレート"))
-            item.setData(Qt.UserRole, template.get("template_id"))
-            if self._template_selector is not None:
-                self._template_selector.addItem(item)
+        self._refresh_templates()
 
     def _populate_templates(self) -> None:
         if self._template_selector is not None and self._template_selector.count() > 0:
             self._template_selector.setCurrentRow(0)
+
+    def _refresh_templates(self) -> None:
+        if self._template_selector is None:
+            return
+        errors: List[str] = []
+        try:
+            templates = self._service.list_templates()
+        except OSError as exc:
+            templates = []
+            errors.append(f"テンプレート一覧の取得に失敗しました: {exc}")
+
+        current_id = None
+        current_item = self._template_selector.currentItem()
+        if current_item is not None:
+            current_data = current_item.data(Qt.UserRole)
+            if isinstance(current_data, str):
+                current_id = current_data
+
+        self._template_selector.blockSignals(True)
+        self._template_selector.clear()
+        for template in templates:
+            item = QListWidgetItem(template.get("label", "テンプレート"))
+            item.setData(Qt.UserRole, template.get("template_id"))
+            self._template_selector.addItem(item)
+
+        if templates:
+            target_row = 0
+            if current_id:
+                for row in range(self._template_selector.count()):
+                    candidate = self._template_selector.item(row)
+                    if candidate.data(Qt.UserRole) == current_id:
+                        target_row = row
+                        break
+            self._template_selector.setCurrentRow(target_row)
+        else:
+            self._template_candidates = []
+            if self._candidate_list is not None:
+                self._candidate_list.clear()
+                empty = QListWidgetItem("テンプレートが定義されていません。")
+                empty.setFlags(Qt.NoItemFlags)
+                self._candidate_list.addItem(empty)
+        self._template_selector.blockSignals(False)
+
+        if errors:
+            self._show_error_report("リフレッシュに失敗", errors)
+        elif templates:
+            self._on_template_changed()
 
     def _on_template_changed(self) -> None:
         selected = self._template_selector.currentItem()
@@ -385,7 +439,7 @@ class ToolRegistrationDialog(QDialog):
         if not isinstance(template_id, str):
             return
         self._candidate_list.clear()
-        self._template_candidates = self._service.discover_template_installations(template_id)
+        self._template_candidates = self._load_candidates(template_id)
         if not self._template_candidates:
             empty = QListWidgetItem("該当するインストールが見つかりませんでした。")
             empty.setFlags(Qt.NoItemFlags)
@@ -407,6 +461,44 @@ class ToolRegistrationDialog(QDialog):
         if isinstance(candidate, TemplateInstallationCandidate):
             self._template_name.setText(candidate.display_name)
             self._template_version.setText(candidate.version or "")
+
+    def _load_candidates(self, template_id: str) -> List[TemplateInstallationCandidate]:
+        errors: List[str] = []
+        try:
+            discovered = self._service.discover_template_installations(template_id)
+        except OSError as exc:
+            discovered = []
+            errors.append(f"インストール探索中にエラーが発生しました: {exc}")
+
+        candidates: List[TemplateInstallationCandidate] = []
+        for candidate in discovered:
+            try:
+                exists = candidate.executable_path.exists()
+            except OSError as exc:
+                errors.append(
+                    f"{candidate.display_name}: パス確認に失敗しました ({candidate.executable_path}): {exc}"
+                )
+                continue
+            if not exists:
+                errors.append(
+                    f"{candidate.display_name}: 実行ファイルが見つかりません ({candidate.executable_path})"
+                )
+                continue
+            candidates.append(candidate)
+
+        if errors:
+            self._show_error_report("検証結果", errors)
+        return candidates
+
+    def _show_error_report(self, title: str, messages: List[str]) -> None:
+        if not messages:
+            return
+        formatted = "\n".join(f"・{message}" for message in messages)
+        QMessageBox.critical(
+            self,
+            title,
+            "次の問題が見つかりました:\n" + formatted,
+        )
 
     def _browse_executable(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
