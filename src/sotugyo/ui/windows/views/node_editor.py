@@ -1324,6 +1324,8 @@ class NodeEditorWindow(QMainWindow):
             pos = node.pos()
             if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                 return float(pos[0]), float(pos[1])
+            if isinstance(pos, (QtCore.QPointF, QtCore.QPoint)):
+                return float(pos.x()), float(pos.y())
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
             LOGGER.debug("ノード位置の取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
         return 0.0, 0.0
@@ -2011,6 +2013,8 @@ class NodeEditorWindow(QMainWindow):
                 pos = position()
                 if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                     return [float(pos[0]), float(pos[1])]
+                if isinstance(pos, (QtCore.QPointF, QtCore.QPoint)):
+                    return [float(pos.x()), float(pos.y())]
             except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
                 LOGGER.debug("ノード位置の取得に失敗しました: %r", node, exc_info=True)
         return [0.0, 0.0]
