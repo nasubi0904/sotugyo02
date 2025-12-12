@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
-from ....infrastructure.paths.storage import get_machine_config_dir
+from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RegisteredTool, ToolEnvironmentDefinition
 
 DEFAULT_DATA = {"version": 2, "tools": [], "environments": []}
@@ -18,7 +18,7 @@ class ToolConfigRepository:
     FILE_NAME = "tooling_registry.json"
 
     def __init__(self, storage_dir: Path | None = None) -> None:
-        base_dir = storage_dir or get_machine_config_dir()
+        base_dir = storage_dir or get_rez_package_dir()
         self._storage_dir = Path(base_dir)
         self._storage_dir.mkdir(parents=True, exist_ok=True)
         self._storage_path = self._storage_dir / self.FILE_NAME

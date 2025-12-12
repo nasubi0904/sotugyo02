@@ -2,12 +2,14 @@
 
 from .entities import (
     RegisteredTool,
+    RezPackageSpec,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
 
 __all__ = [
     "RegisteredTool",
+    "RezPackageSpec",
     "TemplateInstallationCandidate",
     "ToolEnvironmentDefinition",
 ]

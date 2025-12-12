@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .models import (
     RegisteredTool,
+    RezPackageSpec,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
@@ -17,6 +18,7 @@ from .templates import TemplateGateway
 
 __all__ = [
     "RegisteredTool",
+    "RezPackageSpec",
     "TemplateGateway",
     "TemplateInstallationCandidate",
     "ToolConfigRepository",

@@ -175,3 +175,12 @@ class TemplateInstallationCandidate:
             "executable_path": str(self.executable_path),
             "version": self.version,
         }
+
+
+@dataclass(slots=True, frozen=True)
+class RezPackageSpec:
+    """Rez パッケージの位置とバージョン情報を表す。"""
+
+    name: str
+    version: str | None
+    path: Path
