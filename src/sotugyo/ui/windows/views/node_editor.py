@@ -1293,6 +1293,34 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("ノード位置の取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
         return 0.0, 0.0
 
+    def _safe_node_property(self, node, name: str) -> Optional[float]:
+        getter = getattr(node, "get_property", None)
+        if callable(getter):
+            try:
+                value = getter(name)
+                return float(value)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug(
+                    "ノードプロパティの取得に失敗しました: node=%s, property=%s",
+                    self._safe_node_name(node),
+                    name,
+                    exc_info=True,
+                )
+
+        fallback_value = getattr(node, name, None)
+        try:
+            if fallback_value is not None:
+                return float(fallback_value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            LOGGER.debug(
+                "ノードプロパティの変換に失敗しました: node=%s, property=%s, value=%r",
+                self._safe_node_name(node),
+                name,
+                fallback_value,
+                exc_info=True,
+            )
+        return None
+
     def _safe_node_size(self, node) -> Tuple[float, float]:
         width = self._safe_node_property(node, "width")
         height = self._safe_node_property(node, "height")
