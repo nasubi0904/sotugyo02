@@ -76,6 +76,20 @@ def test_tool_environment_definition_serialization_roundtrip() -> None:
     assert restored.metadata.get("rez_validation", {}).get("success") is True
 
 
+def test_tool_config_repository_uses_rez_package_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    monkeypatch.setenv("APPDATA", "")
+    from src.sotugyo.domain.tooling.repositories import config as config_module
+
+    monkeypatch.setattr(config_module, "get_rez_package_dir", lambda: tmp_path)
+
+    repository = config_module.ToolConfigRepository()
+
+    assert repository._storage_dir == tmp_path
+    assert repository._storage_path.parent == tmp_path
+    assert repository._storage_path.name == config_module.ToolConfigRepository.FILE_NAME
+
+
 def test_environment_registry_saves_rez_metadata() -> None:
     with TemporaryDirectory() as tmp_dir:
         repository = ToolConfigRepository(storage_dir=Path(tmp_dir))

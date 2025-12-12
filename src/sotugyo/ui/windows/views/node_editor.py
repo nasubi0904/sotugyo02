@@ -58,7 +58,6 @@ from sotugyo.domain.tooling.coordinator import (
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
-    ToolEnvironmentManagerDialog,
     ToolRegistryDialog,
     UserSettingsDialog,
 )
@@ -72,6 +71,7 @@ from ..backgrounds.striped import (
 from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
+from sotugyo.infrastructure.paths.storage import get_rez_package_dir
 
 
 @dataclass
@@ -278,9 +278,6 @@ class NodeEditorWindow(QMainWindow):
         tool_registry_action = QAction("環境設定...", self)
         tool_registry_action.triggered.connect(self._open_tool_settings)
         tools_menu.addAction(tool_registry_action)
-        environment_action = QAction("ツール環境の編集...", self)
-        environment_action.triggered.connect(self._open_tool_environment_manager)
-        tools_menu.addAction(environment_action)
 
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
@@ -346,12 +343,6 @@ class NodeEditorWindow(QMainWindow):
 
     def _open_tool_settings(self) -> None:
         dialog = ToolRegistryDialog(self._coordinator.tool_service, self)
-        dialog.exec()
-        if dialog.refresh_requested():
-            self._refresh_tool_configuration()
-
-    def _open_tool_environment_manager(self) -> None:
-        dialog = ToolEnvironmentManagerDialog(self._coordinator.tool_service, self)
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
@@ -1380,7 +1371,9 @@ class NodeEditorWindow(QMainWindow):
         nodes = self._collect_all_nodes()
         if not nodes:
             return
-        issues: List[tuple[str, List[str], str]] = []
+        issues: List[tuple[str, List[str]]] = []
+        rez_root = get_rez_package_dir()
+        root_exists = rez_root.exists()
         for node in nodes:
             if not isinstance(node, ToolEnvironmentNode):
                 continue
@@ -1391,41 +1384,40 @@ class NodeEditorWindow(QMainWindow):
             packages = [str(pkg) for pkg in packages_raw if str(pkg).strip()]
             if not packages:
                 continue
-            variants_raw = payload.get("rez_variants")
-            if isinstance(variants_raw, (list, tuple)):
-                variants = [str(var) for var in variants_raw if str(var).strip()]
-            else:
-                variants = []
-            env_map = payload.get("rez_environment")
-            environment = (
-                {str(key): str(value) for key, value in env_map.items()}
-                if isinstance(env_map, dict)
-                else {}
-            )
-            try:
-                result = self._coordinator.tool_service.validate_rez_environment(
-                    packages=packages,
-                    variants=variants,
-                    environment=environment,
-                )
-            except Exception as exc:  # pragma: no cover - 外部ツール依存
-                LOGGER.error(
-                    "Rez 環境検証に失敗しました: node=%s, error=%s",
-                    self._safe_node_name(node),
-                    exc,
-                    exc_info=True,
-                )
-                issues.append((self._safe_node_name(node), packages, str(exc)))
-                continue
-            if not result.success:
-                issues.append((self._safe_node_name(node), packages, result.message()))
+            missing = packages if not root_exists else [
+                package
+                for package in packages
+                if not self._rez_package_exists(package, rez_root)
+            ]
+            if missing:
+                issues.append((self._safe_node_name(node), missing))
         if not issues:
             return
-        lines = ["次のツール環境を Rez で再現できませんでした。"]
-        for name, packages, message in issues:
+        lines = [
+            "次のツール環境で参照している Rez パッケージが KDMrez に見つかりません。",
+            f"参照先: {rez_root}",
+        ]
+        for name, packages in issues:
             pkg_text = ", ".join(packages)
-            lines.append(f"・{name} ({pkg_text}) : {message}")
+            lines.append(f"・{name}: {pkg_text}")
         self._show_warning_dialog("\n".join(lines))
+
+    @staticmethod
+    def _rez_package_exists(package: str, base_dir: Path) -> bool:
+        if not package:
+            return False
+        package_dir = base_dir / package
+        if not package_dir.exists():
+            return False
+        if (package_dir / "package.py").exists():
+            return True
+        try:
+            for child in package_dir.iterdir():
+                if child.is_dir() and (child / "package.py").exists():
+                    return True
+        except OSError:
+            LOGGER.debug("Rez パッケージ検索中にエラーが発生しました: %s", package_dir, exc_info=True)
+        return False
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
