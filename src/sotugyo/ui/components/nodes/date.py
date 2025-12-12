@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import ClassVar
+from typing import ClassVar, Iterable, Set
 
 from qtpy import QtCore
 
@@ -70,6 +70,7 @@ class DateNode(BackdropNode):
 
     __identifier__: ClassVar[str] = "sotugyo.timeline"
     NODE_NAME: ClassVar[str] = "日付ノード"
+    VERTICAL_OFFSET: ClassVar[float] = 24.0
 
     def __init__(self) -> None:
         super().__init__(DateNodeItem)
@@ -83,6 +84,7 @@ class DateNode(BackdropNode):
         self.set_property("height", 120, push_undo=False)
         self.set_color(200, 170, 110)
         self.view.setZValue(Z_VAL_BACKDROP - 1)
+        self._child_node_ids: Set[str] = set()
 
     @classmethod
     def node_type_identifier(cls) -> str:
@@ -91,6 +93,16 @@ class DateNode(BackdropNode):
     def set_snap_grid_size(self, grid_size: float) -> None:
         if hasattr(self.view, "set_snap_grid_size"):
             self.view.set_snap_grid_size(grid_size)
+
+    def child_node_ids(self) -> Set[str]:
+        return set(self._child_node_ids)
+
+    def update_child_nodes(self, node_ids: Iterable[str]) -> bool:
+        normalized = {node_id for node_id in node_ids if node_id}
+        if normalized == self._child_node_ids:
+            return False
+        self._child_node_ids = normalized
+        return True
 
     @staticmethod
     def _today_label() -> str:

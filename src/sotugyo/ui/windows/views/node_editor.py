@@ -159,6 +159,7 @@ class NodeEditorWindow(QMainWindow):
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
         self._alignment_toolbar: Optional[TimelineAlignmentToolBar] = None
+        self._date_node_positions: Dict[object, Tuple[float, float]] = {}
 
         self._init_ui()
         self._create_menus()
@@ -722,6 +723,7 @@ class NodeEditorWindow(QMainWindow):
         node.set_pos(pos_x, pos_y)
         if isinstance(node, DateNode):
             node.set_snap_grid_size(self._snap_settings.grid_size)
+            self._date_node_positions[node] = (pos_x, pos_y)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -1075,9 +1077,13 @@ class NodeEditorWindow(QMainWindow):
     def _handle_nodes_moved(self, node_data) -> None:
         node_views = list(node_data.keys()) if isinstance(node_data, Mapping) else []
         snapped = self._apply_snap_to_views(node_views)
+        moved_nodes = [self._graph.get_node_by_id(getattr(view, "id", "")) for view in node_views]
+        moved_nodes = [node for node in moved_nodes if node is not None]
+        resized = self._apply_date_node_containment(moved_nodes)
+        children_moved = self._move_children_for_moved_date_nodes(moved_nodes)
         if callable(self._nodes_moved_handler):
             self._nodes_moved_handler(node_data)
-        if snapped:
+        if snapped or resized or children_moved:
             self._set_modified(True)
 
     def _apply_snap_to_views(self, node_views: Iterable) -> bool:
@@ -1098,6 +1104,35 @@ class NodeEditorWindow(QMainWindow):
         if updated:
             self._update_selected_node_info()
         return updated
+
+    def _apply_date_node_containment(self, moved_nodes: Iterable) -> bool:
+        date_nodes = [node for node in self._graph.all_nodes() if isinstance(node, DateNode)]
+        if not date_nodes:
+            return False
+
+        for date_node in date_nodes:
+            if date_node not in self._date_node_positions:
+                self._date_node_positions[date_node] = self._safe_node_pos(date_node)
+
+        other_nodes = [node for node in self._graph.all_nodes() if not isinstance(node, DateNode)]
+        for node in moved_nodes:
+            if isinstance(node, DateNode):
+                continue
+            if node not in other_nodes:
+                other_nodes.append(node)
+
+        resized = False
+        for node in other_nodes:
+            center_x, center_y = self._node_center(node)
+            for date_node in date_nodes:
+                if self._is_within_horizontal_bounds(date_node, center_x):
+                    if self._expand_date_node_to_fit_center(date_node, center_y):
+                        resized = True
+
+        for date_node in date_nodes:
+            resized |= self._update_date_node_children(date_node, other_nodes)
+
+        return resized
 
     def _snap_point(self, pos_x: float, pos_y: float) -> Tuple[float, float]:
         """縦グリッドへ矛盾なく揃えた座標を返す。"""
@@ -1257,6 +1292,110 @@ class NodeEditorWindow(QMainWindow):
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
             LOGGER.debug("ノード位置の取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
         return 0.0, 0.0
+
+    def _safe_node_size(self, node) -> Tuple[float, float]:
+        width = self._safe_node_property(node, "width")
+        height = self._safe_node_property(node, "height")
+        if width is not None and height is not None:
+            return width, height
+        view = getattr(node, "view", None)
+        bounding_rect_getter = getattr(view, "boundingRect", None)
+        if callable(bounding_rect_getter):
+            try:
+                rect = bounding_rect_getter()
+                return float(rect.width()), float(rect.height())
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("ノードの矩形サイズ取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
+        return 0.0, 0.0
+
+    def _node_center(self, node) -> Tuple[float, float]:
+        pos_x, pos_y = self._safe_node_pos(node)
+        width, height = self._safe_node_size(node)
+        return pos_x + width / 2.0, pos_y + height / 2.0
+
+    def _date_node_inner_rect(self, date_node: DateNode) -> Tuple[float, float, float, float]:
+        pos_x, pos_y = self._safe_node_pos(date_node)
+        width, height = self._safe_node_size(date_node)
+        offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
+        inner_height = max(0.0, height - offset * 2.0)
+        return pos_x, pos_y + offset, width, inner_height
+
+    def _is_within_horizontal_bounds(self, date_node: DateNode, center_x: float) -> bool:
+        pos_x, _ = self._safe_node_pos(date_node)
+        width, _ = self._safe_node_size(date_node)
+        return pos_x <= center_x <= pos_x + width
+
+    def _expand_date_node_to_fit_center(self, date_node: DateNode, center_y: float) -> bool:
+        pos_x, pos_y = self._safe_node_pos(date_node)
+        width, height = self._safe_node_size(date_node)
+        offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
+        top_needed = center_y - offset
+        bottom_needed = center_y + offset
+
+        new_top = min(pos_y, top_needed)
+        new_bottom = max(pos_y + height, bottom_needed)
+        new_height = max(height, new_bottom - new_top)
+
+        if abs(new_top - pos_y) < 1e-3 and abs(new_height - height) < 1e-3:
+            return False
+
+        delta_y = new_top - pos_y
+        self._move_node_if_needed(date_node, pos_x, new_top)
+        try:
+            date_node.set_property("height", new_height, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("日付ノードの高さ更新に失敗しました", exc_info=True)
+            return False
+
+        if abs(delta_y) > 0:
+            self._shift_children_for_date_node(date_node, 0.0, delta_y)
+        self._date_node_positions[date_node] = (pos_x, new_top)
+        return True
+
+    def _update_date_node_children(self, date_node: DateNode, nodes: Iterable) -> bool:
+        inner_x, inner_y, inner_w, inner_h = self._date_node_inner_rect(date_node)
+        if inner_w <= 0.0 or inner_h <= 0.0:
+            return False
+        contained_ids: Set[str] = set()
+        for node in nodes:
+            if isinstance(node, DateNode):
+                continue
+            center_x, center_y = self._node_center(node)
+            if (
+                inner_x <= center_x <= inner_x + inner_w
+                and inner_y <= center_y <= inner_y + inner_h
+            ):
+                node_id = getattr(node, "id", None)
+                if node_id:
+                    contained_ids.add(node_id)
+        return date_node.update_child_nodes(contained_ids)
+
+    def _shift_children_for_date_node(self, date_node: DateNode, delta_x: float, delta_y: float) -> bool:
+        moved = False
+        for node_id in date_node.child_node_ids():
+            child = self._graph.get_node_by_id(node_id)
+            if child is None:
+                continue
+            current_x, current_y = self._safe_node_pos(child)
+            if self._move_node_if_needed(child, current_x + delta_x, current_y + delta_y):
+                moved = True
+        return moved
+
+    def _move_children_for_moved_date_nodes(self, moved_nodes: Iterable) -> bool:
+        moved = False
+        for node in moved_nodes:
+            if not isinstance(node, DateNode):
+                continue
+            previous = self._date_node_positions.get(node, self._safe_node_pos(node))
+            current = self._safe_node_pos(node)
+            delta_x = current[0] - previous[0]
+            delta_y = current[1] - previous[1]
+            if abs(delta_x) < 1e-3 and abs(delta_y) < 1e-3:
+                continue
+            if self._shift_children_for_date_node(node, delta_x, delta_y):
+                moved = True
+            self._date_node_positions[node] = current
+        return moved
 
     def _move_node_if_needed(self, node, pos_x: float, pos_y: float) -> bool:
         current_x, current_y = self._safe_node_pos(node)
