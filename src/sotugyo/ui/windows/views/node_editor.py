@@ -43,6 +43,7 @@ LOGGER = logging.getLogger(__name__)
 
 from ...components.content_browser import NodeCatalogEntry
 from ...components.nodes import (
+    DateNode,
     MemoNode,
     ReviewNode,
     TaskNode,
@@ -114,10 +115,12 @@ class NodeEditorWindow(QMainWindow):
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
         self._sync_snap_spacing_with_background()
+        self._refresh_date_node_snap_grid()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
         self._graph.register_node(ToolEnvironmentNode)
+        self._graph.register_node(DateNode)
         self._nodes_moved_handler = getattr(self._graph, "_on_nodes_moved", None)
 
         self._graph_widget = self._graph.widget
@@ -127,6 +130,7 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._date_count = 0
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
@@ -150,6 +154,7 @@ class NodeEditorWindow(QMainWindow):
             "sotugyo.demo.TaskNode": self._create_task_node,
             "sotugyo.demo.ReviewNode": self._create_review_node,
             MemoNode.node_type_identifier(): self._create_memo_node,
+            DateNode.node_type_identifier(): self._create_date_node,
         }
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
@@ -515,6 +520,13 @@ class NodeEditorWindow(QMainWindow):
                 keywords=("review", "チェック", "検証"),
             ),
             NodeCatalogRecord(
+                node_type=DateNode.node_type_identifier(),
+                title=DateNode.NODE_NAME,
+                subtitle="日付ラベルとして扱う装飾ノード",
+                genre="タイムライン",
+                keywords=("date", "日付", "スケジュール"),
+            ),
+            NodeCatalogRecord(
                 node_type=MemoNode.node_type_identifier(),
                 title=MemoNode.NODE_NAME,
                 subtitle="ノードエディタ上で自由に記述できるメモ",
@@ -535,6 +547,9 @@ class NodeEditorWindow(QMainWindow):
 
         add_memo_action = menu.addAction("メモノードを追加")
         add_memo_action.triggered.connect(self._create_memo_node)
+
+        add_date_action = menu.addAction("日付ノードを追加")
+        add_date_action.triggered.connect(self._create_date_node)
 
         menu.addSeparator()
 
@@ -669,6 +684,10 @@ class NodeEditorWindow(QMainWindow):
         self._memo_count += 1
         self._create_node(MemoNode.node_type_identifier(), f"メモ {self._memo_count}")
 
+    def _create_date_node(self) -> None:
+        self._date_count += 1
+        self._create_node(DateNode.node_type_identifier(), f"日付 {self._date_count}")
+
     def _create_asset_node(self, asset_name: str) -> None:
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
@@ -701,6 +720,8 @@ class NodeEditorWindow(QMainWindow):
         pos_x = (self._node_spawn_offset % 4) * 220
         pos_y = (self._node_spawn_offset // 4) * 180
         node.set_pos(pos_x, pos_y)
+        if isinstance(node, DateNode):
+            node.set_snap_grid_size(self._snap_settings.grid_size)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -1086,6 +1107,12 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _refresh_date_node_snap_grid(self) -> None:
+        grid_size = float(self._snap_settings.grid_size)
+        for node in self._graph.all_nodes():
+            if isinstance(node, DateNode):
+                node.set_snap_grid_size(grid_size)
+
     def _sync_snap_spacing_with_background(self) -> None:
         """背景縞パターンと同じピクセル幅で縦スナップを行う。"""
 
@@ -1093,6 +1120,7 @@ class NodeEditorWindow(QMainWindow):
             return
         spacing = max(1, int(self._background_pattern.total_width()))
         self._snap_settings.grid_size = float(spacing)
+        self._refresh_date_node_snap_grid()
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))

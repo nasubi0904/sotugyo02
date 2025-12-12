@@ -4,6 +4,7 @@
 
 - `nodes/` ディレクトリでノードを種類ごとに分割し、
   - `demo.py` にデモ用ノード (`BaseDemoNode`, `TaskNode`, `ReviewNode`) を、
+  - `date.py` にタイムライン用ラベルノード (`DateNode`) を、
   - `memo.py` にメモ専用ノード (`MemoNode`) を、
   - `tool_environment.py` にツール環境ノード (`ToolEnvironmentNode`) を定義します。
 - `content_browser.py` はノードカタログの UI を提供します。
