@@ -115,6 +115,7 @@ class NodeEditorWindow(QMainWindow):
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
         self._sync_snap_spacing_with_background()
+        self._refresh_date_node_snap_grid()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
@@ -719,6 +720,8 @@ class NodeEditorWindow(QMainWindow):
         pos_x = (self._node_spawn_offset % 4) * 220
         pos_y = (self._node_spawn_offset // 4) * 180
         node.set_pos(pos_x, pos_y)
+        if isinstance(node, DateNode):
+            node.set_snap_grid_size(self._snap_settings.grid_size)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -1104,6 +1107,12 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _refresh_date_node_snap_grid(self) -> None:
+        grid_size = float(self._snap_settings.grid_size)
+        for node in self._graph.all_nodes():
+            if isinstance(node, DateNode):
+                node.set_snap_grid_size(grid_size)
+
     def _sync_snap_spacing_with_background(self) -> None:
         """背景縞パターンと同じピクセル幅で縦スナップを行う。"""
 
@@ -1111,6 +1120,7 @@ class NodeEditorWindow(QMainWindow):
             return
         spacing = max(1, int(self._background_pattern.total_width()))
         self._snap_settings.grid_size = float(spacing)
+        self._refresh_date_node_snap_grid()
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
