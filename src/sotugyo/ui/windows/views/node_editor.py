@@ -997,10 +997,40 @@ class NodeEditorWindow(QMainWindow):
                 node_type=node_type,
                 node_uuid=node_uuid,
                 position_text=pos_text,
+                children_text=self._describe_date_node_children(node),
             )
             inspector.enable_rename(name)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
+
+    def _describe_date_node_children(self, node) -> str:
+        if not isinstance(node, DateNode):
+            return "-"
+        child_ids_getter = getattr(node, "child_node_ids", None)
+        if not callable(child_ids_getter):
+            return "-"
+        try:
+            child_ids = list(child_ids_getter() or [])
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("子ノードIDの取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
+            return "-"
+
+        if not child_ids:
+            return "なし"
+
+        names = []
+        for child_id in child_ids:
+            child = self._graph.get_node_by_id(child_id)
+            if child is None:
+                continue
+            names.append(self._safe_node_name(child))
+
+        if not names:
+            return "なし"
+
+        header = f"{len(names)} 件"
+        detail_lines = "\n".join(f"・{name}" for name in names)
+        return f"{header}\n{detail_lines}"
 
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
