@@ -1109,8 +1109,9 @@ class NodeEditorWindow(QMainWindow):
         snapped = self._apply_snap_to_views(node_views)
         moved_nodes = [self._graph.get_node_by_id(getattr(view, "id", "")) for view in node_views]
         moved_nodes = [node for node in moved_nodes if node is not None]
-        resized = self._apply_date_node_containment(moved_nodes)
-        children_moved = self._move_children_for_moved_date_nodes(moved_nodes)
+        moved_node_ids = {getattr(node, "id", None) for node in moved_nodes if getattr(node, "id", None)}
+        resized = self._apply_date_node_containment(moved_nodes, moved_node_ids)
+        children_moved = self._move_children_for_moved_date_nodes(moved_nodes, moved_node_ids)
         if callable(self._nodes_moved_handler):
             self._nodes_moved_handler(node_data)
         if snapped or resized or children_moved:
@@ -1135,7 +1136,9 @@ class NodeEditorWindow(QMainWindow):
             self._update_selected_node_info()
         return updated
 
-    def _apply_date_node_containment(self, moved_nodes: Iterable) -> bool:
+    def _apply_date_node_containment(
+        self, moved_nodes: Iterable, moved_node_ids: Set[str]
+    ) -> bool:
         date_nodes = [node for node in self._graph.all_nodes() if isinstance(node, DateNode)]
         if not date_nodes:
             return False
@@ -1156,7 +1159,9 @@ class NodeEditorWindow(QMainWindow):
             center_x, center_y = self._node_center(node)
             for date_node in date_nodes:
                 if self._is_within_horizontal_bounds(date_node, center_x):
-                    if self._expand_date_node_to_fit_center(date_node, center_y):
+                    if self._expand_date_node_to_fit_center(
+                        date_node, center_y, moved_node_ids
+                    ):
                         resized = True
 
         for date_node in date_nodes:
@@ -1383,7 +1388,9 @@ class NodeEditorWindow(QMainWindow):
         width, _ = self._safe_node_size(date_node)
         return pos_x <= center_x <= pos_x + width
 
-    def _expand_date_node_to_fit_center(self, date_node: DateNode, center_y: float) -> bool:
+    def _expand_date_node_to_fit_center(
+        self, date_node: DateNode, center_y: float, moved_node_ids: Set[str]
+    ) -> bool:
         pos_x, pos_y = self._safe_node_pos(date_node)
         width, height = self._safe_node_size(date_node)
         offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
@@ -1406,7 +1413,9 @@ class NodeEditorWindow(QMainWindow):
             return False
 
         if abs(delta_y) > 0:
-            self._shift_children_for_date_node(date_node, 0.0, delta_y)
+            self._shift_children_for_date_node(
+                date_node, 0.0, delta_y, exclude_ids=moved_node_ids
+            )
         self._date_node_positions[date_node] = (pos_x, new_top)
         return True
 
@@ -1428,9 +1437,18 @@ class NodeEditorWindow(QMainWindow):
                     contained_ids.add(node_id)
         return date_node.update_child_nodes(contained_ids)
 
-    def _shift_children_for_date_node(self, date_node: DateNode, delta_x: float, delta_y: float) -> bool:
+    def _shift_children_for_date_node(
+        self,
+        date_node: DateNode,
+        delta_x: float,
+        delta_y: float,
+        exclude_ids: Optional[Set[str]] = None,
+    ) -> bool:
+        exclude_ids = exclude_ids or set()
         moved = False
         for node_id in date_node.child_node_ids():
+            if node_id in exclude_ids:
+                continue
             child = self._graph.get_node_by_id(node_id)
             if child is None:
                 continue
@@ -1439,7 +1457,9 @@ class NodeEditorWindow(QMainWindow):
                 moved = True
         return moved
 
-    def _move_children_for_moved_date_nodes(self, moved_nodes: Iterable) -> bool:
+    def _move_children_for_moved_date_nodes(
+        self, moved_nodes: Iterable, moved_node_ids: Set[str]
+    ) -> bool:
         moved = False
         for node in moved_nodes:
             if not isinstance(node, DateNode):
@@ -1450,7 +1470,9 @@ class NodeEditorWindow(QMainWindow):
             delta_y = current[1] - previous[1]
             if abs(delta_x) < 1e-3 and abs(delta_y) < 1e-3:
                 continue
-            if self._shift_children_for_date_node(node, delta_x, delta_y):
+            if self._shift_children_for_date_node(
+                node, delta_x, delta_y, exclude_ids=moved_node_ids
+            ):
                 moved = True
             self._date_node_positions[node] = current
         return moved
