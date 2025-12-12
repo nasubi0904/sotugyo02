@@ -24,7 +24,6 @@ QCloseEvent = QtGui.QCloseEvent
 QKeySequence = QtGui.QKeySequence
 QResizeEvent = QtGui.QResizeEvent
 QShortcut = QtGui.QShortcut
-QShowEvent = QtGui.QShowEvent
 QDialog = QtWidgets.QDialog
 QFileDialog = QtWidgets.QFileDialog
 QMainWindow = QtWidgets.QMainWindow
@@ -105,7 +104,6 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self._base_window_title = self.windowTitle()
         self.resize(960, 600)
-        self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
         self._snap_settings = NodeSnapSettings()
@@ -191,13 +189,6 @@ class NodeEditorWindow(QMainWindow):
         self._background_pattern = pattern
         self._graph.scene().update()
         self._graph_widget.viewport().update()
-
-    def showEvent(self, event: QShowEvent) -> None:
-        """ウィンドウ表示時に全画面状態を維持する。"""
-
-        super().showEvent(event)
-        if not self.isFullScreen():
-            self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
     # ------------------------------------------------------------------
     # UI 初期化
