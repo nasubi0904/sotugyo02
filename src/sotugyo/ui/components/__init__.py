@@ -7,6 +7,7 @@ from importlib import import_module
 _CONTENT_EXPORTS = {"NodeContentBrowser", "NodeCatalogEntry"}
 _NODE_EXPORTS = {
     "BaseDemoNode",
+    "DateNode",
     "MemoNode",
     "ReviewNode",
     "TaskNode",
