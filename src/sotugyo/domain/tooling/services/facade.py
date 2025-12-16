@@ -101,6 +101,11 @@ class ToolEnvironmentService:
     ) -> ToolEnvironmentDefinition:
         tools = self.registry_service.list_tools()
         environments = self.environment_service.list_environments()
+        aligned_packages = self._align_rez_packages_with_registry(
+            tool_id=tool_id,
+            packages=rez_packages,
+            tools=tools,
+        )
         return self.environment_service.save(
             name=name,
             tool_id=tool_id,
@@ -109,7 +114,7 @@ class ToolEnvironmentService:
             environments=environments,
             environment_id=environment_id,
             template_id=template_id,
-            rez_packages=rez_packages,
+            rez_packages=aligned_packages,
             rez_variants=rez_variants,
             rez_environment=rez_environment,
             metadata=metadata,
@@ -199,3 +204,31 @@ class ToolEnvironmentService:
         if not resolved.is_absolute():
             resolved = resolved.resolve()
         return resolved
+
+    def _align_rez_packages_with_registry(
+        self,
+        *,
+        tool_id: str,
+        packages: Optional[Iterable[str]],
+        tools: Iterable[RegisteredTool],
+    ) -> Optional[Iterable[str]]:
+        tool_map = {tool.tool_id: tool for tool in tools}
+        tool = tool_map.get(tool_id)
+        canonical = self.resolve_rez_package_name(tool) if tool is not None else None
+
+        normalized = (
+            [entry.strip() for entry in packages if isinstance(entry, str) and entry.strip()]
+            if packages is not None
+            else []
+        )
+        if canonical:
+            if not normalized:
+                normalized = [canonical]
+            elif normalized[0] != canonical:
+                normalized.insert(0, canonical)
+            normalized = list(dict.fromkeys(normalized))
+            return tuple(normalized)
+
+        if packages is None:
+            return None
+        return tuple(normalized)

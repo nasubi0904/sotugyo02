@@ -716,8 +716,9 @@ class NodeEditorWindow(QMainWindow):
         node_name = self._build_tool_node_name(tool, definition)
         node = self._create_node(ToolEnvironmentNode.node_type_identifier(), node_name)
         if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload(tool)
-            package_name = self._primary_rez_package(payload)
+            payload, package_name = self._align_node_rez_package(
+                definition.build_payload(tool), tool
+            )
             node.configure_environment(
                 environment_id=definition.environment_id,
                 environment_name=node_name,
@@ -1127,20 +1128,37 @@ class NodeEditorWindow(QMainWindow):
             registered_tools=self._registered_tools,
         )
         payload = registration.payload
-        if registration.updated:
-            self._update_tool_binding(node, payload, registration.tool)
+        payload_changed = False
 
         tool = registration.tool
+        package_name = None
+        if tool is not None:
+            aligned_payload, canonical_package = self._align_node_rez_package(
+                payload, tool
+            )
+            if aligned_payload != payload:
+                payload = aligned_payload
+                payload_changed = True
+            package_name = canonical_package
+
+        if registration.updated or payload_changed:
+            self._update_tool_binding(node, payload, tool)
+
         if tool is None:
             self._show_warning_dialog(
                 "対応するツールが登録されていません。ツール管理を確認してください。"
             )
             return
 
-        package_name = self._node_rez_package_name(node, payload)
+        if package_name is None:
+            package_name = self._node_rez_package_name(node, payload)
         packages = self._normalize_rez_entries(payload.get("rez_packages"))
-        if package_name and not packages:
-            packages = (package_name,)
+        if package_name:
+            if not packages or packages[0] != package_name:
+                packages = (package_name, *packages)
+            packages = tuple(dict.fromkeys(packages))
+        elif packages:
+            package_name = packages[0]
         if not packages:
             self._show_warning_dialog("Rez パッケージが設定されていません。")
             return
@@ -1233,6 +1251,10 @@ class NodeEditorWindow(QMainWindow):
         if tool is not None:
             updated_payload["tool_id"] = tool.tool_id
             updated_payload.setdefault("tool_name", tool.display_name)
+        rez_package_name = updated_payload.get("rez_package_name")
+        rez_packages = updated_payload.get("rez_packages")
+        if isinstance(rez_packages, list):
+            updated_payload["rez_packages"] = rez_packages
         try:
             serialized = json.dumps(updated_payload, ensure_ascii=False, sort_keys=True)
         except (TypeError, ValueError):
@@ -1243,6 +1265,8 @@ class NodeEditorWindow(QMainWindow):
             if tool is not None:
                 node.set_property("tool_id", tool.tool_id, push_undo=False)
                 node.set_property("tool_name", tool.display_name, push_undo=False)
+            if isinstance(rez_package_name, str) and rez_package_name.strip():
+                node.set_property("rez_package_name", rez_package_name, push_undo=False)
             node.set_property("environment_payload", serialized, push_undo=False)
         except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
             LOGGER.debug("ノードのツール紐付け更新に失敗しました", exc_info=True)
@@ -2061,6 +2085,35 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(first, str) and first.strip():
                 return first.strip()
         return ""
+
+    def _align_node_rez_package(
+        self,
+        payload: Mapping[str, object],
+        tool: RegisteredTool | None = None,
+    ) -> tuple[Dict[str, object], str | None]:
+        canonical = (
+            self._coordinator.tool_service.resolve_rez_package_name(tool)
+            if tool is not None
+            else None
+        )
+        updated_payload = dict(payload)
+        packages = list(self._normalize_rez_entries(payload.get("rez_packages")))
+
+        if canonical:
+            if not packages or packages[0] != canonical:
+                packages = [canonical, *packages]
+            packages = list(dict.fromkeys(packages))
+            updated_payload["rez_packages"] = packages
+            updated_payload["rez_package_name"] = canonical
+            return updated_payload, canonical
+
+        primary = self._primary_rez_package(payload)
+        if primary and updated_payload.get("rez_package_name") != primary:
+            updated_payload["rez_package_name"] = primary
+        package_name = updated_payload.get("rez_package_name")
+        if isinstance(package_name, str) and package_name.strip():
+            return updated_payload, package_name.strip()
+        return updated_payload, None
 
     def _node_rez_package_name(
         self,
