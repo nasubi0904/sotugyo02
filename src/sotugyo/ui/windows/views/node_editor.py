@@ -1113,19 +1113,34 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("ツール環境の情報を取得できませんでした。")
             return
 
+        resolver = getattr(
+            self._coordinator.tool_service.environment_service, "rez_resolver", None
+        )
+        if resolver is None:
+            self._show_error_dialog("Rez 実行リゾルバが初期化されていません。")
+            return
+
+        registration = resolver.reconcile_registered_tool(
+            payload=payload,
+            registered_tools=self._registered_tools,
+        )
+        payload = registration.payload
+        if registration.updated:
+            self._update_tool_binding(node, payload, registration.tool)
+
+        tool = registration.tool
+        if tool is None:
+            self._show_warning_dialog(
+                "対応するツールが登録されていません。ツール管理を確認してください。"
+            )
+            return
+
         package_name = self._node_rez_package_name(node, payload)
         packages = self._normalize_rez_entries(payload.get("rez_packages"))
         if package_name and not packages:
             packages = (package_name,)
         if not packages:
             self._show_warning_dialog("Rez パッケージが設定されていません。")
-            return
-
-        tool = self._find_registered_tool(node, payload)
-        if tool is None:
-            self._show_warning_dialog(
-                "対応するツールが登録されていません。ツール管理を確認してください。"
-            )
             return
 
         executable = tool.executable_path
@@ -1143,10 +1158,6 @@ class NodeEditorWindow(QMainWindow):
 
         variants = self._normalize_rez_entries(payload.get("rez_variants"))
         env_vars = self._normalize_env_map(payload.get("rez_environment"))
-        resolver = getattr(self._coordinator.tool_service.environment_service, "rez_resolver", None)
-        if resolver is None:
-            self._show_error_dialog("Rez 実行リゾルバが初期化されていません。")
-            return
 
         validation = resolver.resolve(
             packages=list(packages),
@@ -1210,65 +1221,16 @@ class NodeEditorWindow(QMainWindow):
                 env_map[key] = val
         return env_map
 
-    def _find_registered_tool(
-        self, node: ToolEnvironmentNode, payload: Mapping[str, object]
-    ) -> Optional[RegisteredTool]:
-        tool_id = self._extract_tool_id(node, payload)
-        if tool_id:
-            direct = self._registered_tools.get(tool_id)
-            if direct is not None:
-                return direct
-
-        template_id = payload.get("template_id")
-        tool_name = payload.get("tool_name")
-        template_match: Optional[RegisteredTool] = None
-        if isinstance(template_id, str) and template_id.strip():
-            template_match = next(
-                (
-                    tool
-                    for tool in self._registered_tools.values()
-                    if tool.template_id == template_id.strip()
-                ),
-                None,
-            )
-
-        name_match: Optional[RegisteredTool] = None
-        if isinstance(tool_name, str) and tool_name.strip():
-            name_match = next(
-                (
-                    tool
-                    for tool in self._registered_tools.values()
-                    if tool.display_name == tool_name.strip()
-                ),
-                None,
-            )
-
-        resolved = template_match or name_match
-        if resolved is not None and resolved.tool_id != tool_id:
-            self._update_tool_binding(node, payload, resolved)
-        return resolved
-
-    def _extract_tool_id(self, node: ToolEnvironmentNode, payload: Mapping[str, object]) -> str:
-        raw_payload = payload.get("tool_id")
-        if isinstance(raw_payload, str) and raw_payload.strip():
-            return raw_payload.strip()
-        getter = getattr(node, "get_property", None)
-        if callable(getter):
-            try:
-                raw_value = getter("tool_id")
-            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
-                LOGGER.debug("tool_id の取得に失敗しました", exc_info=True)
-                raw_value = None
-            if isinstance(raw_value, str) and raw_value.strip():
-                return raw_value.strip()
-        return ""
-
     def _update_tool_binding(
-        self, node: ToolEnvironmentNode, payload: Mapping[str, object], tool: RegisteredTool
+        self,
+        node: ToolEnvironmentNode,
+        payload: Mapping[str, object],
+        tool: Optional[RegisteredTool],
     ) -> None:
         updated_payload = dict(payload)
-        updated_payload["tool_id"] = tool.tool_id
-        updated_payload.setdefault("tool_name", tool.display_name)
+        if tool is not None:
+            updated_payload["tool_id"] = tool.tool_id
+            updated_payload.setdefault("tool_name", tool.display_name)
         try:
             serialized = json.dumps(updated_payload, ensure_ascii=False, sort_keys=True)
         except (TypeError, ValueError):
@@ -1276,8 +1238,9 @@ class NodeEditorWindow(QMainWindow):
             serialized = json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
         try:
-            node.set_property("tool_id", tool.tool_id, push_undo=False)
-            node.set_property("tool_name", tool.display_name, push_undo=False)
+            if tool is not None:
+                node.set_property("tool_id", tool.tool_id, push_undo=False)
+                node.set_property("tool_name", tool.display_name, push_undo=False)
             node.set_property("environment_payload", serialized, push_undo=False)
         except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
             LOGGER.debug("ノードのツール紐付け更新に失敗しました", exc_info=True)

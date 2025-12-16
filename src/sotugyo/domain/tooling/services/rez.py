@@ -6,7 +6,9 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
-from typing import Dict, Iterable, Mapping, Sequence, Tuple
+from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
+
+from ..models import RegisteredTool
 
 
 @dataclass(slots=True, frozen=True)
@@ -36,6 +38,15 @@ class RezResolveResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
+
+
+@dataclass(slots=True, frozen=True)
+class ToolRegistrationResolution:
+    """登録済みツールの突き合わせ結果。"""
+
+    tool: Optional[RegisteredTool]
+    payload: Dict[str, object]
+    updated: bool = False
 
 
 class RezEnvironmentResolver:
@@ -131,6 +142,57 @@ class RezEnvironmentResolver:
 
         return RezEnvironmentResolver._build_variant_arguments(variants)
 
+    def reconcile_registered_tool(
+        self,
+        *,
+        payload: Mapping[str, object],
+        registered_tools: Mapping[str, RegisteredTool],
+    ) -> ToolRegistrationResolution:
+        """ノードに保存されたツール情報を登録済みツールと突き合わせる。"""
+
+        normalized_payload = dict(payload)
+        tool_id = self._normalize_identifier(normalized_payload.get("tool_id"))
+        template_id = self._normalize_identifier(normalized_payload.get("template_id"))
+        tool_name = self._normalize_identifier(normalized_payload.get("tool_name"))
+
+        tool = registered_tools.get(tool_id) if tool_id else None
+        if tool is None and template_id:
+            tool = next(
+                (
+                    candidate
+                    for candidate in registered_tools.values()
+                    if candidate.template_id == template_id
+                ),
+                None,
+            )
+
+        if tool is None and tool_name:
+            tool = next(
+                (
+                    candidate
+                    for candidate in registered_tools.values()
+                    if candidate.display_name == tool_name
+                ),
+                None,
+            )
+
+        if tool is None:
+            return ToolRegistrationResolution(tool=None, payload=normalized_payload)
+
+        updated = False
+        if tool.tool_id != tool_id:
+            normalized_payload["tool_id"] = tool.tool_id
+            updated = True
+        if tool.display_name and normalized_payload.get("tool_name") != tool.display_name:
+            normalized_payload["tool_name"] = tool.display_name
+            updated = True
+
+        return ToolRegistrationResolution(
+            tool=tool,
+            payload=normalized_payload,
+            updated=updated,
+        )
+
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
         normalized = [variant.strip() for variant in variants if variant and variant.strip()]
@@ -175,5 +237,15 @@ class RezEnvironmentResolver:
             }
         )
 
+    @staticmethod
+    def _normalize_identifier(value: object) -> str:
+        if isinstance(value, str):
+            return value.strip()
+        return ""
 
-__all__ = ["RezEnvironmentResolver", "RezResolveResult"]
+
+__all__ = [
+    "RezEnvironmentResolver",
+    "RezResolveResult",
+    "ToolRegistrationResolution",
+]
