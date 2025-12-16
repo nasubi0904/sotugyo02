@@ -139,6 +139,7 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
+        self._is_updating_selection = False
         self._coordinator = NodeEditorCoordinator(
             project_service=project_service,
             user_manager=user_manager,
@@ -159,7 +160,6 @@ class NodeEditorWindow(QMainWindow):
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
         self._alignment_toolbar: Optional[TimelineAlignmentToolBar] = None
-        self._date_node_positions: Dict[object, Tuple[float, float]] = {}
 
         self._init_ui()
         self._create_menus()
@@ -723,7 +723,6 @@ class NodeEditorWindow(QMainWindow):
         node.set_pos(pos_x, pos_y)
         if isinstance(node, DateNode):
             node.set_snap_grid_size(self._snap_settings.grid_size)
-            self._date_node_positions[node] = (pos_x, pos_y)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -953,7 +952,72 @@ class NodeEditorWindow(QMainWindow):
             nodes = list(self._known_nodes)
         return nodes
 
+    def _collect_date_child_ids(self, date_nodes: Iterable[DateNode]) -> Set[str]:
+        child_ids: Set[str] = set()
+        for date_node in date_nodes:
+            child_ids_getter = getattr(date_node, "child_node_ids", None)
+            if not callable(child_ids_getter):
+                continue
+            try:
+                child_ids.update({node_id for node_id in (child_ids_getter() or []) if node_id})
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug(
+                    "子ノードIDの取得に失敗しました: node=%s",
+                    self._safe_node_name(date_node),
+                    exc_info=True,
+                )
+        return child_ids
+
+    def _select_date_children_if_needed(self) -> bool:
+        try:
+            selected_nodes = list(self._graph.selected_nodes())
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("選択中ノードの取得に失敗しました", exc_info=True)
+            return False
+
+        date_nodes = [node for node in selected_nodes if isinstance(node, DateNode)]
+        if not date_nodes:
+            return False
+
+        child_ids = self._collect_date_child_ids(date_nodes)
+        additional_nodes = []
+        for child_id in child_ids:
+            child = self._graph.get_node_by_id(child_id)
+            if child is None or child in selected_nodes:
+                continue
+            additional_nodes.append(child)
+
+        if not additional_nodes:
+            return False
+
+        self._is_updating_selection = True
+        try:
+            for child in additional_nodes:
+                setter = getattr(child, "set_selected", None)
+                if not callable(setter):
+                    continue
+                try:
+                    setter(True)
+                except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                    LOGGER.debug(
+                        "子ノードの選択状態の更新に失敗しました: node=%s",
+                        self._safe_node_name(child),
+                        exc_info=True,
+                    )
+        finally:
+            self._is_updating_selection = False
+
+        self._update_selected_node_info()
+        return True
+
     def _on_selection_changed(self, *_args, **_kwargs) -> None:
+        if self._is_updating_selection:
+            self._update_selected_node_info()
+            return
+
+        if self._select_date_children_if_needed():
+            return
+
         self._update_selected_node_info()
 
     def _on_port_connection_changed(self, *_ports, **_kwargs) -> None:
@@ -1006,15 +1070,8 @@ class NodeEditorWindow(QMainWindow):
     def _describe_date_node_children(self, node) -> str:
         if not isinstance(node, DateNode):
             return "-"
-        child_ids_getter = getattr(node, "child_node_ids", None)
-        if not callable(child_ids_getter):
-            return "-"
-        try:
-            child_ids = list(child_ids_getter() or [])
-        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
-            LOGGER.debug("子ノードIDの取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
-            return "-"
 
+        child_ids = self._collect_date_child_ids([node])
         if not child_ids:
             return "なし"
 
@@ -1109,12 +1166,10 @@ class NodeEditorWindow(QMainWindow):
         snapped = self._apply_snap_to_views(node_views)
         moved_nodes = [self._graph.get_node_by_id(getattr(view, "id", "")) for view in node_views]
         moved_nodes = [node for node in moved_nodes if node is not None]
-        moved_node_ids = {getattr(node, "id", None) for node in moved_nodes if getattr(node, "id", None)}
-        resized = self._apply_date_node_containment(moved_nodes, moved_node_ids)
-        children_moved = self._move_children_for_moved_date_nodes(moved_nodes, moved_node_ids)
+        resized = self._apply_date_node_containment(moved_nodes)
         if callable(self._nodes_moved_handler):
             self._nodes_moved_handler(node_data)
-        if snapped or resized or children_moved:
+        if snapped or resized:
             self._set_modified(True)
 
     def _apply_snap_to_views(self, node_views: Iterable) -> bool:
@@ -1136,16 +1191,10 @@ class NodeEditorWindow(QMainWindow):
             self._update_selected_node_info()
         return updated
 
-    def _apply_date_node_containment(
-        self, moved_nodes: Iterable, moved_node_ids: Set[str]
-    ) -> bool:
+    def _apply_date_node_containment(self, moved_nodes: Iterable) -> bool:
         date_nodes = [node for node in self._graph.all_nodes() if isinstance(node, DateNode)]
         if not date_nodes:
             return False
-
-        for date_node in date_nodes:
-            if date_node not in self._date_node_positions:
-                self._date_node_positions[date_node] = self._safe_node_pos(date_node)
 
         other_nodes = [node for node in self._graph.all_nodes() if not isinstance(node, DateNode)]
         for node in moved_nodes:
@@ -1159,9 +1208,7 @@ class NodeEditorWindow(QMainWindow):
             center_x, center_y = self._node_center(node)
             for date_node in date_nodes:
                 if self._is_within_horizontal_bounds(date_node, center_x):
-                    if self._expand_date_node_to_fit_center(
-                        date_node, center_y, moved_node_ids
-                    ):
+                    if self._expand_date_node_to_fit_center(date_node, center_y):
                         resized = True
 
         for date_node in date_nodes:
@@ -1390,9 +1437,7 @@ class NodeEditorWindow(QMainWindow):
         width, _ = self._safe_node_size(date_node)
         return pos_x <= center_x <= pos_x + width
 
-    def _expand_date_node_to_fit_center(
-        self, date_node: DateNode, center_y: float, moved_node_ids: Set[str]
-    ) -> bool:
+    def _expand_date_node_to_fit_center(self, date_node: DateNode, center_y: float) -> bool:
         pos_x, pos_y = self._safe_node_pos(date_node)
         width, height = self._safe_node_size(date_node)
         offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
@@ -1406,19 +1451,12 @@ class NodeEditorWindow(QMainWindow):
         if abs(new_top - pos_y) < 1e-3 and abs(new_height - height) < 1e-3:
             return False
 
-        delta_y = new_top - pos_y
         self._move_node_if_needed(date_node, pos_x, new_top)
         try:
             date_node.set_property("height", new_height, push_undo=False)
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
             LOGGER.debug("日付ノードの高さ更新に失敗しました", exc_info=True)
             return False
-
-        if abs(delta_y) > 0:
-            self._shift_children_for_date_node(
-                date_node, 0.0, delta_y, exclude_ids=moved_node_ids
-            )
-        self._date_node_positions[date_node] = (pos_x, new_top)
         return True
 
     def _update_date_node_children(self, date_node: DateNode, nodes: Iterable) -> bool:
@@ -1438,46 +1476,6 @@ class NodeEditorWindow(QMainWindow):
                 if node_id:
                     contained_ids.add(node_id)
         return date_node.update_child_nodes(contained_ids)
-
-    def _shift_children_for_date_node(
-        self,
-        date_node: DateNode,
-        delta_x: float,
-        delta_y: float,
-        exclude_ids: Optional[Set[str]] = None,
-    ) -> bool:
-        exclude_ids = exclude_ids or set()
-        moved = False
-        for node_id in date_node.child_node_ids():
-            if node_id in exclude_ids:
-                continue
-            child = self._graph.get_node_by_id(node_id)
-            if child is None:
-                continue
-            current_x, current_y = self._safe_node_pos(child)
-            if self._move_node_if_needed(child, current_x + delta_x, current_y + delta_y):
-                moved = True
-        return moved
-
-    def _move_children_for_moved_date_nodes(
-        self, moved_nodes: Iterable, moved_node_ids: Set[str]
-    ) -> bool:
-        moved = False
-        for node in moved_nodes:
-            if not isinstance(node, DateNode):
-                continue
-            previous = self._date_node_positions.get(node, self._safe_node_pos(node))
-            current = self._safe_node_pos(node)
-            delta_x = current[0] - previous[0]
-            delta_y = current[1] - previous[1]
-            if abs(delta_x) < 1e-3 and abs(delta_y) < 1e-3:
-                continue
-            if self._shift_children_for_date_node(
-                node, delta_x, delta_y, exclude_ids=moved_node_ids
-            ):
-                moved = True
-            self._date_node_positions[node] = current
-        return moved
 
     def _move_node_if_needed(self, node, pos_x: float, pos_y: float) -> bool:
         current_x, current_y = self._safe_node_pos(node)
