@@ -51,6 +51,12 @@ class RezEnvironmentResolver:
         self._path_env_var = path_env_var
         self._apply_rez_path_hint()
 
+    @property
+    def executable(self) -> str:
+        """Rez CLI 実行に使用するコマンド名を返す。"""
+
+        return self._executable
+
     def resolve(
         self,
         packages: Sequence[str],
@@ -111,6 +117,19 @@ class RezEnvironmentResolver:
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+    def build_environment(
+        self, user_environment: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
+        """Rez 実行用に PATH をマージした環境変数セットを生成する。"""
+
+        return self._build_environment(user_environment)
+
+    @staticmethod
+    def build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
+        """`rez env` へ渡すバリアント引数を組み立てる。"""
+
+        return RezEnvironmentResolver._build_variant_arguments(variants)
 
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:

@@ -28,6 +28,7 @@ class NodeInspectorPanel(QWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_tool_requested = Signal()
 
     def __init__(
         self,
@@ -62,6 +63,10 @@ class NodeInspectorPanel(QWidget):
         self._memo_font_spin.setValue(self._memo_font_default)
         self._memo_font_spin.valueChanged.connect(self._on_memo_font_changed)
 
+        self._launch_tool_button = QPushButton("Rez 環境で起動", self)
+        self._launch_tool_button.setEnabled(False)
+        self._launch_tool_button.clicked.connect(self.launch_tool_requested)
+
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
         self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
@@ -84,6 +89,7 @@ class NodeInspectorPanel(QWidget):
         layout.addRow("タイプ", self._detail_type_label)
         layout.addRow("UUID", self._detail_uuid_label)
         layout.addRow("位置", self._detail_position_label)
+        layout.addRow("ツール起動", self._launch_tool_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -138,6 +144,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_type_label.setText("-")
         self._detail_uuid_label.setText("-")
         self._detail_position_label.setText("-")
+        self.set_tool_launch_enabled(False)
 
     def enable_rename(self, value: str) -> None:
         """リネーム操作を有効化する。"""
@@ -204,6 +211,9 @@ class NodeInspectorPanel(QWidget):
             return self._memo_font_default
         return max(minimum, min(maximum, coerced))
 
+    def set_tool_launch_enabled(self, enabled: bool) -> None:
+        self._launch_tool_button.setEnabled(enabled)
+
 
 class NodeInspectorDock(QDockWidget):
     """ノードインスペクタ用ドックウィジェット。"""
@@ -211,6 +221,7 @@ class NodeInspectorDock(QDockWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_tool_requested = Signal()
 
     def __init__(
         self,
@@ -236,6 +247,7 @@ class NodeInspectorDock(QDockWidget):
         panel.rename_requested.connect(self.rename_requested)
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
+        panel.launch_tool_requested.connect(self.launch_tool_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -281,3 +293,6 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_memo(self) -> None:
         self._panel.clear_memo()
+
+    def set_tool_launch_enabled(self, enabled: bool) -> None:
+        self._panel.set_tool_launch_enabled(enabled)

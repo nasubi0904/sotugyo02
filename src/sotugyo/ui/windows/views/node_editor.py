@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
+import subprocess
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -223,6 +225,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.launch_tool_requested.connect(self._handle_launch_tool_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -760,6 +763,7 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
+        self._align_node_width_to_grid(node)
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -1004,6 +1008,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+            self._update_tool_launch_controls(None)
             self._update_alignment_controls(None)
             return
 
@@ -1033,7 +1038,19 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.enable_rename(name)
         self._update_memo_controls(node)
+        self._update_tool_launch_controls(node)
         self._update_alignment_controls(node)
+
+    def _update_tool_launch_controls(self, node) -> None:
+        enabled = isinstance(node, ToolEnvironmentNode)
+        if self._inspector_dock is not None:
+            self._inspector_dock.set_tool_launch_enabled(enabled)
+
+    def _handle_launch_tool_requested(self) -> None:
+        if not isinstance(self._current_node, ToolEnvironmentNode):
+            self._show_info_dialog("ツール環境ノードを選択してください。")
+            return
+        self._launch_tool_node(self._current_node)
 
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
@@ -1086,6 +1103,116 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _launch_tool_node(self, node: ToolEnvironmentNode) -> None:
+        payload = node.get_environment_payload()
+        if not payload:
+            self._show_warning_dialog("ツール環境の情報を取得できませんでした。")
+            return
+
+        packages = self._normalize_rez_entries(payload.get("rez_packages"))
+        if not packages:
+            self._show_warning_dialog("Rez パッケージが設定されていません。")
+            return
+
+        tool_id = self._extract_tool_id(node, payload)
+        if not tool_id:
+            self._show_warning_dialog("ツール ID が設定されていません。")
+            return
+
+        tool = self._registered_tools.get(tool_id)
+        if tool is None:
+            self._show_warning_dialog("対応するツールが登録されていません。ツール管理を確認してください。")
+            return
+
+        executable = tool.executable_path
+        if not executable.exists():
+            self._show_warning_dialog(f"実行ファイルが見つかりません: {executable}")
+            return
+
+        variants = self._normalize_rez_entries(payload.get("rez_variants"))
+        env_vars = self._normalize_env_map(payload.get("rez_environment"))
+        resolver = getattr(self._coordinator.tool_service.environment_service, "rez_resolver", None)
+        if resolver is None:
+            self._show_error_dialog("Rez 実行リゾルバが初期化されていません。")
+            return
+
+        validation = resolver.resolve(
+            packages=list(packages),
+            variants=list(variants),
+            environment=env_vars,
+        )
+        if not validation.success:
+            self._show_warning_dialog(
+                "Rez 環境の解決に失敗しました。\n" + validation.message()
+            )
+            return
+
+        env = resolver.build_environment(env_vars)
+        rez_executable = resolver.executable
+        path_env = env.get("PATH") or env.get("Path") or os.environ.get("PATH", "")
+        if shutil.which(rez_executable, path=path_env) is None:
+            self._show_warning_dialog(
+                "rez コマンドが見つかりません。SOTUGYO_REZ_PATH を確認してください。"
+            )
+            return
+
+        variant_args = resolver.build_variant_arguments(variants)
+        command = [rez_executable, "env", *packages, *variant_args, "--", str(executable)]
+        LOGGER.info(
+            "Rez 環境経由でツールを起動します: command=%s, env_id=%s",
+            command,
+            payload.get("environment_id"),
+        )
+
+        try:
+            subprocess.Popen(command, env=env)
+        except FileNotFoundError:
+            self._show_warning_dialog("rez コマンドが見つかりません。実行できませんでした。")
+        except PermissionError:
+            self._show_error_dialog("ツールの実行権限がありません。実行ユーザーを確認してください。")
+        except OSError as exc:
+            self._show_error_dialog(f"ツール起動時に OS エラーが発生しました: {exc}")
+        except Exception as exc:  # pragma: no cover - 予期せぬ例外の捕捉
+            self._show_error_dialog(f"ツール起動に失敗しました: {exc}")
+        else:
+            self._show_info_dialog(
+                "Rez 環境でツールの起動を開始しました。起動に時間がかかる場合があります。"
+            )
+
+    @staticmethod
+    def _normalize_rez_entries(value) -> Tuple[str, ...]:
+        if not isinstance(value, (list, tuple)):
+            return ()
+        entries = [
+            str(entry).strip() for entry in value if isinstance(entry, str) and entry.strip()
+        ]
+        return tuple(entries)
+
+    @staticmethod
+    def _normalize_env_map(value) -> Dict[str, str]:
+        if not isinstance(value, Mapping):
+            return {}
+        env_map: Dict[str, str] = {}
+        for key, val in value.items():
+            if isinstance(key, str) and isinstance(val, str):
+                env_map[key] = val
+        return env_map
+
+    def _extract_tool_id(self, node: ToolEnvironmentNode, payload: Mapping[str, object]) -> str:
+        raw_payload = payload.get("tool_id")
+        if isinstance(raw_payload, str) and raw_payload.strip():
+            return raw_payload.strip()
+        getter = getattr(node, "get_property", None)
+        if callable(getter):
+            try:
+                raw_value = getter("tool_id")
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("tool_id の取得に失敗しました", exc_info=True)
+                raw_value = None
+            if isinstance(raw_value, str) and raw_value.strip():
+                return raw_value.strip()
+        return ""
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1149,6 +1276,40 @@ class NodeEditorWindow(QMainWindow):
             return
         spacing = max(1, int(self._background_pattern.total_width()))
         self._snap_settings.grid_size = float(spacing)
+
+    def _grid_unit_width(self) -> float:
+        if self._background_pattern is not None:
+            width = float(self._background_pattern.total_width())
+            if width > 0:
+                return width
+        return max(0.0, float(self._snap_settings.grid_size))
+
+    def _align_node_width_to_grid(self, node) -> None:
+        grid_width = self._grid_unit_width()
+        if grid_width <= 0:
+            return
+        width = self._read_numeric_property(node, "width")
+        if width is None:
+            view = getattr(node, "view", None)
+            width = float(getattr(view, "width", 0.0) or 0.0)
+        if width <= 0:
+            return
+        aligned = max(grid_width, round(width / grid_width) * grid_width)
+        if abs(aligned - width) < 1e-3:
+            return
+        setter = getattr(node, "set_property", None)
+        if not callable(setter):
+            return
+        try:
+            setter("width", aligned, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug(
+                "ノード幅のグリッド揃えに失敗しました: node=%s, width=%s, grid=%s",
+                self._safe_node_name(node),
+                width,
+                grid_width,
+                exc_info=True,
+            )
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
@@ -1684,6 +1845,7 @@ class NodeEditorWindow(QMainWindow):
                         node.set_property(key, value, push_undo=False)
                     except Exception:  # pragma: no cover - NodeGraph 依存の例外
                         LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
+            self._align_node_width_to_grid(node)
 
         failed_operations: List[str] = []
 
