@@ -713,28 +713,30 @@ class NodeEditorWindow(QMainWindow):
         if tool is None:
             self._show_warning_dialog("環境が参照するツールが登録されていません。")
             return
-        node = self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), definition.name
-        )
+        node_name = self._build_tool_node_name(tool, definition)
+        node = self._create_node(ToolEnvironmentNode.node_type_identifier(), node_name)
         if isinstance(node, ToolEnvironmentNode):
             payload = definition.build_payload(tool)
+            package_name = self._primary_rez_package(payload)
             node.configure_environment(
                 environment_id=definition.environment_id,
-                environment_name=definition.name,
+                environment_name=node_name,
                 tool_id=tool.tool_id,
                 tool_name=tool.display_name,
+                rez_package_name=package_name,
                 version_label=definition.version_label,
                 environment_payload=payload,
             )
 
     def _create_rez_package_node(self, package_name: str) -> None:
-        spec = self._all_rez_packages().get(package_name)
+        spec, source = self._resolve_rez_package_spec(package_name)
         if spec is None:
-            self._show_warning_dialog("選択された Rez パッケージが見つかりません。")
+            self._show_warning_dialog(
+                "選択された Rez パッケージが見つかりません。プロジェクトまたは KDMrez を確認してください。"
+            )
             return
-        node = self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
-        )
+        node_name = self._build_rez_node_name(spec)
+        node = self._create_node(ToolEnvironmentNode.node_type_identifier(), node_name)
         if isinstance(node, ToolEnvironmentNode):
             version_label = spec.version or "local"
             payload = {
@@ -742,15 +744,16 @@ class NodeEditorWindow(QMainWindow):
                 "package_path": str(spec.path),
                 "summary": version_label,
             }
-            source = (
+            source = source or (
                 "project" if package_name in self._project_rez_packages else "local"
             )
             payload["rez_source"] = source
             node.configure_environment(
                 environment_id=f"rez:{spec.name}",
-                environment_name=f"Rez: {spec.name}",
+                environment_name=node_name,
                 tool_id=spec.name,
                 tool_name=f"Rez Package ({source})",
+                rez_package_name=spec.name,
                 version_label=version_label,
                 environment_payload=payload,
             )
@@ -1110,7 +1113,10 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("ツール環境の情報を取得できませんでした。")
             return
 
+        package_name = self._node_rez_package_name(node, payload)
         packages = self._normalize_rez_entries(payload.get("rez_packages"))
+        if package_name and not packages:
+            packages = (package_name,)
         if not packages:
             self._show_warning_dialog("Rez パッケージが設定されていません。")
             return
@@ -1129,6 +1135,14 @@ class NodeEditorWindow(QMainWindow):
         if not executable.exists():
             self._show_warning_dialog(f"実行ファイルが見つかりません: {executable}")
             return
+
+        if package_name:
+            _, source = self._resolve_rez_package_spec(package_name)
+            if source is None:
+                self._show_warning_dialog(
+                    "Rez パッケージがプロジェクトにもローカルにも存在しません。パスを確認してください。"
+                )
+                return
 
         variants = self._normalize_rez_entries(payload.get("rez_variants"))
         env_vars = self._normalize_env_map(payload.get("rez_environment"))
@@ -1619,14 +1633,9 @@ class NodeEditorWindow(QMainWindow):
         for node in self._collect_all_nodes():
             if not isinstance(node, ToolEnvironmentNode):
                 continue
-            payload = node.get_environment_payload()
-            packages_raw = payload.get("rez_packages") if isinstance(payload, dict) else None
-            if not isinstance(packages_raw, (list, tuple)):
-                continue
-            for package in packages_raw:
-                text = str(package).strip()
-                if text:
-                    packages.add(text)
+            package = self._node_rez_package_name(node)
+            if package:
+                packages.add(package)
         return sorted(packages)
 
     def _check_rez_environments_in_project(self) -> None:
@@ -1635,8 +1644,18 @@ class NodeEditorWindow(QMainWindow):
             return
         warnings: List[str] = []
 
-        available = self._all_rez_packages()
-        missing = [name for name in packages if name not in available]
+        missing: List[str] = []
+        local_only: List[str] = []
+        project_only: List[str] = []
+        for name in packages:
+            local_has = name in self._local_rez_packages
+            project_has = name in self._project_rez_packages
+            if not local_has and not project_has:
+                missing.append(name)
+            elif local_has and not project_has:
+                local_only.append(name)
+            elif project_has and not local_has:
+                project_only.append(name)
         if missing:
             lines = [
                 "次の Rez パッケージがローカルにもプロジェクトにも見つかりません。",
@@ -1646,17 +1665,20 @@ class NodeEditorWindow(QMainWindow):
             lines.extend(f"・{name}" for name in missing)
             warnings.append("\n".join(lines))
 
-        missing_in_project = [
-            name
-            for name in packages
-            if name in self._local_rez_packages and name not in self._project_rez_packages
-        ]
-        if missing_in_project:
+        if local_only:
             lines = [
                 "次の Rez パッケージは KDMrez には存在しますがプロジェクトに同期されていません。",
                 "プロジェクト保存時にコピーされることを確認してください。",
             ]
-            lines.extend(f"・{name}" for name in missing_in_project)
+            lines.extend(f"・{name}" for name in local_only)
+            warnings.append("\n".join(lines))
+
+        if project_only:
+            lines = [
+                "次の Rez パッケージはプロジェクトには存在しますがローカルにありません。",
+                "KDMrez への同期やローカル環境の更新を検討してください。",
+            ]
+            lines.extend(f"・{name}" for name in project_only)
             warnings.append("\n".join(lines))
 
         if self._current_project_root is not None:
@@ -1995,6 +2017,58 @@ class NodeEditorWindow(QMainWindow):
                 else:
                     serializable[key] = str(value)
         return serializable
+
+    def _build_tool_node_name(
+        self, tool: RegisteredTool, definition: ToolEnvironmentDefinition
+    ) -> str:
+        parts = [tool.display_name]
+        if definition.version_label:
+            parts.append(definition.version_label)
+        return " / ".join(part for part in parts if part)
+
+    def _build_rez_node_name(self, spec: RezPackageSpec) -> str:
+        label = spec.version or "local"
+        return f"Rez: {spec.name} ({label})"
+
+    def _primary_rez_package(self, payload: Mapping[str, object] | None) -> str:
+        if not isinstance(payload, Mapping):
+            return ""
+        direct = payload.get("rez_package_name")
+        if isinstance(direct, str) and direct.strip():
+            return direct.strip()
+        packages = payload.get("rez_packages")
+        if isinstance(packages, (list, tuple)) and packages:
+            first = packages[0]
+            if isinstance(first, str) and first.strip():
+                return first.strip()
+        return ""
+
+    def _node_rez_package_name(
+        self,
+        node: ToolEnvironmentNode | None,
+        payload: Mapping[str, object] | None = None,
+    ) -> str:
+        if node is None:
+            return ""
+        if payload is None:
+            payload = node.get_environment_payload()
+        property_value = None
+        try:
+            property_value = node.get_property("rez_package_name")
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("rez_package_name の取得に失敗しました", exc_info=True)
+        if isinstance(property_value, str) and property_value.strip():
+            return property_value.strip()
+        return self._primary_rez_package(payload)
+
+    def _resolve_rez_package_spec(
+        self, package_name: str
+    ) -> Tuple[Optional[RezPackageSpec], Optional[str]]:
+        if package_name in self._project_rez_packages:
+            return self._project_rez_packages[package_name], "project"
+        if package_name in self._local_rez_packages:
+            return self._local_rez_packages[package_name], "local"
+        return None, None
 
     def _node_type_identifier(self, node) -> str:
         type_getter = getattr(node, "type_", None)

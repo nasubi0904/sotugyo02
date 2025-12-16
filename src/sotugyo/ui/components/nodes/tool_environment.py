@@ -45,6 +45,12 @@ class ToolEnvironmentNode(BaseNode):
             widget_tooltip="ツール名",
         )
         self.create_property(
+            "rez_package_name",
+            "",
+            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
+            widget_tooltip="使用する Rez パッケージ名",
+        )
+        self.create_property(
             "version_label",
             "",
             widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
@@ -71,6 +77,7 @@ class ToolEnvironmentNode(BaseNode):
         environment_name: str,
         tool_id: str,
         tool_name: str,
+        rez_package_name: str | None = None,
         version_label: str,
         environment_payload: Mapping[str, Any] | None = None,
     ) -> None:
@@ -78,6 +85,8 @@ class ToolEnvironmentNode(BaseNode):
         self.set_property("environment_id", environment_id, push_undo=False)
         self.set_property("tool_id", tool_id, push_undo=False)
         self.set_property("tool_name", tool_name, push_undo=False)
+        if rez_package_name:
+            self.set_property("rez_package_name", rez_package_name, push_undo=False)
         self.set_property("version_label", version_label, push_undo=False)
         payload = {
             "environment_id": environment_id,
@@ -85,6 +94,8 @@ class ToolEnvironmentNode(BaseNode):
             "tool_name": tool_name,
             "version_label": version_label,
         }
+        if rez_package_name:
+            payload["rez_package_name"] = rez_package_name
         if environment_payload:
             payload.update(environment_payload)
         self.set_property(

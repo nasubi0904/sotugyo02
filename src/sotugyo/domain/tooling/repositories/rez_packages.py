@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from packaging.version import InvalidVersion, Version
+
 from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RezPackageSpec, TemplateInstallationCandidate
 
@@ -181,20 +183,32 @@ class RezPackageRepository:
     def _select_package_dir(package_dir: Path) -> Optional[Path]:
         """package.py を含む最適なディレクトリを選ぶ。"""
 
-        candidates: List[Path] = []
+        base_candidate: Optional[Path] = None
         if (package_dir / "package.py").exists():
-            candidates.append(package_dir)
+            base_candidate = package_dir
+
+        versioned: List[tuple[Optional[Version], Path]] = []
+        unknown: List[Path] = []
         try:
             for child in package_dir.iterdir():
-                if child.is_dir() and (child / "package.py").exists():
-                    candidates.append(child)
+                if not child.is_dir() or not (child / "package.py").exists():
+                    continue
+                try:
+                    parsed = Version(child.name)
+                    versioned.append((parsed, child))
+                except InvalidVersion:
+                    unknown.append(child)
         except OSError:
             LOGGER.debug("Rez パッケージ候補の走査に失敗しました: %s", package_dir, exc_info=True)
             return None
-        if not candidates:
-            return None
-        candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
-        return candidates[0]
+
+        if versioned:
+            versioned.sort(key=lambda item: item[0], reverse=True)
+            return versioned[0][1]
+        if unknown:
+            unknown.sort(key=lambda path: path.name, reverse=True)
+            return unknown[0]
+        return base_candidate
 
 
 @dataclass(slots=True, frozen=True)
