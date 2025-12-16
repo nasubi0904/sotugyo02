@@ -63,8 +63,10 @@ class ToolRegistryDialog(QDialog):
         layout.addWidget(description)
 
         tool_list = QTreeWidget(self)
-        tool_list.setColumnCount(4)
-        tool_list.setHeaderLabels(["表示名", "テンプレート", "バージョン", "実行ファイル"])
+        tool_list.setColumnCount(5)
+        tool_list.setHeaderLabels(
+            ["表示名", "テンプレート", "Rez パッケージ", "バージョン", "実行ファイル"]
+        )
         tool_list.setRootIsDecorated(False)
         tool_list.setAlternatingRowColors(True)
         tool_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -106,10 +108,12 @@ class ToolRegistryDialog(QDialog):
             tools = []
         self._tool_list.clear()
         for tool in tools:
+            rez_package = self._service.resolve_rez_package_name(tool) or "-"
             item = QTreeWidgetItem(
                 [
                     tool.display_name,
                     tool.template_id or "-",
+                    rez_package,
                     tool.version or "-",
                     str(tool.executable_path),
                 ]
@@ -119,6 +123,7 @@ class ToolRegistryDialog(QDialog):
         self._tool_list.resizeColumnToContents(0)
         self._tool_list.resizeColumnToContents(1)
         self._tool_list.resizeColumnToContents(2)
+        self._tool_list.resizeColumnToContents(3)
         if self._status_label is not None:
             self._status_label.setText(f"登録されているツール数: {len(tools)}")
 

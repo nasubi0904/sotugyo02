@@ -1011,6 +1011,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.clear_properties()
             self._update_tool_launch_controls(None)
             self._update_alignment_controls(None)
             return
@@ -1040,6 +1041,7 @@ class NodeEditorWindow(QMainWindow):
                 position_text=pos_text,
             )
             inspector.enable_rename(name)
+            inspector.show_properties(self._node_custom_properties(node))
         self._update_memo_controls(node)
         self._update_tool_launch_controls(node)
         self._update_alignment_controls(node)

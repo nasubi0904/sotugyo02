@@ -294,6 +294,7 @@ class ToolEnvironmentEditDialog(QDialog):
         self._version_edit: Optional[QLineEdit] = None
         self._path_label: Optional[QLabel] = None
         self._package_edit: Optional[QPlainTextEdit] = None
+        self._package_hint: Optional[QLabel] = None
         self._variant_edit: Optional[QLineEdit] = None
         self._env_edit: Optional[QPlainTextEdit] = None
         self._validation_label: Optional[QLabel] = None
@@ -360,6 +361,10 @@ class ToolEnvironmentEditDialog(QDialog):
         self._package_edit.setPlaceholderText("1 行につき 1 つの Rez パッケージを入力します。")
         self._package_edit.textChanged.connect(self._mark_packages_dirty)
         form.addRow("Rez パッケージ", self._package_edit)
+
+        self._package_hint = QLabel("-", self)
+        self._package_hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        form.addRow("登録ツールの Rez", self._package_hint)
 
         self._variant_edit = QLineEdit(self)
         self._variant_edit.setPlaceholderText("カンマ区切りで Rez バリアントを指定")
@@ -436,6 +441,18 @@ class ToolEnvironmentEditDialog(QDialog):
             index = self._template_combo.findData(tool.template_id)
             if index >= 0:
                 self._template_combo.setCurrentIndex(index)
+
+        rez_package = self._service.resolve_rez_package_name(tool) if tool else None
+        if self._package_hint is not None:
+            self._package_hint.setText(rez_package or "-")
+        if (
+            rez_package
+            and self._package_edit is not None
+            and not self._packages_dirty
+            and not self._package_edit.toPlainText().strip()
+        ):
+            self._package_edit.setPlainText(rez_package)
+            self._packages_dirty = False
 
     def _handle_accept(self) -> None:
         if (

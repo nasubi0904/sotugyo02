@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 from qtpy import QtCore, QtWidgets
 
 Qt = QtCore.Qt
 Signal = QtCore.Signal
+QAbstractItemView = QtWidgets.QAbstractItemView
 QDockWidget = QtWidgets.QDockWidget
 QFrame = QtWidgets.QFrame
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
+QHeaderView = QtWidgets.QHeaderView
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QPushButton = QtWidgets.QPushButton
 QSpinBox = QtWidgets.QSpinBox
 QTabWidget = QtWidgets.QTabWidget
+QTableWidget = QtWidgets.QTableWidget
+QTableWidgetItem = QtWidgets.QTableWidgetItem
 QTextEdit = QtWidgets.QTextEdit
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
@@ -67,10 +71,23 @@ class NodeInspectorPanel(QWidget):
         self._launch_tool_button.setEnabled(False)
         self._launch_tool_button.clicked.connect(self.launch_tool_requested)
 
+        self._property_table = QTableWidget(self)
+        self._property_table.setColumnCount(2)
+        self._property_table.setHorizontalHeaderLabels(["キー", "値"])
+        header = self._property_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        self._property_table.verticalHeader().setVisible(False)
+        self._property_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self._property_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self._property_table.setFocusPolicy(Qt.NoFocus)
+        self._property_table.setAlternatingRowColors(True)
+
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
         self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._tabs.addTab(self._build_operation_tab(), "ノード操作")
+        self._tabs.addTab(self._build_property_tab(), "プロパティ")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -145,6 +162,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_uuid_label.setText("-")
         self._detail_position_label.setText("-")
         self.set_tool_launch_enabled(False)
+        self.clear_properties()
 
     def enable_rename(self, value: str) -> None:
         """リネーム操作を有効化する。"""
@@ -213,6 +231,34 @@ class NodeInspectorPanel(QWidget):
 
     def set_tool_launch_enabled(self, enabled: bool) -> None:
         self._launch_tool_button.setEnabled(enabled)
+
+    def show_properties(self, properties: Mapping[str, object]) -> None:
+        if self._property_table is None:
+            return
+        entries = sorted(properties.items()) if properties else []
+        if not entries:
+            self.clear_properties()
+            return
+        self._property_table.setRowCount(len(entries))
+        for row, (key, value) in enumerate(entries):
+            self._property_table.setItem(row, 0, QTableWidgetItem(str(key)))
+            self._property_table.setItem(row, 1, QTableWidgetItem(str(value)))
+
+    def clear_properties(self) -> None:
+        if self._property_table is None:
+            return
+        self._property_table.setRowCount(1)
+        self._property_table.setItem(0, 0, QTableWidgetItem("-"))
+        self._property_table.setItem(0, 1, QTableWidgetItem("-"))
+
+    def _build_property_tab(self) -> QWidget:
+        widget = QFrame(self)
+        widget.setObjectName("inspectorSection")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+        layout.addWidget(self._property_table)
+        return widget
 
 
 class NodeInspectorDock(QDockWidget):
@@ -296,3 +342,9 @@ class NodeInspectorDock(QDockWidget):
 
     def set_tool_launch_enabled(self, enabled: bool) -> None:
         self._panel.set_tool_launch_enabled(enabled)
+
+    def show_properties(self, properties: Mapping[str, object]) -> None:
+        self._panel.show_properties(properties)
+
+    def clear_properties(self) -> None:
+        self._panel.clear_properties()

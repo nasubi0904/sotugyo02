@@ -119,6 +119,29 @@ class ToolEnvironmentService:
         return self.environment_service.remove(environment_id)
 
     # ------------------------------------------------------------------
+    # 登録ツールの Rez パッケージ参照
+    # ------------------------------------------------------------------
+    def resolve_rez_package_name(self, tool: RegisteredTool | str | None) -> Optional[str]:
+        """登録ツールに紐づく Rez パッケージ名を返す。
+
+        template_id を持つツールの場合は Rez パッケージリポジトリの
+        インデックスからパッケージ名を返し、該当がなければ正規化した
+        テンプレート ID をパッケージ名として扱う。
+        """
+
+        tool_obj: Optional[RegisteredTool]
+        if isinstance(tool, RegisteredTool):
+            tool_obj = tool
+        elif isinstance(tool, str):
+            tool_obj = self.get_tool(tool)
+        else:
+            tool_obj = None
+
+        if tool_obj is None or not tool_obj.template_id:
+            return None
+        return self.rez_repository.get_package_name(tool_obj.template_id)
+
+    # ------------------------------------------------------------------
     # テンプレート連携
     # ------------------------------------------------------------------
     def list_templates(self) -> List[Dict[str, str]]:
