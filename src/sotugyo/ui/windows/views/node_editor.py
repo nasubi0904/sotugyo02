@@ -722,6 +722,7 @@ class NodeEditorWindow(QMainWindow):
         pos_y = (self._node_spawn_offset // 4) * 180
         node.set_pos(pos_x, pos_y)
         if isinstance(node, DateNode):
+            node.apply_default_size(self._snap_settings.grid_size)
             node.set_snap_grid_size(self._snap_settings.grid_size)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
@@ -1197,6 +1198,13 @@ class NodeEditorWindow(QMainWindow):
             return False
 
         other_nodes = [node for node in self._graph.all_nodes() if not isinstance(node, DateNode)]
+        snap_areas = {
+            date_node: self._date_node_snap_rect(date_node)
+            for date_node in date_nodes
+        }
+        snap_areas = {node: rect for node, rect in snap_areas.items() if rect is not None}
+        if not snap_areas:
+            return False
         for node in moved_nodes:
             if isinstance(node, DateNode):
                 continue
@@ -1206,12 +1214,17 @@ class NodeEditorWindow(QMainWindow):
         resized = False
         for node in other_nodes:
             center_x, center_y = self._node_center(node)
-            for date_node in date_nodes:
-                if self._is_within_horizontal_bounds(date_node, center_x):
-                    if self._expand_date_node_to_fit_center(date_node, center_y):
+            width, height = self._safe_node_size(node)
+            for date_node, snap_rect in snap_areas.items():
+                if self._is_within_snap_area(snap_rect, center_x, center_y):
+                    if self._expand_date_node_to_fit_center(
+                        date_node,
+                        center_y,
+                        node_half_height=height / 2.0,
+                    ):
                         resized = True
 
-        for date_node in date_nodes:
+        for date_node in snap_areas:
             resized |= self._update_date_node_children(date_node, other_nodes)
 
         return resized
@@ -1425,24 +1438,30 @@ class NodeEditorWindow(QMainWindow):
         width, height = self._safe_node_size(node)
         return pos_x + width / 2.0, pos_y + height / 2.0
 
-    def _date_node_inner_rect(self, date_node: DateNode) -> Tuple[float, float, float, float]:
+    def _date_node_snap_rect(self, date_node: DateNode) -> Optional[Tuple[float, float, float, float]]:
         pos_x, pos_y = self._safe_node_pos(date_node)
         width, height = self._safe_node_size(date_node)
         offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
         inner_height = max(0.0, height - offset * 2.0)
+        if width <= 0.0 or inner_height <= 0.0:
+            return None
         return pos_x, pos_y + offset, width, inner_height
 
-    def _is_within_horizontal_bounds(self, date_node: DateNode, center_x: float) -> bool:
-        pos_x, _ = self._safe_node_pos(date_node)
-        width, _ = self._safe_node_size(date_node)
-        return pos_x <= center_x <= pos_x + width
+    def _is_within_snap_area(
+        self, snap_rect: Tuple[float, float, float, float], center_x: float, center_y: float
+    ) -> bool:
+        left, top, width, height = snap_rect
+        return left <= center_x <= left + width and top <= center_y <= top + height
 
-    def _expand_date_node_to_fit_center(self, date_node: DateNode, center_y: float) -> bool:
+    def _expand_date_node_to_fit_center(
+        self, date_node: DateNode, center_y: float, *, node_half_height: float
+    ) -> bool:
         pos_x, pos_y = self._safe_node_pos(date_node)
         width, height = self._safe_node_size(date_node)
         offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
-        top_needed = center_y - offset
-        bottom_needed = center_y + offset
+        margin = max(offset, 0.0)
+        top_needed = center_y - node_half_height - margin
+        bottom_needed = center_y + node_half_height + margin
 
         new_top = min(pos_y, top_needed)
         new_bottom = max(pos_y + height, bottom_needed)
@@ -1460,9 +1479,10 @@ class NodeEditorWindow(QMainWindow):
         return True
 
     def _update_date_node_children(self, date_node: DateNode, nodes: Iterable) -> bool:
-        inner_x, inner_y, inner_w, inner_h = self._date_node_inner_rect(date_node)
-        if inner_w <= 0.0 or inner_h <= 0.0:
+        snap_rect = self._date_node_snap_rect(date_node)
+        if snap_rect is None:
             return False
+        inner_x, inner_y, inner_w, inner_h = snap_rect
         contained_ids: Set[str] = set()
         for node in nodes:
             if isinstance(node, DateNode):

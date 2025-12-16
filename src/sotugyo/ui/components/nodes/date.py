@@ -31,6 +31,15 @@ class DateNodeItem(BackdropNodeItem):
         width = self._snap_value(pos.x() + self._sizer.size)
         height = self._snap_value(pos.y() + self._sizer.size)
         snapped_pos = QtCore.QPointF(width - self._sizer.size, height - self._sizer.size)
+        current_pos = self._sizer.pos()
+        if (
+            abs(current_pos.x() - snapped_pos.x()) < 0.1
+            and abs(current_pos.y() - snapped_pos.y()) < 0.1
+        ):
+            self._width = width
+            self._height = height
+            self.update()
+            return
         if self._is_snapping:
             self._width = width
             self._height = height
@@ -80,8 +89,7 @@ class DateNode(BackdropNode):
             widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
             widget_tooltip="表示する日付 (YYYY-MM-DD)",
         )
-        self.set_property("width", 200, push_undo=False)
-        self.set_property("height", 120, push_undo=False)
+        self.apply_default_size(DateNodeItem.DEFAULT_SNAP_GRID)
         self.set_color(200, 170, 110)
         self.view.setZValue(Z_VAL_BACKDROP - 1)
         self._child_node_ids: Set[str] = set()
@@ -93,6 +101,12 @@ class DateNode(BackdropNode):
     def set_snap_grid_size(self, grid_size: float) -> None:
         if hasattr(self.view, "set_snap_grid_size"):
             self.view.set_snap_grid_size(grid_size)
+
+    def apply_default_size(self, grid_size: float) -> None:
+        base = float(grid_size) if grid_size > 0 else DateNodeItem.DEFAULT_SNAP_GRID
+        height = max(base * 3.0, self.VERTICAL_OFFSET * 2.0 + base)
+        self.set_property("width", base, push_undo=False)
+        self.set_property("height", height, push_undo=False)
 
     def child_node_ids(self) -> Set[str]:
         return set(self._child_node_ids)
