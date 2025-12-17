@@ -1384,13 +1384,9 @@ class NodeEditorWindow(QMainWindow):
         )
 
         if not getattr(validation, "success", False):
-            detail = self._format_rez_error(
-                stderr=getattr(validation, "stderr", ""),
-                stdout=getattr(validation, "stdout", ""),
-                traceback_text=getattr(validation, "traceback_text", ""),
-            )
+            detail = (getattr(validation, "stderr", "") or getattr(validation, "stdout", "")).strip()
             self._show_error_dialog(
-                "Rez 環境の検証に失敗したためツールを起動できません。\n" + detail
+                "Rez 環境の検証に失敗したためツールを起動できません。\n" + (detail or "詳細ログはありません。")
             )
             return
         result = self._coordinator.tool_service.launch_tool(
@@ -1402,12 +1398,10 @@ class NodeEditorWindow(QMainWindow):
         )
 
         if not result.success:
-            detail = self._format_rez_error(
-                stderr=result.stderr,
-                stdout=result.stdout,
-                traceback_text=getattr(result, "traceback_text", ""),
+            detail = (result.stderr or result.stdout or getattr(result, "traceback_text", "")).strip()
+            self._show_error_dialog(
+                "ツールの起動に失敗しました。\n" + (detail or "詳細ログはありません。")
             )
-            self._show_error_dialog(f"ツールの起動に失敗しました。\n{detail}")
             return
 
         pid_text = f" (PID: {result.pid})" if result.pid is not None else ""
