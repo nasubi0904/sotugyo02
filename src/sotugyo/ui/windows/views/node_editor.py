@@ -1292,13 +1292,13 @@ class NodeEditorWindow(QMainWindow):
         return packages, variants, environment
 
     def _build_launch_tooltip(
-        self, tool: RegisteredTool | None, payload: Mapping[str, object] | None
+        self, exec_path: str | None, payload: Mapping[str, object] | None
     ) -> str:
         lines = ["Rez 環境を構築してツールを起動します。"]
-        if tool is None:
-            lines.append("登録済みツールが見つからないため起動できません。")
+        if exec_path:
+            lines.append(f"実行ファイル: {exec_path}")
         else:
-            lines.append(f"実行ファイル: {tool.executable_path}")
+            lines.append("起動コマンドが未設定です。environment_payload を確認してください。")
         summary = None
         if isinstance(payload, Mapping):
             summary = payload.get("summary") or payload.get("version_label")
@@ -1373,6 +1373,10 @@ class NodeEditorWindow(QMainWindow):
         packages, variants, environment = self._extract_rez_parameters(
             payload if isinstance(payload, Mapping) else None
         )
+        exec_path, args = self._extract_launch_command(payload if isinstance(payload, Mapping) else None)
+        if not exec_path:
+            self._show_warning_dialog("起動コマンドが設定されていません。ノードの environment_payload を確認してください。")
+            return
         validation = self._coordinator.tool_service.validate_rez_environment(
             packages=packages,
             variants=variants,
@@ -1390,10 +1394,11 @@ class NodeEditorWindow(QMainWindow):
             )
             return
         result = self._coordinator.tool_service.launch_tool(
-            executable_path=tool.executable_path,
+            executable_path=exec_path,
             packages=packages,
             variants=variants,
             environment=environment,
+            args=args,
         )
 
         if not result.success:
@@ -1420,6 +1425,35 @@ class NodeEditorWindow(QMainWindow):
         if not parts:
             return "詳細なログは出力されませんでした。"
         return "\n\n".join(parts)
+
+    def _extract_launch_command(self, payload: Mapping[str, object] | None) -> Tuple[str, List[str]]:
+        if not isinstance(payload, Mapping):
+            return "", []
+
+        raw_command = payload.get("command")
+        if isinstance(raw_command, str):
+            try:
+                parts = shlex.split(raw_command)
+            except ValueError:
+                parts = [raw_command]
+        elif isinstance(raw_command, (list, tuple)):
+            parts = [str(entry) for entry in raw_command if str(entry).strip()]
+        else:
+            parts = []
+
+        if not parts:
+            for key in ("executable_path", "executable"):
+                candidate = payload.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    parts = [candidate.strip()]
+                    break
+
+        if not parts:
+            return "", []
+
+        executable = parts[0].strip()
+        args = [str(arg) for arg in parts[1:]]
+        return executable, args
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1800,28 +1834,24 @@ class NodeEditorWindow(QMainWindow):
             return
 
         payload = node.get_environment_payload()
-        tool = self._resolve_tool_for_node(node)
-        tooltip = self._build_launch_tooltip(tool, payload)
+        exec_path, args = self._extract_launch_command(payload if isinstance(payload, Mapping) else None)
+        packages, variants, _env = self._extract_rez_parameters(
+            payload if isinstance(payload, Mapping) else None
+        )
+        tooltip = self._build_launch_tooltip(exec_path, payload)
         inspector.configure_launch_button(
             visible=True,
             text="起動",
-            enabled=tool is not None,
+            enabled=bool(exec_path),
             tooltip=tooltip,
         )
-        payload_tool_id = ""
-        if isinstance(payload, Mapping):
-            raw_tool_id = payload.get("tool_id")
-            if isinstance(raw_tool_id, str):
-                payload_tool_id = raw_tool_id.strip()
-            elif raw_tool_id is not None:
-                payload_tool_id = str(raw_tool_id).strip()
-        property_tool_id = self._read_text_property(node, "tool_id")
         LOGGER.info(
-            "Launch control: node=%s, property_tool_id=%s, payload_tool_id=%s, registered=%s",
+            "Launch control: node=%s, exec=%s, args=%s, packages=%s, variants=%s",
             self._safe_node_name(node),
-            property_tool_id or "(empty)",
-            payload_tool_id or "(empty)",
-            bool(tool),
+            exec_path or "(none)",
+            " ".join(args) if args else "(none)",
+            ", ".join(packages) if packages else "(none)",
+            ", ".join(variants) if variants else "(none)",
         )
 
     def _update_memo_controls(self, node) -> None:
