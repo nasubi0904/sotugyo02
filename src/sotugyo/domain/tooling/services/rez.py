@@ -147,6 +147,8 @@ class RezEnvironmentResolver:
         *,
         payload: Mapping[str, object],
         registered_tools: Mapping[str, RegisteredTool],
+        package_registry: Mapping[str, str] | None = None,
+        package_candidates: Iterable[str] | None = None,
     ) -> ToolRegistrationResolution:
         """ノードに保存されたツール情報を登録済みツールと突き合わせる。"""
 
@@ -154,6 +156,17 @@ class RezEnvironmentResolver:
         tool_id = self._normalize_identifier(normalized_payload.get("tool_id"))
         template_id = self._normalize_identifier(normalized_payload.get("template_id"))
         tool_name = self._normalize_identifier(normalized_payload.get("tool_name"))
+        registry_packages: dict[str, str] = {}
+        for reg_tool_id, package_name in (package_registry or {}).items():
+            if not isinstance(package_name, str) or not package_name.strip():
+                continue
+            tool_obj = registered_tools.get(reg_tool_id)
+            if tool_obj is None:
+                continue
+            registry_packages[tool_obj.tool_id] = package_name.strip()
+        package_candidates = self._normalize_package_candidates(
+            package_candidates, normalized_payload
+        )
 
         tool = registered_tools.get(tool_id) if tool_id else None
         if tool is None and template_id:
@@ -176,6 +189,20 @@ class RezEnvironmentResolver:
                 None,
             )
 
+        if tool is None and registry_packages and package_candidates:
+            for candidate in package_candidates:
+                matched = next(
+                    (
+                        registered_tools.get(tool_id)
+                        for tool_id, package_name in registry_packages.items()
+                        if package_name == candidate
+                    ),
+                    None,
+                )
+                if matched is not None:
+                    tool = matched
+                    break
+
         if tool is None:
             return ToolRegistrationResolution(tool=None, payload=normalized_payload)
 
@@ -192,6 +219,27 @@ class RezEnvironmentResolver:
             payload=normalized_payload,
             updated=updated,
         )
+
+    @staticmethod
+    def _normalize_package_candidates(
+        candidates: Iterable[str] | None, payload: Mapping[str, object]
+    ) -> tuple[str, ...]:
+        normalized: list[str] = []
+        if candidates is not None:
+            for entry in candidates:
+                if isinstance(entry, str) and entry.strip():
+                    normalized.append(entry.strip())
+        direct = payload.get("rez_package_name")
+        if isinstance(direct, str) and direct.strip():
+            normalized.append(direct.strip())
+        packages = payload.get("rez_packages")
+        if isinstance(packages, (list, tuple)):
+            normalized.extend(
+                entry.strip()
+                for entry in packages
+                if isinstance(entry, str) and entry.strip()
+            )
+        return tuple(dict.fromkeys(normalized))
 
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:

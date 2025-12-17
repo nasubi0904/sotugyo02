@@ -147,6 +147,7 @@ class NodeEditorWindow(QMainWindow):
         self._user_manager = self._coordinator.user_manager
         self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
         self._registered_tools: Dict[str, RegisteredTool] = {}
+        self._registered_tool_packages: Dict[str, str] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
         self._local_rez_packages: Dict[str, RezPackageSpec] = {}
         self._project_rez_packages: Dict[str, RezPackageSpec] = {}
@@ -412,6 +413,17 @@ class NodeEditorWindow(QMainWindow):
         snapshot = self._coordinator.load_tool_snapshot()
         self._tool_snapshot = snapshot
         self._registered_tools = dict(snapshot.tools)
+        self._registered_tool_packages = {
+            tool_id: package
+            for tool_id, package in (
+                (
+                    tool_id,
+                    self._coordinator.tool_service.resolve_rez_package_name(tool),
+                )
+                for tool_id, tool in self._registered_tools.items()
+            )
+            if package
+        }
         self._tool_environments = dict(snapshot.environments)
         self._local_rez_packages = {
             spec.name: spec for spec in self._coordinator.list_rez_packages()
@@ -1126,6 +1138,8 @@ class NodeEditorWindow(QMainWindow):
         registration = resolver.reconcile_registered_tool(
             payload=payload,
             registered_tools=self._registered_tools,
+            package_registry=self._registered_tool_packages,
+            package_candidates=self._collect_rez_package_candidates(payload, node),
         )
         payload = registration.payload
         payload_changed = False
@@ -2085,6 +2099,30 @@ class NodeEditorWindow(QMainWindow):
             if isinstance(first, str) and first.strip():
                 return first.strip()
         return ""
+
+    def _collect_rez_package_candidates(
+        self,
+        payload: Mapping[str, object] | None,
+        node: ToolEnvironmentNode | None,
+    ) -> Tuple[str, ...]:
+        normalized: list[str] = []
+        primary = self._primary_rez_package(payload or {})
+        if primary:
+            normalized.append(primary)
+        if isinstance(payload, Mapping):
+            direct = payload.get("rez_package_name")
+            if isinstance(direct, str) and direct.strip():
+                normalized.append(direct.strip())
+            normalized.extend(self._normalize_rez_entries(payload.get("rez_packages")))
+        if node is not None:
+            try:
+                property_value = node.get_property("rez_package_name")
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug("rez_package_name プロパティの取得に失敗しました", exc_info=True)
+                property_value = None
+            if isinstance(property_value, str) and property_value.strip():
+                normalized.append(property_value.strip())
+        return tuple(dict.fromkeys(normalized))
 
     def _align_node_rez_package(
         self,

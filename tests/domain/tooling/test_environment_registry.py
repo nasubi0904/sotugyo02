@@ -224,3 +224,23 @@ def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> Non
     path_entries = called_env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
 
+
+def test_reconcile_registered_tool_matches_by_package_name() -> None:
+    resolver = RezEnvironmentResolver()
+    tool = make_tool("tool-registered")
+    payload = {
+        "tool_id": "maya",  # 古いプロジェクトでパッケージ名を tool_id に保存していたケース
+        "rez_packages": ["maya"],
+        "rez_package_name": "maya",
+    }
+
+    result = resolver.reconcile_registered_tool(
+        payload=payload,
+        registered_tools={tool.tool_id: tool},
+        package_registry={tool.tool_id: "maya"},
+    )
+
+    assert result.tool == tool
+    assert result.updated is True
+    assert result.payload["tool_id"] == tool.tool_id
+    assert result.payload["tool_name"] == tool.display_name
