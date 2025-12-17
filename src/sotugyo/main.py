@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import json
@@ -89,6 +90,23 @@ def _write_exit_report(path: str, result: MainRunResult) -> None:
         json.dump(payload, fp, ensure_ascii=False, indent=2)
 
 
+def _configure_logging() -> None:
+    """ロギングを初期化して INFO 以上を標準出力へ出す。"""
+
+    if logging.getLogger().handlers:
+        return
+
+    level_name = os.environ.get("SOTUGYO_LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelName(level_name)
+    if not isinstance(level, int):
+        level = logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
+
+
 def _run_application(
     *,
     headless: bool,
@@ -99,6 +117,8 @@ def _run_application(
     """Qt アプリケーションを起動し、終了理由を判別する。"""
 
     exit_reason: dict[str, ExitReason] = {"value": "manual"}
+
+    _configure_logging()
 
     if headless:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -174,3 +194,18 @@ def main() -> int:
 
 if __name__ == "__main__":  # pragma: no cover - 直接実行時のみ
     sys.exit(main())
+def _configure_logging() -> None:
+    """ロギングを初期化して INFO 以上を標準出力へ出す。"""
+
+    if logging.getLogger().handlers:
+        return
+
+    level_name = os.environ.get("SOTUGYO_LOG_LEVEL", "INFO").upper()
+    level = logging.getLevelName(level_name)
+    if not isinstance(level, int):
+        level = logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s %(name)s: %(message)s",
+        stream=sys.stdout,
+    )
