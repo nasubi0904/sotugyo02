@@ -1192,6 +1192,9 @@ class NodeEditorWindow(QMainWindow):
 
         variants = self._normalize_rez_entries(payload.get("rez_variants"))
         env_vars = self._normalize_env_map(payload.get("rez_environment"))
+        env_vars = resolver.inject_package_path_hint(
+            env_vars, payload.get("package_path")
+        )
 
         validation = resolver.resolve(
             packages=list(packages),

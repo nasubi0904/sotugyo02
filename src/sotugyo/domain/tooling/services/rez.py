@@ -6,6 +6,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, Mapping, Optional, Sequence, Tuple
 
 from ..models import RegisteredTool
@@ -219,6 +220,43 @@ class RezEnvironmentResolver:
             payload=normalized_payload,
             updated=updated,
         )
+
+    def inject_package_path_hint(
+        self, environment: Mapping[str, str] | None, package_path: str | os.PathLike | None
+    ) -> dict[str, str]:
+        """Rez パッケージのパスから PATH ヒントを付与する。
+
+        Rez コマンドが PATH に無い環境で package_path が既知であれば、
+        KDMrez 配下のパスを SOTUGYO_REZ_PATH に追加して Rez の探索に利用する。
+        """
+
+        updated: dict[str, str] = dict(environment) if environment else {}
+        if not package_path:
+            return updated
+
+        try:
+            package_dir = Path(package_path)
+        except (TypeError, OSError):
+            return updated
+
+        candidates: list[str] = []
+        for candidate in (
+            package_dir,
+            package_dir.parent,
+            package_dir.parent.parent,
+        ):
+            if candidate and candidate.exists() and candidate.is_dir():
+                candidates.append(str(candidate))
+
+        existing_hint = updated.get(self._path_env_var, "")
+        if existing_hint:
+            candidates.extend(
+                entry for entry in existing_hint.split(os.pathsep) if entry.strip()
+            )
+        merged = tuple(dict.fromkeys(candidates))
+        if merged:
+            updated[self._path_env_var] = os.pathsep.join(merged)
+        return updated
 
     @staticmethod
     def _normalize_package_candidates(

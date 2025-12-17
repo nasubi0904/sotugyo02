@@ -244,3 +244,21 @@ def test_reconcile_registered_tool_matches_by_package_name() -> None:
     assert result.updated is True
     assert result.payload["tool_id"] == tool.tool_id
     assert result.payload["tool_name"] == tool.display_name
+
+
+def test_inject_package_path_hint_appends_existing_hint(tmp_path) -> None:
+    package_path = tmp_path / "dcc_blender" / "4.3"
+    package_path.mkdir(parents=True)
+    existing = tmp_path / "rez_bin"
+    existing.mkdir()
+
+    resolver = RezEnvironmentResolver()
+    env = {"SOTUGYO_REZ_PATH": str(existing)}
+
+    updated = resolver.inject_package_path_hint(env, package_path)
+
+    hint_entries = updated["SOTUGYO_REZ_PATH"].split(os.pathsep)
+    assert str(package_path.parent.parent) in hint_entries  # KDMrez root
+    assert str(package_path.parent) in hint_entries  # package 名ディレクトリ
+    assert str(package_path) in hint_entries  # バージョンディレクトリ
+    assert str(existing) in hint_entries  # 既存値も保持
