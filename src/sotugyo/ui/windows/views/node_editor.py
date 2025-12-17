@@ -420,7 +420,16 @@ class NodeEditorWindow(QMainWindow):
         self._local_rez_packages = {
             spec.name: spec for spec in self._coordinator.list_rez_packages()
         }
+        self._log_registered_tools()
         self._refresh_content_browser_entries()
+
+    def _log_registered_tools(self) -> None:
+        if not self._registered_tools:
+            LOGGER.info("Registered tools: (none)")
+            return
+        sorted_tools = sorted(self._registered_tools.values(), key=lambda t: t.tool_id)
+        preview = ", ".join(tool.tool_id for tool in sorted_tools)
+        LOGGER.info("Registered tools: %s", preview)
 
     def _refresh_content_browser_entries(self) -> None:
         if self._content_dock is None:
