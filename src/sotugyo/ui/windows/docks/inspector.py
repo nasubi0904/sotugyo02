@@ -21,7 +21,6 @@ QTextEdit = QtWidgets.QTextEdit
 QPlainTextEdit = QtWidgets.QPlainTextEdit
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
-QFormLayout = QtWidgets.QFormLayout
 
 
 class NodeInspectorPanel(QWidget):
@@ -49,11 +48,10 @@ class NodeInspectorPanel(QWidget):
         self._detail_position_label = QLabel("-", self)
         self._detail_children_label = QLabel("-", self)
         self._detail_children_label.setWordWrap(True)
-        self._property_container = QFrame(self)
-        self._property_layout = QFormLayout(self._property_container)
-        self._property_layout.setContentsMargins(0, 0, 0, 0)
-        self._property_layout.setSpacing(10)
-        self._property_fields: list[QWidget] = []
+        self._property_plain_text = QPlainTextEdit(self)
+        self._property_plain_text.setReadOnly(True)
+        self._property_plain_text.setPlaceholderText("選択中ノードのプロパティ一覧がここに表示されます。")
+        self._property_plain_text.setMinimumHeight(140)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -104,7 +102,7 @@ class NodeInspectorPanel(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
-        layout.addWidget(self._property_container)
+        layout.addWidget(self._property_plain_text)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -208,32 +206,13 @@ class NodeInspectorPanel(QWidget):
     def show_properties(self, properties: Iterable[Tuple[str, str]]) -> None:
         """ノードのプロパティ一覧を表示する。"""
 
-        self.clear_properties()
-        for name, value in properties:
-            label = QLabel(name, self._property_container)
-            label.setWordWrap(True)
-            value_box = QPlainTextEdit(self._property_container)
-            value_box.setReadOnly(True)
-            value_box.setPlainText(value)
-            value_box.setMinimumHeight(32)
-            value_box.setMaximumHeight(120)
-            value_box.setLineWrapMode(QPlainTextEdit.NoWrap)
-            value_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            value_box.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-            self._property_layout.addRow(label, value_box)
-            self._property_fields.extend([label, value_box])
+        lines = [f"{name}: {value}" for name, value in properties]
+        self._property_plain_text.setPlainText("\n".join(lines))
 
     def clear_properties(self) -> None:
         """プロパティ表示をリセットする。"""
 
-        while self._property_layout.count():
-            item = self._property_layout.takeAt(0)
-            if item is None:
-                continue
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        self._property_fields.clear()
+        self._property_plain_text.clear()
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
