@@ -50,6 +50,8 @@ class NodeInspectorPanel(QWidget):
         self._detail_children_label = QLabel("-", self)
         self._detail_children_label.setWordWrap(True)
         self._property_view = QTreeWidget(self)
+        self._property_copy_button = QPushButton("一覧をコピー", self)
+        self._property_copy_button.clicked.connect(self._copy_properties_to_clipboard)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -69,8 +71,8 @@ class NodeInspectorPanel(QWidget):
 
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
-        self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._tabs.addTab(self._build_property_tab(), "プロパティ")
+        self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._tabs.addTab(self._build_operation_tab(), "ノード操作")
 
         layout = QVBoxLayout(self)
@@ -100,6 +102,11 @@ class NodeInspectorPanel(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
+        button_layout = QHBoxLayout()
+        button_layout.addStretch(1)
+        button_layout.addWidget(self._property_copy_button)
+        layout.addLayout(button_layout)
+
         self._property_view.setColumnCount(2)
         self._property_view.setHeaderLabels(["プロパティ", "値"])
         self._property_view.setRootIsDecorated(False)
@@ -107,8 +114,8 @@ class NodeInspectorPanel(QWidget):
         self._property_view.setIndentation(0)
         self._property_view.setWordWrap(True)
         self._property_view.setUniformRowHeights(False)
-        self._property_view.setSelectionMode(QTreeWidget.NoSelection)
-        self._property_view.setFocusPolicy(Qt.NoFocus)
+        self._property_view.setSelectionMode(QTreeWidget.ExtendedSelection)
+        self._property_view.setSelectionBehavior(QTreeWidget.SelectRows)
         self._property_view.setAlternatingRowColors(True)
         header = self._property_view.header()
         if header is not None:
@@ -230,6 +237,26 @@ class NodeInspectorPanel(QWidget):
         """プロパティ表示をリセットする。"""
 
         self._property_view.clear()
+
+    def _copy_properties_to_clipboard(self) -> None:
+        items = self._property_view.selectedItems()
+        if not items:
+            items = [
+                self._property_view.topLevelItem(i)
+                for i in range(self._property_view.topLevelItemCount())
+            ]
+        lines = []
+        for item in items:
+            if not isinstance(item, QTreeWidgetItem):
+                continue
+            name = item.text(0)
+            value = item.text(1)
+            lines.append(f"{name}: {value}")
+        if not lines:
+            return
+        clipboard = QtWidgets.QApplication.clipboard()
+        if clipboard is not None:
+            clipboard.setText("\n".join(lines))
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
