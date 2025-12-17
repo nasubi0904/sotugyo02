@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 import traceback
@@ -212,6 +213,9 @@ class RezEnvironmentResolver:
             process = subprocess.Popen(  # noqa: S603,S607 - 実行コマンドを明示
                 command,
                 env=env_vars,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
         except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
             return RezLaunchResult(
@@ -221,11 +225,31 @@ class RezEnvironmentResolver:
                 traceback_text=traceback.format_exc(),
             )
 
+        self._stream_output(process, stream_name="stdout", level=logging.INFO)
+        self._stream_output(process, stream_name="stderr", level=logging.ERROR)
+
         return RezLaunchResult(
             success=True,
             command=tuple(command),
             pid=process.pid,
         )
+
+    @staticmethod
+    def _stream_output(process: subprocess.Popen, *, stream_name: str, level: int) -> None:
+        stream = getattr(process, stream_name, None)
+        if stream is None:
+            return
+
+        def _run() -> None:
+            try:
+                for line in stream:
+                    if not line:
+                        continue
+                    LOGGER.log(level, "[rez %s] %s", stream_name, line.rstrip())
+            except Exception:  # pragma: no cover - ストリーム読み取りエラーはログのみ
+                LOGGER.debug("Rez 出力の読み取り中に例外が発生しました", exc_info=True)
+
+        threading.Thread(target=_run, name=f"RezStream-{stream_name}", daemon=True).start()
 
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
