@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from qtpy import QtCore, QtWidgets
 
@@ -20,6 +20,8 @@ QTabWidget = QtWidgets.QTabWidget
 QTextEdit = QtWidgets.QTextEdit
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
+QTreeWidget = QtWidgets.QTreeWidget
+QTreeWidgetItem = QtWidgets.QTreeWidgetItem
 
 
 class NodeInspectorPanel(QWidget):
@@ -47,6 +49,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_position_label = QLabel("-", self)
         self._detail_children_label = QLabel("-", self)
         self._detail_children_label.setWordWrap(True)
+        self._property_view = QTreeWidget(self)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -67,6 +70,7 @@ class NodeInspectorPanel(QWidget):
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
         self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
+        self._tabs.addTab(self._build_property_tab(), "プロパティ")
         self._tabs.addTab(self._build_operation_tab(), "ノード操作")
 
         layout = QVBoxLayout(self)
@@ -87,6 +91,31 @@ class NodeInspectorPanel(QWidget):
         layout.addRow("UUID", self._detail_uuid_label)
         layout.addRow("位置", self._detail_position_label)
         layout.addRow("子ノード", self._detail_children_label)
+        return widget
+
+    def _build_property_tab(self) -> QWidget:
+        widget = QFrame(self)
+        widget.setObjectName("inspectorSection")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        self._property_view.setColumnCount(2)
+        self._property_view.setHeaderLabels(["プロパティ", "値"])
+        self._property_view.setRootIsDecorated(False)
+        self._property_view.setItemsExpandable(False)
+        self._property_view.setIndentation(0)
+        self._property_view.setWordWrap(True)
+        self._property_view.setUniformRowHeights(False)
+        self._property_view.setSelectionMode(QTreeWidget.NoSelection)
+        self._property_view.setFocusPolicy(Qt.NoFocus)
+        self._property_view.setAlternatingRowColors(True)
+        header = self._property_view.header()
+        if header is not None:
+            header.setStretchLastSection(True)
+            header.setDefaultSectionSize(120)
+
+        layout.addWidget(self._property_view)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -144,6 +173,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_uuid_label.setText("-")
         self._detail_position_label.setText("-")
         self._detail_children_label.setText("-")
+        self.clear_properties()
 
     def enable_rename(self, value: str) -> None:
         """リネーム操作を有効化する。"""
@@ -185,6 +215,21 @@ class NodeInspectorPanel(QWidget):
     def _set_memo_enabled(self, enabled: bool) -> None:
         self._memo_text_edit.setEnabled(enabled)
         self._memo_font_spin.setEnabled(enabled)
+
+    def show_properties(self, properties: Iterable[Tuple[str, str]]) -> None:
+        """ノードのプロパティ一覧を表示する。"""
+
+        self._property_view.clear()
+        for name, value in properties:
+            item = QTreeWidgetItem([name, value])
+            item.setFirstColumnSpanned(False)
+            self._property_view.addTopLevelItem(item)
+        self._property_view.resizeColumnToContents(0)
+
+    def clear_properties(self) -> None:
+        """プロパティ表示をリセットする。"""
+
+        self._property_view.clear()
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
@@ -289,3 +334,9 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_memo(self) -> None:
         self._panel.clear_memo()
+
+    def show_properties(self, properties: Iterable[Tuple[str, str]]) -> None:
+        self._panel.show_properties(properties)
+
+    def clear_properties(self) -> None:
+        self._panel.clear_properties()

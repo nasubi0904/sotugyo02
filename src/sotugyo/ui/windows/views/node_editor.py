@@ -1112,6 +1112,8 @@ class NodeEditorWindow(QMainWindow):
         if metadata_changed:
             self._set_modified(True)
 
+        properties = self._collect_node_properties(node)
+
         if inspector is not None:
             inspector.update_node_details(
                 name=name,
@@ -1120,6 +1122,7 @@ class NodeEditorWindow(QMainWindow):
                 position_text=pos_text,
                 children_text=self._describe_date_node_children(node),
             )
+            inspector.show_properties(properties)
             inspector.enable_rename(name)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
@@ -1145,6 +1148,71 @@ class NodeEditorWindow(QMainWindow):
         header = f"{len(names)} 件"
         detail_lines = "\n".join(f"・{name}" for name in names)
         return f"{header}\n{detail_lines}"
+
+    def _collect_node_properties(self, node) -> List[Tuple[str, str]]:
+        properties: List[Tuple[str, str]] = []
+        if node is None:
+            return properties
+
+        seen_keys: Set[str] = set()
+        custom_props = self._node_custom_properties(node)
+        for key in sorted(custom_props):
+            label = str(key)
+            properties.append((label, self._format_property_value(custom_props[key])))
+            seen_keys.add(label)
+
+        raw_props: Mapping[str, object] | None = None
+        getter = getattr(node, "properties", None)
+        if callable(getter):
+            try:
+                raw_props = getter()
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug(
+                    "ノードプロパティの取得に失敗しました: node=%s",
+                    self._safe_node_name(node),
+                    exc_info=True,
+                )
+        if isinstance(raw_props, Mapping):
+            skip_keys = {
+                "id",
+                "type_",
+                "inputs",
+                "outputs",
+                "input_ports",
+                "output_ports",
+                "ports",
+                "subgraph_session",
+                "template",
+            }
+            for key in sorted(raw_props):
+                if key in skip_keys or key == "custom":
+                    continue
+                label = str(key)
+                if label in seen_keys:
+                    continue
+                properties.append((label, self._format_property_value(raw_props[key])))
+
+        return properties
+
+    def _format_property_value(self, value: object) -> str:
+        if isinstance(value, (QtCore.QPointF, QtCore.QPoint)):
+            try:
+                return f"({float(value.x()):.0f}, {float(value.y()):.0f})"
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("座標値の整形に失敗しました: %r", value, exc_info=True)
+        if isinstance(value, Mapping):
+            try:
+                return json.dumps(value, ensure_ascii=False, indent=2)
+            except TypeError:
+                return str(value)
+        if isinstance(value, (list, tuple, set)):
+            try:
+                return json.dumps(list(value), ensure_ascii=False, indent=2)
+            except TypeError:
+                return ", ".join(str(item) for item in value)
+        if value is None:
+            return "-"
+        return str(value)
 
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
