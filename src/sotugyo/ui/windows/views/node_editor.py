@@ -1364,6 +1364,22 @@ class NodeEditorWindow(QMainWindow):
         packages, variants, environment = self._extract_rez_parameters(
             payload if isinstance(payload, Mapping) else None
         )
+        validation = self._coordinator.tool_service.validate_rez_environment(
+            packages=packages,
+            variants=variants,
+            environment=environment,
+        )
+
+        if not getattr(validation, "success", False):
+            detail = self._format_rez_error(
+                stderr=getattr(validation, "stderr", ""),
+                stdout=getattr(validation, "stdout", ""),
+                traceback_text=getattr(validation, "traceback_text", ""),
+            )
+            self._show_error_dialog(
+                "Rez 環境の検証に失敗したためツールを起動できません。\n" + detail
+            )
+            return
         result = self._coordinator.tool_service.launch_tool(
             executable_path=tool.executable_path,
             packages=packages,
@@ -1372,13 +1388,29 @@ class NodeEditorWindow(QMainWindow):
         )
 
         if not result.success:
-            detail = result.stderr or result.stdout or "原因不明のエラーが発生しました。"
-            self._show_warning_dialog(f"ツールの起動に失敗しました。\n{detail}")
+            detail = self._format_rez_error(
+                stderr=result.stderr,
+                stdout=result.stdout,
+                traceback_text=getattr(result, "traceback_text", ""),
+            )
+            self._show_error_dialog(f"ツールの起動に失敗しました。\n{detail}")
             return
 
         pid_text = f" (PID: {result.pid})" if result.pid is not None else ""
         command_text = " ".join(result.command)
         self._show_info_dialog(f"ツールを起動しました{pid_text}。\n{command_text}")
+
+    def _format_rez_error(self, *, stderr: str, stdout: str, traceback_text: str) -> str:
+        parts = []
+        if stderr.strip():
+            parts.append(f"[stderr]\n{stderr.strip()}")
+        if stdout.strip():
+            parts.append(f"[stdout]\n{stdout.strip()}")
+        if traceback_text.strip():
+            parts.append(f"[traceback]\n{traceback_text.strip()}")
+        if not parts:
+            return "詳細なログは出力されませんでした。"
+        return "\n\n".join(parts)
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")

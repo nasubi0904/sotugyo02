@@ -8,6 +8,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+import traceback
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
 
@@ -52,6 +53,7 @@ class RezLaunchResult:
     pid: int | None = None
     stdout: str = ""
     stderr: str = ""
+    traceback_text: str = ""
 
     def message(self) -> str:
         if self.success:
@@ -60,6 +62,8 @@ class RezLaunchResult:
             return self.stderr.strip()
         if self.stdout.strip():
             return self.stdout.strip()
+        if self.traceback_text.strip():
+            return self.traceback_text.strip()
         return "Rez 環境でのツール起動に失敗しました。"
 
     def to_dict(self) -> Dict[str, object]:
@@ -69,6 +73,7 @@ class RezLaunchResult:
             "pid": self.pid,
             "stdout": self.stdout,
             "stderr": self.stderr,
+            "traceback": self.traceback_text,
         }
 
 
@@ -213,6 +218,7 @@ class RezEnvironmentResolver:
                 success=False,
                 command=tuple(command),
                 stderr=str(exc),
+                traceback_text=traceback.format_exc(),
             )
 
         return RezLaunchResult(
