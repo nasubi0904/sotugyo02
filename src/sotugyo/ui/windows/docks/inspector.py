@@ -45,6 +45,8 @@ class NodeInspectorPanel(QWidget):
         self._detail_type_label = QLabel("-", self)
         self._detail_uuid_label = QLabel("-", self)
         self._detail_position_label = QLabel("-", self)
+        self._detail_children_label = QLabel("-", self)
+        self._detail_children_label.setWordWrap(True)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -84,6 +86,7 @@ class NodeInspectorPanel(QWidget):
         layout.addRow("タイプ", self._detail_type_label)
         layout.addRow("UUID", self._detail_uuid_label)
         layout.addRow("位置", self._detail_position_label)
+        layout.addRow("子ノード", self._detail_children_label)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -123,6 +126,7 @@ class NodeInspectorPanel(QWidget):
         node_type: object,
         node_uuid: str,
         position_text: str,
+        children_text: str,
     ) -> None:
         """選択ノードの詳細情報を表示する。"""
 
@@ -130,6 +134,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_type_label.setText(str(node_type) if node_type else "-")
         self._detail_uuid_label.setText(node_uuid or "-")
         self._detail_position_label.setText(position_text or "-")
+        self._detail_children_label.setText(children_text or "-")
 
     def clear_node_details(self) -> None:
         """詳細情報をリセットする。"""
@@ -138,6 +143,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_type_label.setText("-")
         self._detail_uuid_label.setText("-")
         self._detail_position_label.setText("-")
+        self._detail_children_label.setText("-")
 
     def enable_rename(self, value: str) -> None:
         """リネーム操作を有効化する。"""
@@ -259,12 +265,14 @@ class NodeInspectorDock(QDockWidget):
         node_type: object,
         node_uuid: str,
         position_text: str,
+        children_text: str,
     ) -> None:
         self._panel.update_node_details(
             name=name,
             node_type=node_type,
             node_uuid=node_uuid,
             position_text=position_text,
+            children_text=children_text,
         )
 
     def clear_node_details(self) -> None:

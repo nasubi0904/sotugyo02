@@ -42,6 +42,7 @@ LOGGER = logging.getLogger(__name__)
 
 from ...components.content_browser import NodeCatalogEntry
 from ...components.nodes import (
+    DateNode,
     MemoNode,
     ReviewNode,
     TaskNode,
@@ -116,10 +117,12 @@ class NodeEditorWindow(QMainWindow):
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
         self._sync_snap_spacing_with_background()
+        self._refresh_date_node_snap_grid()
         self._graph.register_node(TaskNode)
         self._graph.register_node(ReviewNode)
         self._graph.register_node(MemoNode)
         self._graph.register_node(ToolEnvironmentNode)
+        self._graph.register_node(DateNode)
         self._nodes_moved_handler = getattr(self._graph, "_on_nodes_moved", None)
 
         self._graph_widget = self._graph.widget
@@ -129,6 +132,7 @@ class NodeEditorWindow(QMainWindow):
         self._task_count = 0
         self._review_count = 0
         self._memo_count = 0
+        self._date_count = 0
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
@@ -137,6 +141,7 @@ class NodeEditorWindow(QMainWindow):
         self._current_project_settings: Optional[ProjectSettings] = None
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
+        self._is_updating_selection = False
         self._coordinator = NodeEditorCoordinator(
             project_service=project_service,
             user_manager=user_manager,
@@ -154,6 +159,7 @@ class NodeEditorWindow(QMainWindow):
             "sotugyo.demo.TaskNode": self._create_task_node,
             "sotugyo.demo.ReviewNode": self._create_review_node,
             MemoNode.node_type_identifier(): self._create_memo_node,
+            DateNode.node_type_identifier(): self._create_date_node,
         }
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
@@ -521,6 +527,13 @@ class NodeEditorWindow(QMainWindow):
                 keywords=("review", "チェック", "検証"),
             ),
             NodeCatalogRecord(
+                node_type=DateNode.node_type_identifier(),
+                title=DateNode.NODE_NAME,
+                subtitle="日付ラベルとして扱う装飾ノード",
+                genre="タイムライン",
+                keywords=("date", "日付", "スケジュール"),
+            ),
+            NodeCatalogRecord(
                 node_type=MemoNode.node_type_identifier(),
                 title=MemoNode.NODE_NAME,
                 subtitle="ノードエディタ上で自由に記述できるメモ",
@@ -559,6 +572,9 @@ class NodeEditorWindow(QMainWindow):
 
         add_memo_action = menu.addAction("メモノードを追加")
         add_memo_action.triggered.connect(self._create_memo_node)
+
+        add_date_action = menu.addAction("日付ノードを追加")
+        add_date_action.triggered.connect(self._create_date_node)
 
         menu.addSeparator()
 
@@ -697,6 +713,10 @@ class NodeEditorWindow(QMainWindow):
         self._memo_count += 1
         self._create_node(MemoNode.node_type_identifier(), f"メモ {self._memo_count}")
 
+    def _create_date_node(self) -> None:
+        self._date_count += 1
+        self._create_node(DateNode.node_type_identifier(), f"日付 {self._date_count}")
+
     def _create_asset_node(self, asset_name: str) -> None:
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
@@ -757,6 +777,9 @@ class NodeEditorWindow(QMainWindow):
         pos_x = (self._node_spawn_offset % 4) * 220
         pos_y = (self._node_spawn_offset // 4) * 180
         node.set_pos(pos_x, pos_y)
+        if isinstance(node, DateNode):
+            node.apply_default_size(self._snap_settings.grid_size)
+            node.set_snap_grid_size(self._snap_settings.grid_size)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -986,7 +1009,72 @@ class NodeEditorWindow(QMainWindow):
             nodes = list(self._known_nodes)
         return nodes
 
+    def _collect_date_child_ids(self, date_nodes: Iterable[DateNode]) -> Set[str]:
+        child_ids: Set[str] = set()
+        for date_node in date_nodes:
+            child_ids_getter = getattr(date_node, "child_node_ids", None)
+            if not callable(child_ids_getter):
+                continue
+            try:
+                child_ids.update({node_id for node_id in (child_ids_getter() or []) if node_id})
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug(
+                    "子ノードIDの取得に失敗しました: node=%s",
+                    self._safe_node_name(date_node),
+                    exc_info=True,
+                )
+        return child_ids
+
+    def _select_date_children_if_needed(self) -> bool:
+        try:
+            selected_nodes = list(self._graph.selected_nodes())
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("選択中ノードの取得に失敗しました", exc_info=True)
+            return False
+
+        date_nodes = [node for node in selected_nodes if isinstance(node, DateNode)]
+        if not date_nodes:
+            return False
+
+        child_ids = self._collect_date_child_ids(date_nodes)
+        additional_nodes = []
+        for child_id in child_ids:
+            child = self._graph.get_node_by_id(child_id)
+            if child is None or child in selected_nodes:
+                continue
+            additional_nodes.append(child)
+
+        if not additional_nodes:
+            return False
+
+        self._is_updating_selection = True
+        try:
+            for child in additional_nodes:
+                setter = getattr(child, "set_selected", None)
+                if not callable(setter):
+                    continue
+                try:
+                    setter(True)
+                except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                    LOGGER.debug(
+                        "子ノードの選択状態の更新に失敗しました: node=%s",
+                        self._safe_node_name(child),
+                        exc_info=True,
+                    )
+        finally:
+            self._is_updating_selection = False
+
+        self._update_selected_node_info()
+        return True
+
     def _on_selection_changed(self, *_args, **_kwargs) -> None:
+        if self._is_updating_selection:
+            self._update_selected_node_info()
+            return
+
+        if self._select_date_children_if_needed():
+            return
+
         self._update_selected_node_info()
 
     def _on_port_connection_changed(self, *_ports, **_kwargs) -> None:
@@ -1030,10 +1118,33 @@ class NodeEditorWindow(QMainWindow):
                 node_type=node_type,
                 node_uuid=node_uuid,
                 position_text=pos_text,
+                children_text=self._describe_date_node_children(node),
             )
             inspector.enable_rename(name)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
+
+    def _describe_date_node_children(self, node) -> str:
+        if not isinstance(node, DateNode):
+            return "-"
+
+        child_ids = self._collect_date_child_ids([node])
+        if not child_ids:
+            return "なし"
+
+        names = []
+        for child_id in child_ids:
+            child = self._graph.get_node_by_id(child_id)
+            if child is None:
+                continue
+            names.append(self._safe_node_name(child))
+
+        if not names:
+            return "なし"
+
+        header = f"{len(names)} 件"
+        detail_lines = "\n".join(f"・{name}" for name in names)
+        return f"{header}\n{detail_lines}"
 
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
@@ -1110,9 +1221,12 @@ class NodeEditorWindow(QMainWindow):
     def _handle_nodes_moved(self, node_data) -> None:
         node_views = list(node_data.keys()) if isinstance(node_data, Mapping) else []
         snapped = self._apply_snap_to_views(node_views)
+        moved_nodes = [self._graph.get_node_by_id(getattr(view, "id", "")) for view in node_views]
+        moved_nodes = [node for node in moved_nodes if node is not None]
+        resized = self._apply_date_node_containment(moved_nodes)
         if callable(self._nodes_moved_handler):
             self._nodes_moved_handler(node_data)
-        if snapped:
+        if snapped or resized:
             self._set_modified(True)
 
     def _apply_snap_to_views(self, node_views: Iterable) -> bool:
@@ -1134,6 +1248,43 @@ class NodeEditorWindow(QMainWindow):
             self._update_selected_node_info()
         return updated
 
+    def _apply_date_node_containment(self, moved_nodes: Iterable) -> bool:
+        date_nodes = [node for node in self._graph.all_nodes() if isinstance(node, DateNode)]
+        if not date_nodes:
+            return False
+
+        other_nodes = [node for node in self._graph.all_nodes() if not isinstance(node, DateNode)]
+        snap_areas = {
+            date_node: self._date_node_snap_rect(date_node)
+            for date_node in date_nodes
+        }
+        snap_areas = {node: rect for node, rect in snap_areas.items() if rect is not None}
+        if not snap_areas:
+            return False
+        for node in moved_nodes:
+            if isinstance(node, DateNode):
+                continue
+            if node not in other_nodes:
+                other_nodes.append(node)
+
+        resized = False
+        for node in other_nodes:
+            center_x, center_y = self._node_center(node)
+            width, height = self._safe_node_size(node)
+            for date_node, snap_rect in snap_areas.items():
+                if self._is_within_snap_area(snap_rect, center_x, center_y):
+                    if self._expand_date_node_to_fit_center(
+                        date_node,
+                        center_y,
+                        node_half_height=height / 2.0,
+                    ):
+                        resized = True
+
+        for date_node in snap_areas:
+            resized |= self._update_date_node_children(date_node, other_nodes)
+
+        return resized
+
     def _snap_point(self, pos_x: float, pos_y: float) -> Tuple[float, float]:
         """縦グリッドへ矛盾なく揃えた座標を返す。"""
 
@@ -1142,6 +1293,12 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _refresh_date_node_snap_grid(self) -> None:
+        grid_size = float(self._snap_settings.grid_size)
+        for node in self._graph.all_nodes():
+            if isinstance(node, DateNode):
+                node.set_snap_grid_size(grid_size)
+
     def _sync_snap_spacing_with_background(self) -> None:
         """背景縞パターンと同じピクセル幅で縦スナップを行う。"""
 
@@ -1149,6 +1306,7 @@ class NodeEditorWindow(QMainWindow):
             return
         spacing = max(1, int(self._background_pattern.total_width()))
         self._snap_settings.grid_size = float(spacing)
+        self._refresh_date_node_snap_grid()
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
@@ -1282,9 +1440,118 @@ class NodeEditorWindow(QMainWindow):
             pos = node.pos()
             if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                 return float(pos[0]), float(pos[1])
+            if isinstance(pos, (QtCore.QPointF, QtCore.QPoint)):
+                return float(pos.x()), float(pos.y())
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
             LOGGER.debug("ノード位置の取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
         return 0.0, 0.0
+
+    def _safe_node_property(self, node, name: str) -> Optional[float]:
+        getter = getattr(node, "get_property", None)
+        if callable(getter):
+            try:
+                value = getter(name)
+                return float(value)  # type: ignore[arg-type]
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug(
+                    "ノードプロパティの取得に失敗しました: node=%s, property=%s",
+                    self._safe_node_name(node),
+                    name,
+                    exc_info=True,
+                )
+
+        fallback_value = getattr(node, name, None)
+        try:
+            if fallback_value is not None:
+                return float(fallback_value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            LOGGER.debug(
+                "ノードプロパティの変換に失敗しました: node=%s, property=%s, value=%r",
+                self._safe_node_name(node),
+                name,
+                fallback_value,
+                exc_info=True,
+            )
+        return None
+
+    def _safe_node_size(self, node) -> Tuple[float, float]:
+        width = self._safe_node_property(node, "width")
+        height = self._safe_node_property(node, "height")
+        if width is not None and height is not None:
+            return width, height
+        view = getattr(node, "view", None)
+        bounding_rect_getter = getattr(view, "boundingRect", None)
+        if callable(bounding_rect_getter):
+            try:
+                rect = bounding_rect_getter()
+                return float(rect.width()), float(rect.height())
+            except Exception:  # pragma: no cover - Qt 依存の例外
+                LOGGER.debug("ノードの矩形サイズ取得に失敗しました: node=%s", self._safe_node_name(node), exc_info=True)
+        return 0.0, 0.0
+
+    def _node_center(self, node) -> Tuple[float, float]:
+        pos_x, pos_y = self._safe_node_pos(node)
+        width, height = self._safe_node_size(node)
+        return pos_x + width / 2.0, pos_y + height / 2.0
+
+    def _date_node_snap_rect(self, date_node: DateNode) -> Optional[Tuple[float, float, float, float]]:
+        pos_x, pos_y = self._safe_node_pos(date_node)
+        width, height = self._safe_node_size(date_node)
+        offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
+        inner_height = max(0.0, height - offset * 2.0)
+        if width <= 0.0 or inner_height <= 0.0:
+            return None
+        return pos_x, pos_y + offset, width, inner_height
+
+    def _is_within_snap_area(
+        self, snap_rect: Tuple[float, float, float, float], center_x: float, center_y: float
+    ) -> bool:
+        left, top, width, height = snap_rect
+        return left <= center_x <= left + width and top <= center_y <= top + height
+
+    def _expand_date_node_to_fit_center(
+        self, date_node: DateNode, center_y: float, *, node_half_height: float
+    ) -> bool:
+        pos_x, pos_y = self._safe_node_pos(date_node)
+        width, height = self._safe_node_size(date_node)
+        offset = getattr(DateNode, "VERTICAL_OFFSET", 0.0)
+        margin = max(offset, 0.0)
+        top_needed = center_y - node_half_height - margin
+        bottom_needed = center_y + node_half_height + margin
+
+        new_top = min(pos_y, top_needed)
+        new_bottom = max(pos_y + height, bottom_needed)
+        new_height = max(height, new_bottom - new_top)
+
+        if abs(new_top - pos_y) < 1e-3 and abs(new_height - height) < 1e-3:
+            return False
+
+        self._move_node_if_needed(date_node, pos_x, new_top)
+        try:
+            date_node.set_property("height", new_height, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("日付ノードの高さ更新に失敗しました", exc_info=True)
+            return False
+        return True
+
+    def _update_date_node_children(self, date_node: DateNode, nodes: Iterable) -> bool:
+        snap_rect = self._date_node_snap_rect(date_node)
+        if snap_rect is None:
+            return False
+        inner_x, inner_y, inner_w, inner_h = snap_rect
+        contained_ids: Set[str] = set()
+        for node in nodes:
+            if isinstance(node, DateNode):
+                continue
+            center_x, center_y = self._node_center(node)
+            if (
+                inner_x <= center_x <= inner_x + inner_w
+                and inner_y <= center_y <= inner_y + inner_h
+            ):
+                node_id = getattr(node, "id", None)
+                if node_id:
+                    contained_ids.add(node_id)
+        return date_node.update_child_nodes(contained_ids)
 
     def _move_node_if_needed(self, node, pos_x: float, pos_y: float) -> bool:
         current_x, current_y = self._safe_node_pos(node)
@@ -1852,6 +2119,8 @@ class NodeEditorWindow(QMainWindow):
                 pos = position()
                 if isinstance(pos, (list, tuple)) and len(pos) >= 2:
                     return [float(pos[0]), float(pos[1])]
+                if isinstance(pos, (QtCore.QPointF, QtCore.QPoint)):
+                    return [float(pos.x()), float(pos.y())]
             except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
                 LOGGER.debug("ノード位置の取得に失敗しました: %r", node, exc_info=True)
         return [0.0, 0.0]
