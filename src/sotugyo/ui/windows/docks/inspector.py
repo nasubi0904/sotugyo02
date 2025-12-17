@@ -18,6 +18,7 @@ QPushButton = QtWidgets.QPushButton
 QSpinBox = QtWidgets.QSpinBox
 QTabWidget = QtWidgets.QTabWidget
 QTextEdit = QtWidgets.QTextEdit
+QPlainTextEdit = QtWidgets.QPlainTextEdit
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 QTreeWidget = QtWidgets.QTreeWidget
@@ -50,8 +51,10 @@ class NodeInspectorPanel(QWidget):
         self._detail_children_label = QLabel("-", self)
         self._detail_children_label.setWordWrap(True)
         self._property_view = QTreeWidget(self)
-        self._property_copy_button = QPushButton("一覧をコピー", self)
-        self._property_copy_button.clicked.connect(self._copy_properties_to_clipboard)
+        self._property_plain_text = QPlainTextEdit(self)
+        self._property_plain_text.setReadOnly(True)
+        self._property_plain_text.setPlaceholderText("選択中ノードのプロパティをコピーする際に利用できます。")
+        self._property_plain_text.setMinimumHeight(120)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -102,11 +105,6 @@ class NodeInspectorPanel(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
-        button_layout = QHBoxLayout()
-        button_layout.addStretch(1)
-        button_layout.addWidget(self._property_copy_button)
-        layout.addLayout(button_layout)
-
         self._property_view.setColumnCount(2)
         self._property_view.setHeaderLabels(["プロパティ", "値"])
         self._property_view.setRootIsDecorated(False)
@@ -123,6 +121,7 @@ class NodeInspectorPanel(QWidget):
             header.setDefaultSectionSize(120)
 
         layout.addWidget(self._property_view)
+        layout.addWidget(self._property_plain_text)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -227,36 +226,20 @@ class NodeInspectorPanel(QWidget):
         """ノードのプロパティ一覧を表示する。"""
 
         self._property_view.clear()
+        plain_lines = []
         for name, value in properties:
             item = QTreeWidgetItem([name, value])
             item.setFirstColumnSpanned(False)
             self._property_view.addTopLevelItem(item)
+            plain_lines.append(f"{name}: {value}")
         self._property_view.resizeColumnToContents(0)
+        self._property_plain_text.setPlainText("\n".join(plain_lines))
 
     def clear_properties(self) -> None:
         """プロパティ表示をリセットする。"""
 
         self._property_view.clear()
-
-    def _copy_properties_to_clipboard(self) -> None:
-        items = self._property_view.selectedItems()
-        if not items:
-            items = [
-                self._property_view.topLevelItem(i)
-                for i in range(self._property_view.topLevelItemCount())
-            ]
-        lines = []
-        for item in items:
-            if not isinstance(item, QTreeWidgetItem):
-                continue
-            name = item.text(0)
-            value = item.text(1)
-            lines.append(f"{name}: {value}")
-        if not lines:
-            return
-        clipboard = QtWidgets.QApplication.clipboard()
-        if clipboard is not None:
-            clipboard.setText("\n".join(lines))
+        self._property_plain_text.clear()
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
