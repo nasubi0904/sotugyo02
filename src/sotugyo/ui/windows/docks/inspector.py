@@ -29,6 +29,7 @@ class NodeInspectorPanel(QWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_requested = Signal()
 
     def __init__(
         self,
@@ -52,6 +53,9 @@ class NodeInspectorPanel(QWidget):
         self._property_plain_text.setReadOnly(True)
         self._property_plain_text.setPlaceholderText("選択中ノードのプロパティ一覧がここに表示されます。")
         self._property_plain_text.setMinimumHeight(140)
+        self._launch_button = QPushButton("起動", self)
+        self._launch_button.setVisible(False)
+        self._launch_button.clicked.connect(self._emit_launch_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -103,6 +107,7 @@ class NodeInspectorPanel(QWidget):
         layout.setSpacing(10)
 
         layout.addWidget(self._property_plain_text)
+        layout.addWidget(self._launch_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -213,12 +218,35 @@ class NodeInspectorPanel(QWidget):
         """プロパティ表示をリセットする。"""
 
         self._property_plain_text.clear()
+        self.configure_launch_button(visible=False)
+
+    def configure_launch_button(
+        self,
+        *,
+        visible: bool,
+        text: str | None = None,
+        enabled: bool = True,
+        tooltip: str | None = None,
+    ) -> None:
+        """ツールノード専用の起動ボタンを設定する。"""
+
+        self._launch_button.setVisible(visible)
+        self._launch_button.setEnabled(enabled)
+        if text is not None:
+            self._launch_button.setText(text)
+        if tooltip is not None:
+            self._launch_button.setToolTip(tooltip)
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
         text = self._rename_input.text().strip()
         self.rename_requested.emit(text)
+
+    def _emit_launch_request(self) -> None:
+        if not self._launch_button.isVisible() or not self._launch_button.isEnabled():
+            return
+        self.launch_requested.emit()
 
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
@@ -245,6 +273,7 @@ class NodeInspectorDock(QDockWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_requested = Signal()
 
     def __init__(
         self,
@@ -270,6 +299,7 @@ class NodeInspectorDock(QDockWidget):
         panel.rename_requested.connect(self.rename_requested)
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
+        panel.launch_requested.connect(self.launch_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -323,3 +353,18 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_properties(self) -> None:
         self._panel.clear_properties()
+
+    def configure_launch_button(
+        self,
+        *,
+        visible: bool,
+        text: str | None = None,
+        enabled: bool = True,
+        tooltip: str | None = None,
+    ) -> None:
+        self._panel.configure_launch_button(
+            visible=visible,
+            text=text,
+            enabled=enabled,
+            tooltip=tooltip,
+        )

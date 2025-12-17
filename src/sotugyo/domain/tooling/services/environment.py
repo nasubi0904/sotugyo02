@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from ..models import RegisteredTool, ToolEnvironmentDefinition
 from ..repositories.config import ToolConfigRepository
-from .rez import RezEnvironmentResolver, RezResolveResult
+from .rez import RezEnvironmentResolver, RezLaunchResult, RezResolveResult
 
 
 @dataclass(slots=True)
@@ -118,6 +119,30 @@ class ToolEnvironmentRegistryService:
             packages=list(packages),
             variants=list(variants or ()),
             environment=environment or {},
+        )
+
+    def launch_tool(
+        self,
+        *,
+        executable_path: str | Path,
+        packages: Iterable[str] | None = None,
+        variants: Iterable[str] | None = None,
+        environment: Optional[Dict[str, str]] = None,
+        args: Iterable[str] | None = None,
+    ) -> RezLaunchResult:
+        resolver = self.rez_resolver
+        if resolver is None:  # pragma: no cover - 予防的措置
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                stderr="Rez ランチャーが初期化されていません。",
+            )
+        return resolver.launch_tool(
+            str(executable_path),
+            packages=list(packages or ()),
+            variants=list(variants or ()) or None,
+            environment=environment or {},
+            args=list(args or ()),
         )
 
     @staticmethod

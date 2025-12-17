@@ -229,6 +229,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.launch_requested.connect(self._handle_launch_tool)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1092,6 +1093,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.configure_launch_button(visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1124,6 +1126,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+        self._update_launch_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1214,6 +1217,86 @@ class NodeEditorWindow(QMainWindow):
             return "-"
         return str(value)
 
+    def _read_text_property(self, node, name: str) -> str:
+        getter = getattr(node, "get_property", None)
+        if callable(getter):
+            try:
+                value = getter(name)
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug(
+                    "ノードプロパティの取得に失敗しました: node=%s, property=%s",
+                    self._safe_node_name(node),
+                    name,
+                    exc_info=True,
+                )
+            else:
+                if isinstance(value, str):
+                    return value.strip()
+                if value is not None:
+                    return str(value).strip()
+
+        fallback = getattr(node, name, None)
+        if isinstance(fallback, str):
+            return fallback.strip()
+        if fallback is not None:
+            return str(fallback).strip()
+        return ""
+
+    def _resolve_tool_for_node(self, node: ToolEnvironmentNode) -> RegisteredTool | None:
+        tool_id = self._read_text_property(node, "tool_id")
+        if not tool_id:
+            payload = node.get_environment_payload()
+            if isinstance(payload, Mapping):
+                raw_tool_id = payload.get("tool_id")
+                if isinstance(raw_tool_id, str):
+                    tool_id = raw_tool_id.strip()
+                elif raw_tool_id is not None:
+                    tool_id = str(raw_tool_id).strip()
+        if not tool_id:
+            return None
+        return self._registered_tools.get(tool_id)
+
+    def _extract_rez_parameters(
+        self, payload: Mapping[str, object] | None
+    ) -> Tuple[List[str], List[str], Dict[str, str]]:
+        packages: List[str] = []
+        variants: List[str] = []
+        environment: Dict[str, str] = {}
+        if payload is None:
+            return packages, variants, environment
+
+        raw_packages = payload.get("rez_packages") if isinstance(payload, Mapping) else None
+        if isinstance(raw_packages, (list, tuple)):
+            packages = [str(entry).strip() for entry in raw_packages if str(entry).strip()]
+
+        raw_variants = payload.get("rez_variants") if isinstance(payload, Mapping) else None
+        if isinstance(raw_variants, (list, tuple)):
+            variants = [str(entry).strip() for entry in raw_variants if str(entry).strip()]
+
+        raw_env = payload.get("rez_environment") if isinstance(payload, Mapping) else None
+        if isinstance(raw_env, Mapping):
+            environment = {
+                str(key).strip(): str(value).strip()
+                for key, value in raw_env.items()
+                if isinstance(key, str) and isinstance(value, str) and str(key).strip()
+            }
+        return packages, variants, environment
+
+    def _build_launch_tooltip(
+        self, tool: RegisteredTool | None, payload: Mapping[str, object] | None
+    ) -> str:
+        lines = ["Rez 環境を構築してツールを起動します。"]
+        if tool is None:
+            lines.append("登録済みツールが見つからないため起動できません。")
+        else:
+            lines.append(f"実行ファイル: {tool.executable_path}")
+        summary = None
+        if isinstance(payload, Mapping):
+            summary = payload.get("summary") or payload.get("version_label")
+        if summary:
+            lines.append(f"環境概要: {summary}")
+        return "\n".join(lines)
+
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
             self._show_info_dialog("名前を変更するノードを選択してください。")
@@ -1265,6 +1348,37 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_launch_tool(self) -> None:
+        node = self._current_node
+        if not isinstance(node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツール環境ノードを選択してください。")
+            return
+
+        tool = self._resolve_tool_for_node(node)
+        if tool is None:
+            self._show_warning_dialog("登録済みツールが見つからないため起動できません。")
+            return
+
+        payload = node.get_environment_payload()
+        packages, variants, environment = self._extract_rez_parameters(
+            payload if isinstance(payload, Mapping) else None
+        )
+        result = self._coordinator.tool_service.launch_tool(
+            executable_path=tool.executable_path,
+            packages=packages,
+            variants=variants,
+            environment=environment,
+        )
+
+        if not result.success:
+            detail = result.stderr or result.stdout or "原因不明のエラーが発生しました。"
+            self._show_warning_dialog(f"ツールの起動に失敗しました。\n{detail}")
+            return
+
+        pid_text = f" (PID: {result.pid})" if result.pid is not None else ""
+        command_text = " ".join(result.command)
+        self._show_info_dialog(f"ツールを起動しました{pid_text}。\n{command_text}")
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1631,6 +1745,24 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("ノード位置の更新に失敗しました", exc_info=True)
             return False
         return True
+
+    def _update_launch_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, ToolEnvironmentNode):
+            inspector.configure_launch_button(visible=False)
+            return
+
+        payload = node.get_environment_payload()
+        tool = self._resolve_tool_for_node(node)
+        tooltip = self._build_launch_tooltip(tool, payload)
+        inspector.configure_launch_button(
+            visible=True,
+            text="起動",
+            enabled=tool is not None,
+            tooltip=tooltip,
+        )
 
     def _update_memo_controls(self, node) -> None:
         inspector = self._inspector_dock

@@ -10,6 +10,7 @@ from .models import (
 )
 from .repositories import ToolConfigRepository
 from .services import (
+    RezLaunchResult,
     ToolEnvironmentRegistryService,
     ToolEnvironmentService,
     ToolRegistryService,
@@ -19,6 +20,7 @@ from .templates import TemplateGateway
 __all__ = [
     "RegisteredTool",
     "RezPackageSpec",
+    "RezLaunchResult",
     "TemplateGateway",
     "TemplateInstallationCandidate",
     "ToolConfigRepository",

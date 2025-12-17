@@ -7,6 +7,7 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
 
@@ -37,6 +38,35 @@ class RezResolveResult:
             "success": self.success,
             "command": list(self.command),
             "return_code": self.return_code,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class RezLaunchResult:
+    """Rez 環境でツールを起動した結果。"""
+
+    success: bool
+    command: Tuple[str, ...]
+    pid: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+
+    def message(self) -> str:
+        if self.success:
+            return "Rez 環境でのツール起動に成功しました。"
+        if self.stderr.strip():
+            return self.stderr.strip()
+        if self.stdout.strip():
+            return self.stdout.strip()
+        return "Rez 環境でのツール起動に失敗しました。"
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "success": self.success,
+            "command": list(self.command),
+            "pid": self.pid,
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
@@ -122,6 +152,75 @@ class RezEnvironmentResolver:
             stderr=completed.stderr,
         )
 
+    def launch_tool(
+        self,
+        executable_path: str,
+        *,
+        packages: Sequence[str] | None = None,
+        variants: Sequence[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        args: Sequence[str] | None = None,
+    ) -> RezLaunchResult:
+        normalized_packages = tuple(
+            entry.strip() for entry in (packages or ()) if isinstance(entry, str) and entry.strip()
+        )
+        executable = executable_path.strip()
+        if not executable:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                stderr="起動する実行ファイルが指定されていません。",
+            )
+        executable_path_obj = Path(executable)
+        try:
+            executable_exists = executable_path_obj.exists()
+        except OSError:
+            executable_exists = False
+        if not executable_exists:
+            return RezLaunchResult(
+                success=False,
+                command=(executable,),
+                stderr=f"実行ファイルが見つかりません: {executable}",
+            )
+        executable = str(executable_path_obj)
+        env_vars = self._build_environment(environment)
+        path_env = env_vars.get("PATH") or env_vars.get("Path") or ""
+
+        if normalized_packages:
+            if shutil.which(self._executable, path=path_env) is None:
+                return RezLaunchResult(
+                    success=False,
+                    command=(self._executable,),
+                    stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                )
+            command: list[str] = [self._executable, "env", *normalized_packages]
+            variant_args = self._build_variant_arguments(variants or ())
+            command.extend(variant_args)
+            command.extend(["--", executable])
+        else:
+            command = [executable]
+
+        if args:
+            command.extend(str(arg) for arg in args if str(arg).strip())
+
+        try:
+            process = subprocess.Popen(  # noqa: S603,S607 - 実行コマンドを明示
+                command,
+                env=env_vars,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
+            return RezLaunchResult(
+                success=False,
+                command=tuple(command),
+                stderr=str(exc),
+            )
+
+        return RezLaunchResult(
+            success=True,
+            command=tuple(command),
+            pid=process.pid,
+        )
+
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
         normalized = [variant.strip() for variant in variants if variant and variant.strip()]
@@ -167,4 +266,4 @@ class RezEnvironmentResolver:
         )
 
 
-__all__ = ["RezEnvironmentResolver", "RezResolveResult"]
+__all__ = ["RezEnvironmentResolver", "RezLaunchResult", "RezResolveResult"]
