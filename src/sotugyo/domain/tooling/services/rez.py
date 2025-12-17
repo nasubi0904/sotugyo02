@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -96,6 +100,7 @@ class RezEnvironmentResolver:
                 env=env,
             )
         except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
+            LOGGER.error("Rez コマンドの実行に失敗しました: %s", exc)
             return RezResolveResult(
                 success=False,
                 command=tuple(command),
@@ -104,6 +109,11 @@ class RezEnvironmentResolver:
             )
 
         success = completed.returncode == 0
+        if not success:
+            if completed.stdout:
+                LOGGER.error("Rez コマンド標準出力:\n%s", completed.stdout)
+            if completed.stderr:
+                LOGGER.error("Rez コマンド標準エラー:\n%s", completed.stderr)
         return RezResolveResult(
             success=success,
             command=tuple(command),
