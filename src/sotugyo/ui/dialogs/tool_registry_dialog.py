@@ -39,6 +39,7 @@ class ToolRegistryDialog(QDialog):
         self._service = service
         self._tool_list: Optional[QTreeWidget] = None
         self._status_label: Optional[QLabel] = None
+        self._remove_button: Optional[QPushButton] = None
         self._refresh_on_accept = False
 
         self.setWindowTitle("ツール環境設定")
@@ -67,10 +68,11 @@ class ToolRegistryDialog(QDialog):
         tool_list.setHeaderLabels(["表示名", "テンプレート", "バージョン", "実行ファイル"])
         tool_list.setRootIsDecorated(False)
         tool_list.setAlternatingRowColors(True)
-        tool_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        tool_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         tool_list.setSelectionBehavior(QAbstractItemView.SelectRows)
         tool_list.setUniformRowHeights(True)
         tool_list.setAllColumnsShowFocus(True)
+        tool_list.itemSelectionChanged.connect(self._update_action_states)
         layout.addWidget(tool_list, 1)
         self._tool_list = tool_list
 
@@ -81,6 +83,7 @@ class ToolRegistryDialog(QDialog):
         auto_button.clicked.connect(self._auto_register_all_templates)
         remove_button = QPushButton("選択ツールを削除")
         remove_button.clicked.connect(self._remove_selected_tool)
+        self._remove_button = remove_button
         button_row.addWidget(add_button)
         button_row.addWidget(auto_button)
         button_row.addWidget(remove_button)
@@ -95,6 +98,8 @@ class ToolRegistryDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close, Qt.Horizontal, self)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        self._update_action_states()
 
     def _refresh_tool_list(self) -> None:
         if self._tool_list is None:
@@ -121,6 +126,17 @@ class ToolRegistryDialog(QDialog):
         self._tool_list.resizeColumnToContents(2)
         if self._status_label is not None:
             self._status_label.setText(f"登録されているツール数: {len(tools)}")
+        self._update_action_states()
+
+    def _selected_tool_ids(self) -> List[str]:
+        if self._tool_list is None:
+            return []
+        identifiers: List[str] = []
+        for item in self._tool_list.selectedItems():
+            tool_id = item.data(0, Qt.UserRole)
+            if isinstance(tool_id, str):
+                identifiers.append(tool_id)
+        return identifiers
 
     def _open_add_menu(self) -> None:
         button = self.sender()
@@ -160,34 +176,47 @@ class ToolRegistryDialog(QDialog):
         self._refresh_tool_list()
 
     def _remove_selected_tool(self) -> None:
-        if self._tool_list is None:
-            return
-        current = self._tool_list.currentItem()
-        if current is None:
+        tool_ids = self._selected_tool_ids()
+        if not tool_ids:
             QMessageBox.information(self, "削除", "削除するツールを選択してください。")
             return
-        tool_id = current.data(0, Qt.UserRole)
-        if not isinstance(tool_id, str):
-            return
+        count = len(tool_ids)
+        question = "選択したツールを削除しますか？関連する環境定義も削除されます。"
+        if count > 1:
+            question = f"選択した {count} 件のツールを削除しますか？関連する環境定義も削除されます。"
         reply = QMessageBox.question(
             self,
             "確認",
-            "選択したツールを削除しますか？関連する環境定義も削除されます。",
+            question,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
-        try:
-            removed = self._service.remove_tool(tool_id)
-        except OSError as exc:
-            QMessageBox.critical(self, "削除に失敗", str(exc))
-            return
-        if not removed:
-            QMessageBox.warning(self, "削除", "指定されたツールが見つかりませんでした。")
-            return
-        self._refresh_on_accept = True
-        self._refresh_tool_list()
+        removed_count = 0
+        missing: List[str] = []
+        for tool_id in tool_ids:
+            try:
+                removed = self._service.remove_tool(tool_id)
+            except OSError as exc:
+                QMessageBox.critical(self, "削除に失敗", str(exc))
+                return
+            if removed:
+                removed_count += 1
+            else:
+                missing.append(tool_id)
+        if missing:
+            if removed_count == 0:
+                QMessageBox.warning(self, "削除", "指定されたツールが見つかりませんでした。")
+            else:
+                QMessageBox.warning(
+                    self,
+                    "削除",
+                    f"{removed_count} 件を削除しましたが、{len(missing)} 件が見つかりませんでした。",
+                )
+        if removed_count > 0:
+            self._refresh_on_accept = True
+            self._refresh_tool_list()
 
     def _auto_register_all_templates(self) -> None:
         templates = self._service.list_templates()
@@ -242,6 +271,10 @@ class ToolRegistryDialog(QDialog):
         if registered or skipped:
             self._refresh_on_accept = True
             self._refresh_tool_list()
+
+    def _update_action_states(self) -> None:
+        if self._remove_button is not None:
+            self._remove_button.setEnabled(bool(self._selected_tool_ids()))
 
 
 class ToolRegistrationDialog(QDialog):
