@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from packaging.version import InvalidVersion, Version
+
 from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RezPackageSpec, TemplateInstallationCandidate
 
@@ -193,8 +195,19 @@ class RezPackageRepository:
             return None
         if not candidates:
             return None
-        candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
-        return candidates[0]
+        scored_candidates = []
+        for path in candidates:
+            try:
+                version_key = Version(path.name)
+                has_version = True
+            except InvalidVersion:
+                version_key = Version("0")
+                has_version = False
+            mtime = path.stat().st_mtime if path.exists() else 0.0
+            scored_candidates.append((has_version, version_key, mtime, path))
+
+        scored_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
+        return scored_candidates[0][3]
 
 
 @dataclass(slots=True, frozen=True)

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Iterable, Optional, Tuple
 
 from qtpy import QtCore, QtWidgets
 
@@ -18,6 +18,7 @@ QPushButton = QtWidgets.QPushButton
 QSpinBox = QtWidgets.QSpinBox
 QTabWidget = QtWidgets.QTabWidget
 QTextEdit = QtWidgets.QTextEdit
+QPlainTextEdit = QtWidgets.QPlainTextEdit
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
@@ -47,6 +48,10 @@ class NodeInspectorPanel(QWidget):
         self._detail_position_label = QLabel("-", self)
         self._detail_children_label = QLabel("-", self)
         self._detail_children_label.setWordWrap(True)
+        self._property_plain_text = QPlainTextEdit(self)
+        self._property_plain_text.setReadOnly(True)
+        self._property_plain_text.setPlaceholderText("選択中ノードのプロパティ一覧がここに表示されます。")
+        self._property_plain_text.setMinimumHeight(140)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -66,6 +71,7 @@ class NodeInspectorPanel(QWidget):
 
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
+        self._tabs.addTab(self._build_property_tab(), "プロパティ")
         self._tabs.addTab(self._build_detail_tab(), "ノード詳細")
         self._tabs.addTab(self._build_operation_tab(), "ノード操作")
 
@@ -87,6 +93,16 @@ class NodeInspectorPanel(QWidget):
         layout.addRow("UUID", self._detail_uuid_label)
         layout.addRow("位置", self._detail_position_label)
         layout.addRow("子ノード", self._detail_children_label)
+        return widget
+
+    def _build_property_tab(self) -> QWidget:
+        widget = QFrame(self)
+        widget.setObjectName("inspectorSection")
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(10)
+
+        layout.addWidget(self._property_plain_text)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -144,6 +160,7 @@ class NodeInspectorPanel(QWidget):
         self._detail_uuid_label.setText("-")
         self._detail_position_label.setText("-")
         self._detail_children_label.setText("-")
+        self.clear_properties()
 
     def enable_rename(self, value: str) -> None:
         """リネーム操作を有効化する。"""
@@ -185,6 +202,17 @@ class NodeInspectorPanel(QWidget):
     def _set_memo_enabled(self, enabled: bool) -> None:
         self._memo_text_edit.setEnabled(enabled)
         self._memo_font_spin.setEnabled(enabled)
+
+    def show_properties(self, properties: Iterable[Tuple[str, str]]) -> None:
+        """ノードのプロパティ一覧を表示する。"""
+
+        lines = [f"{name}: {value}" for name, value in properties]
+        self._property_plain_text.setPlainText("\n".join(lines))
+
+    def clear_properties(self) -> None:
+        """プロパティ表示をリセットする。"""
+
+        self._property_plain_text.clear()
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
@@ -289,3 +317,9 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_memo(self) -> None:
         self._panel.clear_memo()
+
+    def show_properties(self, properties: Iterable[Tuple[str, str]]) -> None:
+        self._panel.show_properties(properties)
+
+    def clear_properties(self) -> None:
+        self._panel.clear_properties()
