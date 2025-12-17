@@ -14,6 +14,7 @@ DEFAULT_DIRECTORIES: List[str] = [
     "renders",
     "reviews",
     "config",
+    "config/rez_packages",
 ]
 DEFAULT_FILES: List[str] = [
     "config/project_settings.json",

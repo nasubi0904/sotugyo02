@@ -41,8 +41,15 @@ class RezResolveResult:
 class RezEnvironmentResolver:
     """Rez CLI を呼び出してパッケージ解決を検証する。"""
 
-    def __init__(self, executable: str = "rez") -> None:
+    def __init__(
+        self,
+        executable: str = "rez",
+        *,
+        path_env_var: str = "SOTUGYO_REZ_PATH",
+    ) -> None:
         self._executable = executable
+        self._path_env_var = path_env_var
+        self._apply_rez_path_hint()
 
     def resolve(
         self,
@@ -62,8 +69,11 @@ class RezEnvironmentResolver:
                 stdout="Rez パッケージが指定されていないため検証を省略しました。",
             )
 
+        env = self._build_environment(environment)
+        path_env = env.get("PATH") or env.get("Path") or ""
+
         executable = self._executable
-        if shutil.which(executable) is None:
+        if shutil.which(executable, path=path_env) is None:
             return RezResolveResult(
                 success=False,
                 command=(executable,),
@@ -75,12 +85,6 @@ class RezEnvironmentResolver:
         variant_args = self._build_variant_arguments(variants or ())
         command.extend(variant_args)
         command.extend(["--", "python", "-c", "pass"])
-
-        env = os.environ.copy()
-        if environment:
-            for key, value in environment.items():
-                if isinstance(key, str) and isinstance(value, str):
-                    env[key] = value
 
         try:
             completed = subprocess.run(  # noqa: S603,S607 - 実行コマンドを明示
@@ -115,6 +119,42 @@ class RezEnvironmentResolver:
             return ()
         joined = ",".join(normalized)
         return ("--variants", joined)
+
+    def _build_environment(
+        self, user_environment: Mapping[str, str] | None = None
+    ) -> dict[str, str]:
+        """Rez 実行用の環境変数セットを構築する。"""
+
+        base_env = os.environ.copy()
+        if user_environment:
+            for key, value in user_environment.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    base_env[key] = value
+
+        path_value = self._build_path_value(base_env)
+        base_env["PATH"] = path_value
+        base_env["Path"] = path_value
+        return base_env
+
+    def _build_path_value(self, env: Mapping[str, str]) -> str:
+        rez_path_raw = env.get(self._path_env_var, "")
+        hint_paths = [entry.strip() for entry in rez_path_raw.split(os.pathsep) if entry.strip()]
+
+        current_path = env.get("PATH") or env.get("Path") or ""
+        existing_entries = [entry for entry in current_path.split(os.pathsep) if entry]
+        merged_entries = list(dict.fromkeys([*hint_paths, *existing_entries]))
+        return os.pathsep.join(merged_entries)
+
+    def _apply_rez_path_hint(self) -> None:
+        """PATH を上書きして後続のプロセスに Rez パスを伝搬させる。"""
+
+        updated_env = self._build_environment({})
+        os.environ.update(
+            {
+                "PATH": updated_env["PATH"],
+                "Path": updated_env["Path"],
+            }
+        )
 
 
 __all__ = ["RezEnvironmentResolver", "RezResolveResult"]

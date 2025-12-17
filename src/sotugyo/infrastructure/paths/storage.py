@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["get_app_config_dir", "get_machine_config_dir"]
+__all__ = ["get_app_config_dir", "get_machine_config_dir", "get_rez_package_dir"]
 
 APP_DIR_NAME = "SotugyoTool"
 
@@ -43,3 +43,18 @@ def get_machine_config_dir() -> Path:
 
     user_dir = get_app_config_dir()
     return user_dir.parent / f"{APP_DIR_NAME.lower()}-machine"
+
+
+def get_rez_package_dir() -> Path:
+    """Rez パッケージの保存先ディレクトリを返す。"""
+
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
+        if base:
+            return Path(base) / "KDMrez"
+        return Path.home() / "AppData" / "Local" / "KDMrez"
+
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data) / "kdmrez"
+    return Path.home() / ".local" / "share" / "kdmrez"

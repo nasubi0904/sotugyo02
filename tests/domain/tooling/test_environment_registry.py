@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
+import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -11,7 +15,7 @@ if str(ROOT) not in sys.path:
 from src.sotugyo.domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
 from src.sotugyo.domain.tooling.repositories.config import ToolConfigRepository
 from src.sotugyo.domain.tooling.services.environment import ToolEnvironmentRegistryService
-from src.sotugyo.domain.tooling.services.rez import RezResolveResult
+from src.sotugyo.domain.tooling.services.rez import RezEnvironmentResolver, RezResolveResult
 
 
 class DummyResolver:
@@ -70,6 +74,20 @@ def test_tool_environment_definition_serialization_roundtrip() -> None:
     assert restored.rez_variants == ("platform-windows",)
     assert restored.rez_environment == {"MAYA_APP_DIR": "C:/Project/maya"}
     assert restored.metadata.get("rez_validation", {}).get("success") is True
+
+
+def test_tool_config_repository_uses_rez_package_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("LOCALAPPDATA", "")
+    monkeypatch.setenv("APPDATA", "")
+    from src.sotugyo.domain.tooling.repositories import config as config_module
+
+    monkeypatch.setattr(config_module, "get_rez_package_dir", lambda: tmp_path)
+
+    repository = config_module.ToolConfigRepository()
+
+    assert repository._storage_dir == tmp_path
+    assert repository._storage_path.parent == tmp_path
+    assert repository._storage_path.name == config_module.ToolConfigRepository.FILE_NAME
 
 
 def test_environment_registry_saves_rez_metadata() -> None:
@@ -144,4 +162,65 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
         assert updated.rez_packages == ()
         assert updated.rez_variants == ()
         assert updated.rez_environment == {}
+
+
+def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
+    bin_dir = tmp_path / "rez_bin"
+    bin_dir.mkdir()
+    rez_executable = bin_dir / "rez"
+    rez_executable.write_text("#!/bin/sh\nexit 0\n")
+    rez_executable.chmod(0o755)
+
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
+
+    called_env: dict | None = None
+
+    def _fake_run(*_, **kwargs):
+        nonlocal called_env
+        called_env = kwargs.get("env")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    resolver = RezEnvironmentResolver()
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = resolver.resolve(["maya"], environment={})
+
+    assert result.success is True
+    assert called_env is not None
+    path_entries = called_env["PATH"].split(os.pathsep)
+    assert path_entries[0] == str(bin_dir)
+    assert shutil.which("rez") is not None
+
+
+def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> None:
+    bin_dir = tmp_path / "rez_bin"
+    bin_dir.mkdir()
+    rez_executable = bin_dir / "rez"
+    rez_executable.write_text("#!/bin/sh\nexit 0\n")
+    rez_executable.chmod(0o755)
+
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.delenv("SOTUGYO_REZ_PATH", raising=False)
+
+    resolver = RezEnvironmentResolver()
+
+    monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
+
+    called_env: dict | None = None
+
+    def _fake_run(*_, **kwargs):
+        nonlocal called_env
+        called_env = kwargs.get("env")
+        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = resolver.resolve(["maya"], environment={})
+
+    assert result.success is True
+    assert called_env is not None
+    path_entries = called_env["PATH"].split(os.pathsep)
+    assert path_entries[0] == str(bin_dir)
 

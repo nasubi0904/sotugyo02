@@ -73,6 +73,7 @@ class StartWindow(QMainWindow):
 
         self._project_combo: Optional[QComboBox] = None
         self._user_combo: Optional[QComboBox] = None
+        self._window_mode_combo: Optional[QComboBox] = None
         self._project_info_label: Optional[QLabel] = None
         self._structure_warning_label: Optional[QLabel] = None
 
@@ -137,6 +138,14 @@ class StartWindow(QMainWindow):
         user_label = QLabel("ユーザー", card)
         user_label.setObjectName("formLabel")
         form.addRow(user_label, self._user_combo)
+
+        self._window_mode_combo = QComboBox(card)
+        self._window_mode_combo.addItem("通常ウィンドウ", Qt.WindowNoState)
+        self._window_mode_combo.addItem("最大化ウィンドウ", Qt.WindowMaximized)
+        self._window_mode_combo.addItem("全画面表示", Qt.WindowFullScreen)
+        window_mode_label = QLabel("ノードエディタ表示", card)
+        window_mode_label.setObjectName("formLabel")
+        form.addRow(window_mode_label, self._window_mode_combo)
 
         user_button_row = QHBoxLayout()
         user_settings_button = QPushButton("ユーザー設定...", card)
@@ -408,7 +417,7 @@ class StartWindow(QMainWindow):
             return
         self._active_project_root = record.root
         self._active_user_id = user_id
-        self._node_window.show()
+        self._apply_node_window_mode(self._node_window)
         self._node_window.raise_()
         self._node_window.activateWindow()
         self.hide()
@@ -418,4 +427,15 @@ class StartWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
         self.refresh_start_state()
+
+    def _apply_node_window_mode(self, window: NodeEditorWindow) -> None:
+        mode = self._window_mode_combo.currentData() if self._window_mode_combo else Qt.WindowNoState
+        window.setWindowState(Qt.WindowNoState)
+        window.showNormal()
+        if mode == Qt.WindowFullScreen:
+            window.showFullScreen()
+        elif mode == Qt.WindowMaximized:
+            window.showMaximized()
+        else:
+            window.show()
 

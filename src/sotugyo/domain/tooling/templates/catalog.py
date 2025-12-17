@@ -4,11 +4,17 @@ from __future__ import annotations
 
 import os
 import re
+import logging
+import logging
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
 from ..models import TemplateInstallationCandidate
+from ..repositories.rez_packages import RezPackageRepository
+
+LOGGER = logging.getLogger(__name__)
 
 TEMPLATE_METADATA: Dict[str, Dict[str, str]] = {
     "autodesk.maya": {
@@ -53,21 +59,7 @@ TEMPLATE_METADATA: Dict[str, Dict[str, str]] = {
     },
 }
 
-TEMPLATE_ENVIRONMENT_PAYLOADS: Dict[str, Dict[str, object]] = {
-    "autodesk.maya": {
-        "rez_packages": ["maya"],
-        "rez_variants": ["platform-windows"],
-        "rez_environment": {"MAYA_APP_DIR": "{PROJECT_ROOT}/maya"},
-    },
-    "adobe.after_effects": {
-        "rez_packages": ["after_effects"],
-        "rez_variants": ["platform-windows"],
-    },
-    "dcc.blender": {
-        "rez_packages": ["blender"],
-        "rez_variants": ["platform-windows"],
-    },
-}
+_REZ_REPOSITORY = RezPackageRepository()
 
 
 def list_templates() -> List[Dict[str, str]]:
@@ -82,62 +74,52 @@ def list_templates() -> List[Dict[str, str]]:
 def discover_installations(template_id: str) -> List[TemplateInstallationCandidate]:
     """テンプレートに対応するインストール候補を探索する。"""
 
+    candidates: List[TemplateInstallationCandidate] = []
     if template_id == "autodesk.maya":
-        return _discover_maya_installations()
-    if template_id == "autodesk.3ds_max":
-        return _discover_3ds_max_installations()
-    if template_id == "autodesk.motionbuilder":
-        return _discover_motionbuilder_installations()
-    if template_id == "adobe.after_effects":
-        return _discover_after_effects_installations()
-    if template_id == "adobe.premiere_pro":
-        return _discover_premiere_pro_installations()
-    if template_id == "adobe.photoshop":
-        return _discover_photoshop_installations()
-    if template_id == "adobe.substance_painter":
-        return _discover_substance_painter_installations()
-    if template_id == "dcc.blender":
-        return _discover_blender_installations()
-    if template_id == "dcc.houdini":
-        return _discover_houdini_installations()
-    if template_id == "dcc.nuke":
-        return _discover_nuke_installations()
-    return []
+        candidates = _discover_maya_installations()
+    elif template_id == "autodesk.3ds_max":
+        candidates = _discover_3ds_max_installations()
+    elif template_id == "autodesk.motionbuilder":
+        candidates = _discover_motionbuilder_installations()
+    elif template_id == "adobe.after_effects":
+        candidates = _discover_after_effects_installations()
+    elif template_id == "adobe.premiere_pro":
+        candidates = _discover_premiere_pro_installations()
+    elif template_id == "adobe.photoshop":
+        candidates = _discover_photoshop_installations()
+    elif template_id == "adobe.substance_painter":
+        candidates = _discover_substance_painter_installations()
+    elif template_id == "dcc.blender":
+        candidates = _discover_blender_installations()
+    elif template_id == "dcc.houdini":
+        candidates = _discover_houdini_installations()
+    elif template_id == "dcc.nuke":
+        candidates = _discover_nuke_installations()
+
+    _register_rez_packages(candidates)
+    return candidates
 
 
 def load_environment_payload(template_id: str) -> Dict[str, object]:
     """テンプレートに紐づく Rez 環境設定を返す。"""
 
-    payload = TEMPLATE_ENVIRONMENT_PAYLOADS.get(template_id)
-    if payload:
-        result: Dict[str, object] = {}
-        packages = payload.get("rez_packages")
-        if isinstance(packages, Iterable):
-            result["rez_packages"] = [
-                str(entry).strip()
-                for entry in packages
-                if isinstance(entry, str) and entry.strip()
-            ]
-        variants = payload.get("rez_variants")
-        if isinstance(variants, Iterable):
-            result["rez_variants"] = [
-                str(entry).strip()
-                for entry in variants
-                if isinstance(entry, str) and entry.strip()
-            ]
-        env_map = payload.get("rez_environment")
-        if isinstance(env_map, dict):
-            result["rez_environment"] = {
-                str(key): str(value)
-                for key, value in env_map.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-        return result
+    package_name = _REZ_REPOSITORY.get_package_name(template_id)
+    if not package_name:
+        return {}
+    payload: Dict[str, object] = {"rez_packages": [package_name]}
+    if sys.platform == "win32":
+        payload["rez_variants"] = ["platform-windows"]
+    return payload
 
-    generic_package = template_id.replace(".", "_") if template_id else ""
-    if generic_package:
-        return {"rez_packages": [generic_package]}
-    return {}
+
+def _register_rez_packages(candidates: Iterable[TemplateInstallationCandidate]) -> None:
+    for candidate in candidates:
+        try:
+            _REZ_REPOSITORY.register_candidate(candidate)
+        except OSError:
+            LOGGER.warning(
+                "Rez パッケージ登録に失敗しました: %s", candidate.executable_path, exc_info=True
+            )
 
 
 def _collect_search_roots(

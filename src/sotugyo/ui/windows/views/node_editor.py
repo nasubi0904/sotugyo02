@@ -24,7 +24,6 @@ QCloseEvent = QtGui.QCloseEvent
 QKeySequence = QtGui.QKeySequence
 QResizeEvent = QtGui.QResizeEvent
 QShortcut = QtGui.QShortcut
-QShowEvent = QtGui.QShowEvent
 QDialog = QtWidgets.QDialog
 QFileDialog = QtWidgets.QFileDialog
 QMainWindow = QtWidgets.QMainWindow
@@ -50,7 +49,11 @@ from ...components.nodes import (
     ToolEnvironmentNode,
 )
 from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
-from sotugyo.domain.tooling import RegisteredTool, ToolEnvironmentDefinition
+from sotugyo.domain.tooling import (
+    RegisteredTool,
+    RezPackageSpec,
+    ToolEnvironmentDefinition,
+)
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -59,7 +62,6 @@ from sotugyo.domain.tooling.coordinator import (
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
-    ToolEnvironmentManagerDialog,
     ToolRegistryDialog,
     UserSettingsDialog,
 )
@@ -73,6 +75,7 @@ from ..backgrounds.striped import (
 from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
+from sotugyo.infrastructure.paths.storage import get_rez_package_dir
 
 
 @dataclass
@@ -106,7 +109,6 @@ class NodeEditorWindow(QMainWindow):
         self.setWindowTitle(self.WINDOW_TITLE)
         self._base_window_title = self.windowTitle()
         self.resize(960, 600)
-        self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
         self._graph = NodeGraph()
         self._snap_settings = NodeSnapSettings()
@@ -149,6 +151,8 @@ class NodeEditorWindow(QMainWindow):
         self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
         self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
+        self._local_rez_packages: Dict[str, RezPackageSpec] = {}
+        self._project_rez_packages: Dict[str, RezPackageSpec] = {}
 
         self._shortcuts: List[QShortcut] = []
         self._node_type_creators = {
@@ -197,13 +201,6 @@ class NodeEditorWindow(QMainWindow):
         self._background_pattern = pattern
         self._graph.scene().update()
         self._graph_widget.viewport().update()
-
-    def showEvent(self, event: QShowEvent) -> None:
-        """ウィンドウ表示時に全画面状態を維持する。"""
-
-        super().showEvent(event)
-        if not self.isFullScreen():
-            self.setWindowState(self.windowState() | Qt.WindowFullScreen)
 
     # ------------------------------------------------------------------
     # UI 初期化
@@ -284,9 +281,6 @@ class NodeEditorWindow(QMainWindow):
         tool_registry_action = QAction("環境設定...", self)
         tool_registry_action.triggered.connect(self._open_tool_settings)
         tools_menu.addAction(tool_registry_action)
-        environment_action = QAction("ツール環境の編集...", self)
-        environment_action.triggered.connect(self._open_tool_environment_manager)
-        tools_menu.addAction(environment_action)
 
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
@@ -352,12 +346,6 @@ class NodeEditorWindow(QMainWindow):
 
     def _open_tool_settings(self) -> None:
         dialog = ToolRegistryDialog(self._coordinator.tool_service, self)
-        dialog.exec()
-        if dialog.refresh_requested():
-            self._refresh_tool_configuration()
-
-    def _open_tool_environment_manager(self) -> None:
-        dialog = ToolEnvironmentManagerDialog(self._coordinator.tool_service, self)
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
@@ -428,6 +416,9 @@ class NodeEditorWindow(QMainWindow):
         self._tool_snapshot = snapshot
         self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
+        self._local_rez_packages = {
+            spec.name: spec for spec in self._coordinator.list_rez_packages()
+        }
         self._refresh_content_browser_entries()
 
     def _refresh_content_browser_entries(self) -> None:
@@ -436,6 +427,7 @@ class NodeEditorWindow(QMainWindow):
         records = self._build_available_node_records()
         if self._tool_snapshot is not None:
             records = self._coordinator.extend_catalog(records, self._tool_snapshot)
+        records.extend(self._build_rez_package_records())
         entries = [
             NodeCatalogEntry(
                 node_type=record.node_type,
@@ -448,6 +440,18 @@ class NodeEditorWindow(QMainWindow):
             for record in records
         ]
         self._content_dock.set_catalog_entries(entries)
+
+    def _load_project_rez_packages(self) -> None:
+        if self._current_project_root is None:
+            self._project_rez_packages = {}
+            return
+        specs = self._coordinator.list_project_rez_packages(self._current_project_root)
+        self._project_rez_packages = {spec.name: spec for spec in specs}
+
+    def _all_rez_packages(self) -> Dict[str, RezPackageSpec]:
+        merged = dict(self._local_rez_packages)
+        merged.update(self._project_rez_packages)
+        return merged
 
     # ------------------------------------------------------------------
     # プロジェクトコンテキスト管理
@@ -489,8 +493,10 @@ class NodeEditorWindow(QMainWindow):
 
         self._project_service.register_project(context.record, set_last=True)
         self._project_service.ensure_structure(project_root)
+        self._load_project_rez_packages()
 
         self._refresh_window_title()
+        self._refresh_content_browser_entries()
         self._load_project_graph()
 
         report = self._project_service.validate_structure(project_root)
@@ -535,6 +541,24 @@ class NodeEditorWindow(QMainWindow):
                 keywords=("note", "メモ", "記録"),
             ),
         ]
+        return records
+
+    def _build_rez_package_records(self) -> List[NodeCatalogRecord]:
+        records: List[NodeCatalogRecord] = []
+        all_packages = self._all_rez_packages()
+        for name, spec in sorted(all_packages.items()):
+            subtitle = spec.version or "Rez パッケージ"
+            origin = "プロジェクト" if name in self._project_rez_packages else "KDMrez"
+            keywords = (name, subtitle, origin)
+            records.append(
+                NodeCatalogRecord(
+                    node_type=f"rez-package:{name}",
+                    title=f"Rez: {name}",
+                    subtitle=f"{subtitle} / {origin}",
+                    genre="Rez パッケージ",
+                    keywords=keywords,
+                )
+            )
         return records
 
     def _open_graph_context_menu(self, position: QPoint) -> None:
@@ -602,6 +626,10 @@ class NodeEditorWindow(QMainWindow):
         if node_type.startswith("tool-environment:"):
             environment_id = node_type.split(":", 1)[1]
             self._create_tool_environment_node(environment_id)
+            return
+        if node_type.startswith("rez-package:"):
+            package_name = node_type.split(":", 1)[1]
+            self._create_rez_package_node(package_name)
             return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
@@ -713,6 +741,34 @@ class NodeEditorWindow(QMainWindow):
                 tool_id=tool.tool_id,
                 tool_name=tool.display_name,
                 version_label=definition.version_label,
+                environment_payload=payload,
+            )
+
+    def _create_rez_package_node(self, package_name: str) -> None:
+        spec = self._all_rez_packages().get(package_name)
+        if spec is None:
+            self._show_warning_dialog("選択された Rez パッケージが見つかりません。")
+            return
+        node = self._create_node(
+            ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
+        )
+        if isinstance(node, ToolEnvironmentNode):
+            version_label = spec.version or "local"
+            payload = {
+                "rez_packages": [spec.name],
+                "package_path": str(spec.path),
+                "summary": version_label,
+            }
+            source = (
+                "project" if package_name in self._project_rez_packages else "local"
+            )
+            payload["rez_source"] = source
+            node.configure_environment(
+                environment_id=f"rez:{spec.name}",
+                environment_name=f"Rez: {spec.name}",
+                tool_id=spec.name,
+                tool_name=f"Rez Package ({source})",
+                version_label=version_label,
                 environment_payload=payload,
             )
 
@@ -1555,6 +1611,7 @@ class NodeEditorWindow(QMainWindow):
             return
         if self._current_project_root is not None:
             self._project_service.ensure_structure(self._current_project_root)
+            self._sync_rez_packages_to_project()
         try:
             self._write_project_to_path(graph_path)
             self._set_modified(False)
@@ -1594,6 +1651,26 @@ class NodeEditorWindow(QMainWindow):
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as handle:
             json.dump(state, handle, ensure_ascii=True, indent=2)
+
+    def _sync_rez_packages_to_project(self) -> None:
+        if self._current_project_root is None:
+            return
+        packages = self._collect_rez_packages_in_graph()
+        if not packages:
+            return
+        try:
+            result = self._coordinator.sync_rez_packages_to_project(
+                self._current_project_root, packages
+            )
+        except OSError as exc:
+            self._show_warning_dialog(f"Rez パッケージの同期に失敗しました: {exc}")
+            return
+        if result.has_missing:
+            lines = ["次の Rez パッケージを同期できませんでした。KDMrez を確認してください。"]
+            lines.extend(f"・{name}" for name in result.missing)
+            self._show_warning_dialog("\n".join(lines))
+        self._load_project_rez_packages()
+        self._refresh_content_browser_entries()
 
     def _graph_file_path(self) -> Optional[Path]:
         if self._current_project_root is None:
@@ -1643,56 +1720,67 @@ class NodeEditorWindow(QMainWindow):
             state = json.load(handle)
         return self._apply_project_state(state)
 
-    def _check_rez_environments_in_project(self) -> None:
-        nodes = self._collect_all_nodes()
-        if not nodes:
-            return
-        issues: List[tuple[str, List[str], str]] = []
-        for node in nodes:
+    def _collect_rez_packages_in_graph(self) -> List[str]:
+        packages: Set[str] = set()
+        for node in self._collect_all_nodes():
             if not isinstance(node, ToolEnvironmentNode):
                 continue
             payload = node.get_environment_payload()
-            packages_raw = payload.get("rez_packages")
+            packages_raw = payload.get("rez_packages") if isinstance(payload, dict) else None
             if not isinstance(packages_raw, (list, tuple)):
                 continue
-            packages = [str(pkg) for pkg in packages_raw if str(pkg).strip()]
-            if not packages:
-                continue
-            variants_raw = payload.get("rez_variants")
-            if isinstance(variants_raw, (list, tuple)):
-                variants = [str(var) for var in variants_raw if str(var).strip()]
-            else:
-                variants = []
-            env_map = payload.get("rez_environment")
-            environment = (
-                {str(key): str(value) for key, value in env_map.items()}
-                if isinstance(env_map, dict)
-                else {}
-            )
-            try:
-                result = self._coordinator.tool_service.validate_rez_environment(
-                    packages=packages,
-                    variants=variants,
-                    environment=environment,
-                )
-            except Exception as exc:  # pragma: no cover - 外部ツール依存
-                LOGGER.error(
-                    "Rez 環境検証に失敗しました: node=%s, error=%s",
-                    self._safe_node_name(node),
-                    exc,
-                    exc_info=True,
-                )
-                issues.append((self._safe_node_name(node), packages, str(exc)))
-                continue
-            if not result.success:
-                issues.append((self._safe_node_name(node), packages, result.message()))
-        if not issues:
+            for package in packages_raw:
+                text = str(package).strip()
+                if text:
+                    packages.add(text)
+        return sorted(packages)
+
+    def _check_rez_environments_in_project(self) -> None:
+        packages = self._collect_rez_packages_in_graph()
+        if not packages:
             return
-        lines = ["次のツール環境を Rez で再現できませんでした。"]
-        for name, packages, message in issues:
-            pkg_text = ", ".join(packages)
-            lines.append(f"・{name} ({pkg_text}) : {message}")
-        self._show_warning_dialog("\n".join(lines))
+        warnings: List[str] = []
+
+        available = self._all_rez_packages()
+        missing = [name for name in packages if name not in available]
+        if missing:
+            lines = [
+                "次の Rez パッケージがローカルにもプロジェクトにも見つかりません。",
+                f"KDMrez: {get_rez_package_dir()}",
+                f"Project: {self._current_project_root / 'config' / 'rez_packages' if self._current_project_root else '-'}",
+            ]
+            lines.extend(f"・{name}" for name in missing)
+            warnings.append("\n".join(lines))
+
+        missing_in_project = [
+            name
+            for name in packages
+            if name in self._local_rez_packages and name not in self._project_rez_packages
+        ]
+        if missing_in_project:
+            lines = [
+                "次の Rez パッケージは KDMrez には存在しますがプロジェクトに同期されていません。",
+                "プロジェクト保存時にコピーされることを確認してください。",
+            ]
+            lines.extend(f"・{name}" for name in missing_in_project)
+            warnings.append("\n".join(lines))
+
+        if self._current_project_root is not None:
+            validation = self._coordinator.validate_project_rez_packages(
+                self._current_project_root
+            )
+            if validation.has_error:
+                lines = ["プロジェクト配下の Rez パッケージ検証に失敗しました。"]
+                if validation.missing:
+                    lines.append("package.py が見つからないパッケージ:")
+                    lines.extend(f"・{name}" for name in validation.missing)
+                if validation.invalid:
+                    lines.append("解釈できないパッケージ:")
+                    lines.extend(f"・{name}" for name in validation.invalid)
+                warnings.append("\n".join(lines))
+
+        if warnings:
+            self._show_warning_dialog("\n\n".join(warnings))
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()

@@ -8,10 +8,17 @@ from typing import Dict, Iterable, List, Optional
 
 from ..models import (
     RegisteredTool,
+    RezPackageSpec,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
 from ..repositories.config import ToolConfigRepository
+from ..repositories.rez_packages import (
+    ProjectRezPackageRepository,
+    RezPackageRepository,
+    RezPackageSyncResult,
+    RezPackageValidationResult,
+)
 from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
@@ -24,6 +31,7 @@ class ToolEnvironmentService:
     registry_service: ToolRegistryService
     environment_service: ToolEnvironmentRegistryService
     template_gateway: TemplateGateway
+    rez_repository: RezPackageRepository
 
     def __init__(
         self,
@@ -32,6 +40,7 @@ class ToolEnvironmentService:
         registry_service: ToolRegistryService | None = None,
         environment_service: ToolEnvironmentRegistryService | None = None,
         template_gateway: TemplateGateway | None = None,
+        rez_repository: RezPackageRepository | None = None,
     ) -> None:
         repo = repository or ToolConfigRepository()
         self.registry_service = registry_service or ToolRegistryService(repo)
@@ -39,6 +48,7 @@ class ToolEnvironmentService:
             environment_service or ToolEnvironmentRegistryService(repo)
         )
         self.template_gateway = template_gateway or TemplateGateway()
+        self.rez_repository = rez_repository or RezPackageRepository()
 
     # ------------------------------------------------------------------
     # ツール登録
@@ -134,6 +144,25 @@ class ToolEnvironmentService:
             variants=variants,
             environment=environment,
         )
+
+    # ------------------------------------------------------------------
+    # Rez パッケージ
+    # ------------------------------------------------------------------
+    def list_rez_packages(self) -> List[RezPackageSpec]:
+        return self.rez_repository.list_packages()
+
+    def list_project_rez_packages(self, project_root: Path) -> List[RezPackageSpec]:
+        return ProjectRezPackageRepository(project_root).list_packages()
+
+    def sync_rez_packages_to_project(
+        self, project_root: Path, packages: Iterable[str]
+    ) -> RezPackageSyncResult:
+        return self.rez_repository.sync_packages_to_project(project_root, packages)
+
+    def validate_project_rez_packages(
+        self, project_root: Path
+    ) -> RezPackageValidationResult:
+        return ProjectRezPackageRepository(project_root).validate()
 
     # ------------------------------------------------------------------
     # ユーティリティ
