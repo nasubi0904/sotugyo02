@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
+from packaging.version import InvalidVersion, Version
+
 from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RezPackageSpec, TemplateInstallationCandidate
 
@@ -193,8 +195,27 @@ class RezPackageRepository:
             return None
         if not candidates:
             return None
+        versioned_candidates: list[tuple[Version, Path]] = []
+        for candidate in candidates:
+            if candidate.parent != package_dir:
+                continue
+            parsed = RezPackageRepository._parse_version(candidate.name)
+            if parsed is not None:
+                versioned_candidates.append((parsed, candidate))
+        if versioned_candidates:
+            versioned_candidates.sort(key=lambda entry: entry[0], reverse=True)
+            return versioned_candidates[0][1]
         candidates.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
         return candidates[0]
+
+    @staticmethod
+    def _parse_version(label: str | None) -> Version | None:
+        if not label:
+            return None
+        try:
+            return Version(label)
+        except InvalidVersion:
+            return None
 
 
 @dataclass(slots=True, frozen=True)

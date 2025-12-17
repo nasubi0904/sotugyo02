@@ -38,6 +38,9 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._service = service
         self._environment_list: Optional[QTreeWidget] = None
         self._tool_cache: Dict[str, RegisteredTool] = {}
+        self._add_button: Optional[QPushButton] = None
+        self._edit_button: Optional[QPushButton] = None
+        self._remove_button: Optional[QPushButton] = None
         self._refresh_on_accept = False
 
         self.setWindowTitle("ツール環境の編集")
@@ -66,20 +69,24 @@ class ToolEnvironmentManagerDialog(QDialog):
         env_list.setHeaderLabels(["環境名", "ツール", "バージョン", "Rez パッケージ", "実行ファイル"])
         env_list.setRootIsDecorated(False)
         env_list.setAlternatingRowColors(True)
-        env_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        env_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         env_list.setSelectionBehavior(QAbstractItemView.SelectRows)
         env_list.setUniformRowHeights(True)
         env_list.setAllColumnsShowFocus(True)
+        env_list.itemSelectionChanged.connect(self._update_action_states)
         layout.addWidget(env_list, 1)
         self._environment_list = env_list
 
         button_row = QHBoxLayout()
         add_button = QPushButton("追加")
         add_button.clicked.connect(self._add_environment)
+        self._add_button = add_button
         edit_button = QPushButton("編集")
         edit_button.clicked.connect(self._edit_environment)
+        self._edit_button = edit_button
         remove_button = QPushButton("削除")
         remove_button.clicked.connect(self._remove_environment)
+        self._remove_button = remove_button
         button_row.addWidget(add_button)
         button_row.addWidget(edit_button)
         button_row.addWidget(remove_button)
@@ -89,6 +96,8 @@ class ToolEnvironmentManagerDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.Close, Qt.Horizontal, self)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+        self._update_action_states()
 
     def _refresh_listing(self) -> None:
         try:
@@ -136,6 +145,17 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._environment_list.resizeColumnToContents(2)
         self._environment_list.resizeColumnToContents(3)
         self._environment_list.resizeColumnToContents(4)
+        self._update_action_states()
+
+    def _selected_environment_ids(self) -> List[str]:
+        if self._environment_list is None:
+            return []
+        identifiers: List[str] = []
+        for item in self._environment_list.selectedItems():
+            identifier = item.data(0, Qt.UserRole)
+            if isinstance(identifier, str):
+                identifiers.append(identifier)
+        return identifiers
 
     def _add_environment(self) -> None:
         if not self._tool_cache:
@@ -164,13 +184,10 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._refresh_listing()
 
     def _current_environment_id(self) -> Optional[str]:
-        if self._environment_list is None:
+        env_ids = self._selected_environment_ids()
+        if len(env_ids) != 1:
             return None
-        current = self._environment_list.currentItem()
-        if current is None:
-            return None
-        identifier = current.data(0, Qt.UserRole)
-        return identifier if isinstance(identifier, str) else None
+        return env_ids[0]
 
     def _edit_environment(self) -> None:
         env_id = self._current_environment_id()
@@ -211,29 +228,45 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._refresh_listing()
 
     def _remove_environment(self) -> None:
-        env_id = self._current_environment_id()
-        if not env_id:
+        env_ids = self._selected_environment_ids()
+        if not env_ids:
             QMessageBox.information(self, "削除", "削除する環境を選択してください。")
             return
+        count = len(env_ids)
+        question = "選択した環境を削除しますか？" if count == 1 else f"選択した {count} 件の環境を削除しますか？"
         reply = QMessageBox.question(
             self,
             "確認",
-            "選択した環境を削除しますか？",
+            question,
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
-        try:
-            removed = self._service.remove_environment(env_id)
-        except OSError as exc:
-            QMessageBox.critical(self, "削除に失敗", str(exc))
-            return
-        if not removed:
-            QMessageBox.warning(self, "削除", "指定された環境が見つかりませんでした。")
-            return
-        self._refresh_on_accept = True
-        self._refresh_listing()
+        removed_count = 0
+        missing_ids: List[str] = []
+        for env_id in env_ids:
+            try:
+                removed = self._service.remove_environment(env_id)
+            except OSError as exc:
+                QMessageBox.critical(self, "削除に失敗", str(exc))
+                return
+            if removed:
+                removed_count += 1
+            else:
+                missing_ids.append(env_id)
+        if missing_ids:
+            if removed_count == 0:
+                QMessageBox.warning(self, "削除", "指定された環境が見つかりませんでした。")
+            else:
+                QMessageBox.warning(
+                    self,
+                    "削除",
+                    f"{removed_count} 件を削除しましたが、{len(missing_ids)} 件が見つかりませんでした。",
+                )
+        if removed_count > 0:
+            self._refresh_on_accept = True
+            self._refresh_listing()
 
     def _show_rez_validation_result(
         self, environment: ToolEnvironmentDefinition | None
@@ -271,6 +304,13 @@ class ToolEnvironmentManagerDialog(QDialog):
             or "Rez 環境の解決に失敗しました。"
         )
         return f"Rez 検証失敗: {message}"
+
+    def _update_action_states(self) -> None:
+        selected_count = len(self._selected_environment_ids())
+        if self._edit_button is not None:
+            self._edit_button.setEnabled(selected_count == 1)
+        if self._remove_button is not None:
+            self._remove_button.setEnabled(selected_count >= 1)
 
 
 class ToolEnvironmentEditDialog(QDialog):
