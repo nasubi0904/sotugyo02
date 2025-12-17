@@ -1784,6 +1784,10 @@ class NodeEditorWindow(QMainWindow):
             return
         if not isinstance(node, ToolEnvironmentNode):
             inspector.configure_launch_button(visible=False)
+            LOGGER.info(
+                "Launch control skipped: selected node is not a ToolEnvironmentNode (%s)",
+                self._safe_node_name(node),
+            )
             return
 
         payload = node.get_environment_payload()
@@ -1794,6 +1798,21 @@ class NodeEditorWindow(QMainWindow):
             text="起動",
             enabled=tool is not None,
             tooltip=tooltip,
+        )
+        payload_tool_id = ""
+        if isinstance(payload, Mapping):
+            raw_tool_id = payload.get("tool_id")
+            if isinstance(raw_tool_id, str):
+                payload_tool_id = raw_tool_id.strip()
+            elif raw_tool_id is not None:
+                payload_tool_id = str(raw_tool_id).strip()
+        property_tool_id = self._read_text_property(node, "tool_id")
+        LOGGER.info(
+            "Launch control: node=%s, property_tool_id=%s, payload_tool_id=%s, registered=%s",
+            self._safe_node_name(node),
+            property_tool_id or "(empty)",
+            payload_tool_id or "(empty)",
+            bool(tool),
         )
 
     def _update_memo_controls(self, node) -> None:
