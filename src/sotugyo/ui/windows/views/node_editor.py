@@ -1364,16 +1364,14 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("起動するツール環境ノードを選択してください。")
             return
 
-        tool = self._resolve_tool_for_node(node)
-        if tool is None:
-            self._show_warning_dialog("登録済みツールが見つからないため起動できません。")
-            return
-
         payload = node.get_environment_payload()
         packages, variants, environment = self._extract_rez_parameters(
             payload if isinstance(payload, Mapping) else None
         )
-        exec_path, args = self._extract_launch_command(payload if isinstance(payload, Mapping) else None)
+        exec_path, args = self._extract_launch_command(
+            payload if isinstance(payload, Mapping) else None,
+            packages,
+        )
         if not exec_path:
             self._show_warning_dialog("起動コマンドが設定されていません。ノードの environment_payload を確認してください。")
             return
@@ -1420,7 +1418,9 @@ class NodeEditorWindow(QMainWindow):
             return "詳細なログは出力されませんでした。"
         return "\n\n".join(parts)
 
-    def _extract_launch_command(self, payload: Mapping[str, object] | None) -> Tuple[str, List[str]]:
+    def _extract_launch_command(
+        self, payload: Mapping[str, object] | None, packages: List[str]
+    ) -> Tuple[str, List[str]]:
         if not isinstance(payload, Mapping):
             return "", []
 
@@ -1443,6 +1443,8 @@ class NodeEditorWindow(QMainWindow):
                     break
 
         if not parts:
+            if packages:
+                return "rez", ["run", packages[0]]
             return "", []
 
         executable = parts[0].strip()
@@ -1828,9 +1830,12 @@ class NodeEditorWindow(QMainWindow):
             return
 
         payload = node.get_environment_payload()
-        exec_path, args = self._extract_launch_command(payload if isinstance(payload, Mapping) else None)
         packages, variants, _env = self._extract_rez_parameters(
             payload if isinstance(payload, Mapping) else None
+        )
+        exec_path, args = self._extract_launch_command(
+            payload if isinstance(payload, Mapping) else None,
+            packages,
         )
         tooltip = self._build_launch_tooltip(exec_path, payload)
         inspector.configure_launch_button(
