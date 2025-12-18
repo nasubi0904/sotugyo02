@@ -966,11 +966,23 @@ class NodeEditorWindow(QMainWindow):
     def _show_info_dialog(self, message: str) -> None:
         QMessageBox.information(self, "操作案内", message)
 
-    def _show_warning_dialog(self, message: str) -> None:
-        QMessageBox.warning(self, "警告", message)
+    def _show_warning_dialog(self, message: str, *, detailed_text: str | None = None) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("警告")
+        dialog.setText(message)
+        if detailed_text:
+            dialog.setDetailedText(detailed_text)
+        dialog.exec()
 
-    def _show_error_dialog(self, message: str) -> None:
-        QMessageBox.critical(self, "エラー", message)
+    def _show_error_dialog(self, message: str, *, detailed_text: str | None = None) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Critical)
+        dialog.setWindowTitle("エラー")
+        dialog.setText(message)
+        if detailed_text:
+            dialog.setDetailedText(detailed_text)
+        dialog.exec()
 
     def _search_nodes(
         self, keyword: Optional[str] = None, *, show_dialog: bool = True
@@ -1384,7 +1396,8 @@ class NodeEditorWindow(QMainWindow):
         if not getattr(validation, "success", False):
             detail = (getattr(validation, "stderr", "") or getattr(validation, "stdout", "")).strip()
             self._show_error_dialog(
-                "Rez 環境の検証に失敗したためツールを起動できません。\n" + (detail or "詳細ログはありません。")
+                "Rez 環境の検証に失敗したためツールを起動できません。",
+                detailed_text=detail or "詳細ログはありません。",
             )
             return
         result = self._coordinator.tool_service.launch_tool(
@@ -1398,7 +1411,8 @@ class NodeEditorWindow(QMainWindow):
         if not result.success:
             detail = (result.stderr or result.stdout or getattr(result, "traceback_text", "")).strip()
             self._show_error_dialog(
-                "ツールの起動に失敗しました。\n" + (detail or "詳細ログはありません。")
+                "ツールの起動に失敗しました。",
+                detailed_text=detail or "詳細ログはありません。",
             )
             return
 
