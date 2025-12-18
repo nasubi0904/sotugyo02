@@ -31,6 +31,20 @@ from ...domain.tooling import (
 from ...domain.tooling.services import RezResolveResult
 
 
+def _format_execution_output(result: RezResolveResult) -> str:
+    parts: List[str] = []
+    if result.command:
+        parts.append("実行コマンド:\n" + " ".join(result.command))
+    parts.append(f"終了コード: {result.return_code}")
+    if result.stdout.strip():
+        parts.append("標準出力:\n" + result.stdout.strip())
+    if result.stderr.strip():
+        parts.append("標準エラー:\n" + result.stderr.strip())
+    if not parts:
+        return "ツールの起動に失敗しました。"
+    return "\n\n".join(parts)
+
+
 class ToolEnvironmentManagerDialog(QDialog):
     """ツール環境ノードの定義一覧を管理する。"""
 
@@ -79,10 +93,13 @@ class ToolEnvironmentManagerDialog(QDialog):
         add_button.clicked.connect(self._add_environment)
         edit_button = QPushButton("編集")
         edit_button.clicked.connect(self._edit_environment)
+        launch_button = QPushButton("Rez で起動")
+        launch_button.clicked.connect(self._launch_environment)
         remove_button = QPushButton("削除")
         remove_button.clicked.connect(self._remove_environment)
         button_row.addWidget(add_button)
         button_row.addWidget(edit_button)
+        button_row.addWidget(launch_button)
         button_row.addWidget(remove_button)
         button_row.addStretch(1)
         layout.addLayout(button_row)
@@ -235,6 +252,25 @@ class ToolEnvironmentManagerDialog(QDialog):
             return
         self._refresh_on_accept = True
         self._refresh_listing()
+
+    def _launch_environment(self) -> None:
+        env_id = self._current_environment_id()
+        if not env_id:
+            QMessageBox.information(self, "起動", "起動する環境を選択してください。")
+            return
+        try:
+            result = self._service.launch_environment_tool(environment_id=env_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "起動", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.critical(self, "起動", str(exc))
+            return
+        message = _format_execution_output(result)
+        if result.success:
+            QMessageBox.information(self, "起動", message)
+        else:
+            QMessageBox.warning(self, "起動に失敗", message)
 
     def _show_rez_validation_result(
         self, environment: ToolEnvironmentDefinition | None
@@ -598,21 +634,7 @@ class ToolEnvironmentEditDialog(QDialog):
         if result.success:
             QMessageBox.information(self, "起動テスト", "ツールの起動テストに成功しました。")
             return
-        QMessageBox.warning(self, "起動テストに失敗", self._format_execution_output(result))
-
-    @staticmethod
-    def _format_execution_output(result: RezResolveResult) -> str:
-        parts: List[str] = []
-        if result.command:
-            parts.append("実行コマンド:\n" + " ".join(result.command))
-        parts.append(f"終了コード: {result.return_code}")
-        if result.stdout.strip():
-            parts.append("標準出力:\n" + result.stdout.strip())
-        if result.stderr.strip():
-            parts.append("標準エラー:\n" + result.stderr.strip())
-        if not parts:
-            return "ツールの起動に失敗しました。"
-        return "\n\n".join(parts)
+        QMessageBox.warning(self, "起動テストに失敗", _format_execution_output(result))
 
     @staticmethod
     def _describe_validation(status: Optional[dict]) -> str:

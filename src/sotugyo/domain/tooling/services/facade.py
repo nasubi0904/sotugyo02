@@ -141,6 +141,29 @@ class ToolEnvironmentService:
             timeout=timeout,
         )
 
+    def launch_environment_tool(
+        self,
+        *,
+        environment_id: str,
+        timeout: int | None = 60,
+    ) -> RezResolveResult:
+        environments = self.environment_service.list_environments()
+        target = next((env for env in environments if env.environment_id == environment_id), None)
+        if target is None:
+            raise ValueError("選択された環境が見つかりませんでした。")
+        tool = self.registry_service.get_tool(target.tool_id)
+        if tool is None:
+            raise ValueError("環境が参照するツールが登録されていません。")
+        if not tool.executable_path.exists():
+            raise ValueError(f"実行ファイルが見つかりません: {tool.executable_path}")
+        return self.environment_service.test_launch_tool(
+            tool=tool,
+            packages=target.rez_packages,
+            variants=target.rez_variants,
+            environment=target.rez_environment,
+            timeout=timeout,
+        )
+
     # ------------------------------------------------------------------
     # テンプレート連携
     # ------------------------------------------------------------------
