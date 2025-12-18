@@ -85,22 +85,69 @@ class RezEnvironmentResolver:
                 stderr="rez コマンドが見つかりません。パス設定を確認してください。",
             )
 
-        command: list[str] = [executable, "env", *normalized]
-        variant_args = self._build_variant_arguments(variants or ())
-        command.extend(variant_args)
-        command.extend(["--", "python", "-c", "pass"])
+        command = self._build_rez_command(
+            normalized,
+            variants or (),
+            ("python", "-c", "pass"),
+        )
 
+        return self._execute_command(command, env, timeout)
+
+    def run_command(
+        self,
+        command: Sequence[str],
+        *,
+        packages: Sequence[str] | None = None,
+        variants: Sequence[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        timeout: int | None = 60,
+    ) -> RezResolveResult:
+        normalized_command = tuple(str(part).strip() for part in command if str(part).strip())
+        if not normalized_command:
+            return RezResolveResult(
+                success=False,
+                command=(),
+                return_code=-1,
+                stderr="実行コマンドが空です。",
+            )
+
+        env = self._build_environment(environment)
+        normalized_packages = tuple(
+            entry.strip() for entry in packages or () if isinstance(entry, str) and entry.strip()
+        )
+
+        if normalized_packages:
+            path_env = env.get("PATH") or env.get("Path") or ""
+            executable = self._executable
+            if shutil.which(executable, path=path_env) is None:
+                return RezResolveResult(
+                    success=False,
+                    command=(executable,),
+                    return_code=127,
+                    stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                )
+            full_command = self._build_rez_command(
+                normalized_packages,
+                variants or (),
+                normalized_command,
+            )
+        else:
+            full_command = list(normalized_command)
+
+        return self._execute_command(full_command, env, timeout)
+
+    def _execute_command(
+        self,
+        command: Sequence[str],
+        env: Mapping[str, str],
+        timeout: int | None,
+    ) -> RezResolveResult:
         try:
             completed = subprocess.run(  # noqa: S603,S607 - 実行コマンドを明示
-                command,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                env=env,
+                command, capture_output=True, text=True, timeout=timeout, check=False, env=env
             )
         except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
-            LOGGER.error("Rez コマンドの実行に失敗しました: %s", exc)
+            LOGGER.error("コマンドの実行に失敗しました: %s", exc)
             return RezResolveResult(
                 success=False,
                 command=tuple(command),
@@ -111,9 +158,9 @@ class RezEnvironmentResolver:
         success = completed.returncode == 0
         if not success:
             if completed.stdout:
-                LOGGER.error("Rez コマンド標準出力:\n%s", completed.stdout)
+                LOGGER.error("コマンド標準出力:\n%s", completed.stdout)
             if completed.stderr:
-                LOGGER.error("Rez コマンド標準エラー:\n%s", completed.stderr)
+                LOGGER.error("コマンド標準エラー:\n%s", completed.stderr)
         return RezResolveResult(
             success=success,
             command=tuple(command),
@@ -129,6 +176,18 @@ class RezEnvironmentResolver:
             return ()
         joined = ",".join(normalized)
         return ("--variants", joined)
+
+    def _build_rez_command(
+        self,
+        packages: Sequence[str],
+        variants: Iterable[str],
+        base_command: Sequence[str],
+    ) -> list[str]:
+        command: list[str] = [self._executable, "env", *packages]
+        command.extend(self._build_variant_arguments(variants))
+        command.append("--")
+        command.extend(base_command)
+        return command
 
     def _build_environment(
         self, user_environment: Mapping[str, str] | None = None

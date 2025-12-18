@@ -28,6 +28,7 @@ from ...domain.tooling import (
     ToolEnvironmentDefinition,
     ToolEnvironmentService,
 )
+from ...domain.tooling.services import RezResolveResult
 
 
 class ToolEnvironmentManagerDialog(QDialog):
@@ -381,6 +382,8 @@ class ToolEnvironmentEditDialog(QDialog):
             Qt.Horizontal,
             self,
         )
+        test_button = buttons.addButton("起動テスト", QDialogButtonBox.ActionRole)
+        test_button.clicked.connect(self._test_launch)
         buttons.accepted.connect(self._handle_accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
@@ -557,6 +560,59 @@ class ToolEnvironmentEditDialog(QDialog):
             if isinstance(packages, list):
                 return [str(entry) for entry in packages if isinstance(entry, str)]
         return []
+
+    def _test_launch(self) -> None:
+        if (
+            self._tool_combo is None
+            or self._template_combo is None
+            or self._package_edit is None
+            or self._variant_edit is None
+            or self._env_edit is None
+        ):
+            return
+        tool_id = self._tool_combo.currentData()
+        if not isinstance(tool_id, str):
+            QMessageBox.warning(self, "起動テスト", "利用するツールを選択してください。")
+            return
+        template_id = self._template_combo.currentData()
+        if template_id == "":
+            template_id = None
+        packages = self._collect_packages()
+        if template_id and not packages:
+            packages = self._load_template_packages(template_id)
+        variants = self._collect_variants()
+        environment = self._collect_environment()
+        try:
+            result = self._service.test_environment_launch(
+                tool_id=tool_id,
+                rez_packages=packages,
+                rez_variants=variants,
+                rez_environment=environment,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "起動テスト", str(exc))
+            return
+        except OSError as exc:
+            QMessageBox.critical(self, "起動テスト", str(exc))
+            return
+        if result.success:
+            QMessageBox.information(self, "起動テスト", "ツールの起動テストに成功しました。")
+            return
+        QMessageBox.warning(self, "起動テストに失敗", self._format_execution_output(result))
+
+    @staticmethod
+    def _format_execution_output(result: RezResolveResult) -> str:
+        parts: List[str] = []
+        if result.command:
+            parts.append("実行コマンド:\n" + " ".join(result.command))
+        parts.append(f"終了コード: {result.return_code}")
+        if result.stdout.strip():
+            parts.append("標準出力:\n" + result.stdout.strip())
+        if result.stderr.strip():
+            parts.append("標準エラー:\n" + result.stderr.strip())
+        if not parts:
+            return "ツールの起動に失敗しました。"
+        return "\n\n".join(parts)
 
     @staticmethod
     def _describe_validation(status: Optional[dict]) -> str:

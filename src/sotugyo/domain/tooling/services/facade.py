@@ -22,6 +22,7 @@ from ..repositories.rez_packages import (
 from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
+from .rez import RezResolveResult
 
 
 @dataclass(slots=True)
@@ -117,6 +118,28 @@ class ToolEnvironmentService:
 
     def remove_environment(self, environment_id: str) -> bool:
         return self.environment_service.remove(environment_id)
+
+    def test_environment_launch(
+        self,
+        *,
+        tool_id: str,
+        rez_packages: Optional[Iterable[str]] = None,
+        rez_variants: Optional[Iterable[str]] = None,
+        rez_environment: Optional[Dict[str, str]] = None,
+        timeout: int | None = 60,
+    ) -> RezResolveResult:
+        tool = self.registry_service.get_tool(tool_id)
+        if tool is None:
+            raise ValueError("選択されたツールが登録されていません。")
+        if not tool.executable_path.exists():
+            raise ValueError(f"実行ファイルが見つかりません: {tool.executable_path}")
+        return self.environment_service.test_launch_tool(
+            tool=tool,
+            packages=rez_packages,
+            variants=rez_variants,
+            environment=rez_environment,
+            timeout=timeout,
+        )
 
     # ------------------------------------------------------------------
     # テンプレート連携
