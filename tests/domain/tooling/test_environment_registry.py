@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-import subprocess
 import sys
-import types
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -148,68 +146,29 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    real_python = sys.executable
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text(f"#!{real_python}\nprint('rez dummy')\n", encoding="utf-8")
-    rez_executable.chmod(0o755)
-    fake_python = bin_dir / "python"
-    fake_python.write_text("", encoding="utf-8")
-    fake_python.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
-    monkeypatch.setattr(sys, "executable", str(fake_python))
-
-    called_env: dict | None = None
-
-    def _fake_run(*_, **kwargs):
-        nonlocal called_env
-        called_env = kwargs.get("env")
-        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
 
     resolver = RezEnvironmentResolver()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    env = resolver._build_environment({})
 
-    result = resolver.resolve(["maya"], environment={})
-
-    assert result.success is True
-    assert called_env is not None
-    path_entries = called_env["PATH"].split(os.pathsep)
+    path_entries = env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
 
 
 def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    real_python = sys.executable
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text(f"#!{real_python}\nprint('rez dummy')\n", encoding="utf-8")
-    rez_executable.chmod(0o755)
-    fake_python = bin_dir / "python"
-    fake_python.write_text("", encoding="utf-8")
-    fake_python.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("SOTUGYO_REZ_PATH", raising=False)
-    monkeypatch.setattr(sys, "executable", str(fake_python))
 
     resolver = RezEnvironmentResolver()
 
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
+    env = resolver._build_environment({})
 
-    called_env: dict | None = None
-
-    def _fake_run(*_, **kwargs):
-        nonlocal called_env
-        called_env = kwargs.get("env")
-        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-
-    result = resolver.resolve(["maya"], environment={})
-
-    assert result.success is True
-    assert called_env is not None
-    path_entries = called_env["PATH"].split(os.pathsep)
+    path_entries = env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)

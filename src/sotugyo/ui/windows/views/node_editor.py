@@ -541,7 +541,15 @@ class NodeEditorWindow(QMainWindow):
     def _build_rez_package_records(self) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
         all_packages = self._all_rez_packages()
+        linked_packages = set()
+        for environment in self._tool_environments.values():
+            if environment.rez_packages:
+                linked_packages.update(environment.rez_packages)
+            elif environment.tool_id:
+                linked_packages.add(environment.tool_id)
         for name, spec in sorted(all_packages.items()):
+            if name in linked_packages:
+                continue
             subtitle = spec.version or "Rez パッケージ"
             origin = "プロジェクト" if name in self._project_rez_packages else "KDMrez"
             keywords = (name, subtitle, origin)
@@ -1152,6 +1160,20 @@ class NodeEditorWindow(QMainWindow):
             message = "Rez でツールを起動しました。"
             if result.process_id is not None:
                 message += f"\nPID: {result.process_id}"
+            if result.command:
+                command_text = " ".join(result.command)
+                message += f"\nCommand: {command_text}"
+            if isinstance(node, ToolEnvironmentNode):
+                payload = node.get_environment_payload()
+                rez_environment = payload.get("rez_environment")
+                if isinstance(rez_environment, dict) and rez_environment:
+                    lines = [
+                        f"{key}={value}"
+                        for key, value in sorted(rez_environment.items())
+                        if isinstance(key, str)
+                    ]
+                    if lines:
+                        message += "\nEnvironment:\n" + "\n".join(lines)
             self._show_info_dialog(message)
             return
         self._show_warning_dialog(result.message())

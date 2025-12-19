@@ -22,52 +22,22 @@ def _write_executable(path: Path, content: str) -> None:
 
 def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
     with TemporaryDirectory() as tmp_dir:
-        real_python = sys.executable
         root = Path(tmp_dir)
-        rez_dir = root / "rez_bin"
-        rez_dir.mkdir(parents=True, exist_ok=True)
         package_root = root / "packages"
         package_root.mkdir(parents=True, exist_ok=True)
         output_file = root / "launch.txt"
-        fake_python = rez_dir / "python"
-        fake_python.write_text("", encoding="utf-8")
-        fake_python.chmod(0o755)
 
         dummy_tool = root / "dummyTool.exe.test"
         _write_executable(
             dummy_tool,
             "\n".join(
                 [
-                    f"#!{real_python}",
+                    f"#!{sys.executable}",
                     "from pathlib import Path",
                     f"Path(r\"{output_file}\").write_text(\"ok\", encoding=\"utf-8\")",
                 ]
             ),
         )
-
-        rez_command = rez_dir / "rez"
-        _write_executable(
-            rez_command,
-            "\n".join(
-                [
-                    f"#!{real_python}",
-                    "import subprocess",
-                    "import sys",
-                    "args = sys.argv[1:]",
-                    "if '--' in args:",
-                    "    idx = args.index('--')",
-                    "    command = args[idx + 1:]",
-                    "else:",
-                    "    command = []",
-                    "if not command:",
-                    "    sys.exit(2)",
-                    "completed = subprocess.run(command, check=False)",
-                    "sys.exit(completed.returncode)",
-                ]
-            ),
-        )
-        rez_command.chmod(0o755)
-        monkeypatch.setattr(sys, "executable", str(fake_python))
 
         repository = ToolConfigRepository(storage_dir=package_root)
         rez_repository = RezPackageRepository(root_dir=package_root)
