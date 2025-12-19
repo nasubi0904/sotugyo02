@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from src.sotugyo.domain.tooling.models import RegisteredTool, ToolEnvironmentDefinition
+from src.sotugyo.domain.tooling.models import ToolEnvironmentDefinition
 from src.sotugyo.domain.tooling.repositories.config import ToolConfigRepository
 from src.sotugyo.domain.tooling.services.environment import ToolEnvironmentRegistryService
 from src.sotugyo.domain.tooling.services.rez import RezEnvironmentResolver, RezResolveResult
@@ -41,16 +41,6 @@ class DummyResolver:
         normalized_env = dict(environment or {})
         self.calls.append((normalized_packages, normalized_variants, normalized_env))
         return self._result
-
-
-def make_tool(tool_id: str) -> RegisteredTool:
-    return RegisteredTool(
-        tool_id=tool_id,
-        display_name="TestTool",
-        executable_path=Path("C:/Tools/test.exe"),
-        template_id="autodesk.maya",
-        version="2024",
-    )
 
 
 def test_tool_environment_definition_serialization_roundtrip() -> None:
@@ -96,15 +86,12 @@ def test_environment_registry_saves_rez_metadata() -> None:
         resolver = DummyResolver(success=False, message="package missing")
         service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
 
-        tool = make_tool("tool-1")
-        tools = [tool]
         environments: list[ToolEnvironmentDefinition] = []
 
         environment = service.save(
             name="テスト環境",
-            tool_id=tool.tool_id,
+            tool_id="maya",
             version_label="v1",
-            tools=tools,
             environments=environments,
             template_id="autodesk.maya",
             rez_packages=["maya"],
@@ -123,7 +110,7 @@ def test_environment_registry_saves_rez_metadata() -> None:
         assert environment.metadata["rez_validation"]["success"] is False
 
         stored_tools, stored_envs = repository.load_all()
-        assert stored_tools[0].tool_id == tool.tool_id
+        assert stored_tools == []
         assert stored_envs[0].rez_packages == ("maya",)
 
 
@@ -133,12 +120,10 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
         resolver = DummyResolver(success=True, message="ok")
         service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
 
-        tool = make_tool("tool-1")
         initial = service.save(
             name="環境A",
-            tool_id=tool.tool_id,
+            tool_id="maya",
             version_label="v1",
-            tools=[tool],
             environments=[],
             template_id="autodesk.maya",
             rez_packages=["maya"],
@@ -147,9 +132,8 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
         tools, environments = repository.load_all()
         updated = service.save(
             name="環境A",
-            tool_id=tool.tool_id,
+            tool_id="maya",
             version_label="v2",
-            tools=tools,
             environments=environments,
             environment_id=initial.environment_id,
             template_id=None,
@@ -223,4 +207,3 @@ def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> Non
     assert called_env is not None
     path_entries = called_env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
-

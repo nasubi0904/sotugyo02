@@ -9,7 +9,7 @@ from typing import Dict, Iterable, List, Tuple
 
 from ..projects.service import ProjectService
 from ..users.settings import UserSettingsManager
-from .models import RegisteredTool, RezPackageSpec, ToolEnvironmentDefinition
+from .models import RezPackageSpec, ToolEnvironmentDefinition
 from .services import RezLaunchResult, ToolEnvironmentService
 
 LOGGER = logging.getLogger(__name__)
@@ -19,7 +19,6 @@ LOGGER = logging.getLogger(__name__)
 class ToolEnvironmentSnapshot:
     """ツール登録と環境定義のスナップショット。"""
 
-    tools: Dict[str, RegisteredTool]
     environments: Dict[str, ToolEnvironmentDefinition]
 
 
@@ -51,47 +50,34 @@ class NodeEditorCoordinator:
 
     def load_tool_snapshot(self) -> ToolEnvironmentSnapshot:
         try:
-            tools = self.tool_service.list_tools()
-        except OSError as exc:
-            LOGGER.error("ツール情報の取得に失敗しました: %s", exc, exc_info=True)
-            tools = []
-        try:
             environments = self.tool_service.list_environments()
         except OSError as exc:
             LOGGER.error("環境情報の取得に失敗しました: %s", exc, exc_info=True)
             environments = []
 
-        tool_map = {tool.tool_id: tool for tool in tools}
         filtered_envs: Dict[str, ToolEnvironmentDefinition] = {}
         for environment in environments:
-            if environment.tool_id in tool_map:
-                filtered_envs[environment.environment_id] = environment
-            else:
-                LOGGER.warning(
-                    "ツール %s が存在しないため環境 %s を読み込みから除外しました。",
-                    environment.tool_id,
-                    environment.environment_id,
-                )
-        return ToolEnvironmentSnapshot(tool_map, filtered_envs)
+            filtered_envs[environment.environment_id] = environment
+        return ToolEnvironmentSnapshot(filtered_envs)
 
     def build_tool_catalog(self, snapshot: ToolEnvironmentSnapshot) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
         for environment in sorted(snapshot.environments.values(), key=lambda item: item.name):
-            tool = snapshot.tools.get(environment.tool_id)
             subtitle_parts = []
-            if tool is not None:
-                subtitle_parts.append(tool.display_name)
             if environment.version_label:
                 subtitle_parts.append(environment.version_label)
             subtitle = " / ".join(part for part in subtitle_parts if part)
             node_type = f"tool-environment:{environment.environment_id}"
             keywords: Tuple[str, ...] = (
                 environment.environment_id,
-                tool.display_name if tool is not None else "",
+                environment.tool_id,
             )
             icon_path = None
-            if tool is not None and tool.template_id:
-                icon_path = str(tool.executable_path)
+            metadata = environment.metadata
+            if isinstance(metadata, dict):
+                executable_path = metadata.get("executable_path")
+                if isinstance(executable_path, str) and executable_path:
+                    icon_path = executable_path
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,

@@ -23,11 +23,7 @@ QTreeWidgetItem = QtWidgets.QTreeWidgetItem
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
-from ...domain.tooling import (
-    RegisteredTool,
-    ToolEnvironmentDefinition,
-    ToolEnvironmentService,
-)
+from ...domain.tooling import ToolEnvironmentDefinition, ToolEnvironmentService
 
 
 class ToolEnvironmentManagerDialog(QDialog):
@@ -37,7 +33,6 @@ class ToolEnvironmentManagerDialog(QDialog):
         super().__init__(parent)
         self._service = service
         self._environment_list: Optional[QTreeWidget] = None
-        self._tool_cache: Dict[str, RegisteredTool] = {}
         self._refresh_on_accept = False
 
         self.setWindowTitle("ツール環境の編集")
@@ -55,7 +50,7 @@ class ToolEnvironmentManagerDialog(QDialog):
         layout.setSpacing(10)
 
         description = QLabel(
-            "登録済みツールを組み合わせた環境を定義します。定義した環境はコンテンツブラウザからノードとして利用できます。",
+            "Rez パッケージを組み合わせた環境を定義します。定義した環境はコンテンツブラウザからノードとして利用できます。",
             self,
         )
         description.setWordWrap(True)
@@ -63,7 +58,9 @@ class ToolEnvironmentManagerDialog(QDialog):
 
         env_list = QTreeWidget(self)
         env_list.setColumnCount(5)
-        env_list.setHeaderLabels(["環境名", "ツール", "バージョン", "Rez パッケージ", "実行ファイル"])
+        env_list.setHeaderLabels(
+            ["環境名", "代表パッケージ", "バージョン", "Rez パッケージ", "実行ファイル"]
+        )
         env_list.setRootIsDecorated(False)
         env_list.setAlternatingRowColors(True)
         env_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -92,12 +89,6 @@ class ToolEnvironmentManagerDialog(QDialog):
 
     def _refresh_listing(self) -> None:
         try:
-            tools = self._service.list_tools()
-        except OSError as exc:
-            QMessageBox.critical(self, "エラー", f"ツール情報の取得に失敗しました: {exc}")
-            tools = []
-        self._tool_cache = {tool.tool_id: tool for tool in tools}
-        try:
             environments = self._service.list_environments()
         except OSError as exc:
             QMessageBox.critical(self, "エラー", f"環境情報の取得に失敗しました: {exc}")
@@ -106,15 +97,18 @@ class ToolEnvironmentManagerDialog(QDialog):
             return
         self._environment_list.clear()
         for environment in environments:
-            tool = self._tool_cache.get(environment.tool_id)
             packages_text = ", ".join(environment.rez_packages)
             if not packages_text:
                 packages_text = "-"
-            executable_text = str(tool.executable_path) if tool else "-"
+            executable_text = "-"
+            if isinstance(environment.metadata, dict):
+                executable_path = environment.metadata.get("executable_path")
+                if isinstance(executable_path, str) and executable_path:
+                    executable_text = executable_path
             item = QTreeWidgetItem(
                 [
                     environment.name,
-                    tool.display_name if tool else "(未登録)",
+                    environment.tool_id or "-",
                     environment.version_label,
                     packages_text,
                     executable_text,
@@ -138,11 +132,7 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._environment_list.resizeColumnToContents(4)
 
     def _add_environment(self) -> None:
-        if not self._tool_cache:
-            QMessageBox.information(self, "環境の追加", "先にツールを登録してください。")
-            return
         dialog = ToolEnvironmentEditDialog(
-            self._tool_cache,
             service=self._service,
             parent=self,
         )
@@ -187,7 +177,6 @@ class ToolEnvironmentManagerDialog(QDialog):
             QMessageBox.warning(self, "編集", "指定された環境が見つかりませんでした。")
             return
         dialog = ToolEnvironmentEditDialog(
-            self._tool_cache,
             service=self._service,
             definition=target,
             parent=self,
@@ -278,21 +267,18 @@ class ToolEnvironmentEditDialog(QDialog):
 
     def __init__(
         self,
-        tool_cache: Dict[str, RegisteredTool],
         *,
         service: ToolEnvironmentService,
         definition: Optional[ToolEnvironmentDefinition] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self._tools = tool_cache
         self._service = service
         self._definition = definition
         self._name_edit: Optional[QLineEdit] = None
-        self._tool_combo: Optional[QComboBox] = None
         self._template_combo: Optional[QComboBox] = None
         self._version_edit: Optional[QLineEdit] = None
-        self._path_label: Optional[QLabel] = None
+        self._executable_edit: Optional[QLineEdit] = None
         self._package_edit: Optional[QPlainTextEdit] = None
         self._variant_edit: Optional[QLineEdit] = None
         self._env_edit: Optional[QPlainTextEdit] = None
@@ -324,17 +310,6 @@ class ToolEnvironmentEditDialog(QDialog):
         self._name_edit = QLineEdit(self)
         form.addRow("環境名", self._name_edit)
 
-        self._tool_combo = QComboBox(self)
-        for tool_id, tool in sorted(
-            self._tools.items(), key=lambda item: item[1].display_name
-        ):
-            label = f"{tool.display_name}"
-            if tool.version:
-                label += f" ({tool.version})"
-            self._tool_combo.addItem(label, tool_id)
-        self._tool_combo.currentIndexChanged.connect(self._update_tool_path)
-        form.addRow("利用するツール", self._tool_combo)
-
         self._template_combo = QComboBox(self)
         self._template_combo.addItem("テンプレートなし", "")
         try:
@@ -352,9 +327,9 @@ class ToolEnvironmentEditDialog(QDialog):
         self._version_edit = QLineEdit(self)
         form.addRow("バージョン表示", self._version_edit)
 
-        self._path_label = QLabel("-", self)
-        self._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        form.addRow("実行ファイル", self._path_label)
+        self._executable_edit = QLineEdit(self)
+        self._executable_edit.setPlaceholderText("起動する実行ファイルのパス")
+        form.addRow("実行ファイル", self._executable_edit)
 
         self._package_edit = QPlainTextEdit(self)
         self._package_edit.setPlaceholderText("1 行につき 1 つの Rez パッケージを入力します。")
@@ -385,21 +360,20 @@ class ToolEnvironmentEditDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
-        self._update_tool_path()
-
     def _apply_definition(self, definition: ToolEnvironmentDefinition) -> None:
         if self._name_edit is not None:
             self._name_edit.setText(definition.name)
-        if self._tool_combo is not None:
-            index = self._tool_combo.findData(definition.tool_id)
-            if index >= 0:
-                self._tool_combo.setCurrentIndex(index)
         if self._template_combo is not None and definition.template_id:
             template_index = self._template_combo.findData(definition.template_id)
             if template_index >= 0:
                 self._template_combo.setCurrentIndex(template_index)
         if self._version_edit is not None:
             self._version_edit.setText(definition.version_label)
+        if self._executable_edit is not None:
+            executable_path = ""
+            if isinstance(definition.metadata, dict):
+                executable_path = str(definition.metadata.get("executable_path", ""))
+            self._executable_edit.setText(executable_path)
         if self._package_edit is not None:
             self._package_edit.setPlainText("\n".join(definition.rez_packages))
             self._packages_dirty = False
@@ -412,37 +386,13 @@ class ToolEnvironmentEditDialog(QDialog):
         if self._validation_label is not None:
             status = definition.metadata.get("rez_validation") if definition.metadata else None
             self._validation_label.setText(self._describe_validation(status))
-        self._update_tool_path()
-
-    def _update_tool_path(self) -> None:
-        if self._tool_combo is None or self._path_label is None:
-            return
-        tool_id = self._tool_combo.currentData()
-        tool = self._tools.get(tool_id) if isinstance(tool_id, str) else None
-        self._path_label.setText(str(tool.executable_path) if tool else "-")
-        if (
-            self._version_edit is not None
-            and tool is not None
-            and not self._version_edit.text().strip()
-            and tool.version
-        ):
-            self._version_edit.setText(tool.version)
-        if (
-            tool is not None
-            and tool.template_id
-            and self._template_combo is not None
-            and not self._template_combo.currentData()
-        ):
-            index = self._template_combo.findData(tool.template_id)
-            if index >= 0:
-                self._template_combo.setCurrentIndex(index)
 
     def _handle_accept(self) -> None:
         if (
             self._name_edit is None
-            or self._tool_combo is None
             or self._version_edit is None
             or self._template_combo is None
+            or self._executable_edit is None
             or self._package_edit is None
             or self._variant_edit is None
             or self._env_edit is None
@@ -452,9 +402,9 @@ class ToolEnvironmentEditDialog(QDialog):
         if not name:
             QMessageBox.warning(self, "入力不備", "環境名を入力してください。")
             return
-        tool_id = self._tool_combo.currentData()
-        if not isinstance(tool_id, str):
-            QMessageBox.warning(self, "入力不備", "利用するツールを選択してください。")
+        executable_path = self._executable_edit.text().strip()
+        if not executable_path:
+            QMessageBox.warning(self, "入力不備", "実行ファイルを入力してください。")
             return
         version = self._version_edit.text().strip()
         template_id = self._template_combo.currentData()
@@ -463,6 +413,10 @@ class ToolEnvironmentEditDialog(QDialog):
         packages = self._collect_packages()
         if template_id and not packages:
             packages = self._load_template_packages(template_id)
+        if not packages:
+            QMessageBox.warning(self, "入力不備", "Rez パッケージを入力してください。")
+            return
+        tool_id = packages[0]
         variants = self._collect_variants()
         env_map = self._collect_environment()
         result: Dict[str, object] = {
@@ -474,6 +428,7 @@ class ToolEnvironmentEditDialog(QDialog):
         result["rez_packages"] = packages
         result["rez_variants"] = variants
         result["rez_environment"] = env_map
+        result["metadata"] = {"executable_path": executable_path}
         self._result = result
         self.accept()
 

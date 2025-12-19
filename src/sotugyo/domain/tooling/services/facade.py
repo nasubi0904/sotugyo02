@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
 from ..models import (
-    RegisteredTool,
     RezPackageSpec,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
@@ -21,7 +20,6 @@ from ..repositories.rez_packages import (
 )
 from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
-from .registry import ToolRegistryService
 from .rez import RezLaunchResult
 
 
@@ -29,7 +27,6 @@ from .rez import RezLaunchResult
 class ToolEnvironmentService:
     """ツール登録と環境定義をまとめて提供する。"""
 
-    registry_service: ToolRegistryService
     environment_service: ToolEnvironmentRegistryService
     template_gateway: TemplateGateway
     rez_repository: RezPackageRepository
@@ -38,13 +35,11 @@ class ToolEnvironmentService:
         self,
         repository: ToolConfigRepository | None = None,
         *,
-        registry_service: ToolRegistryService | None = None,
         environment_service: ToolEnvironmentRegistryService | None = None,
         template_gateway: TemplateGateway | None = None,
         rez_repository: RezPackageRepository | None = None,
     ) -> None:
         repo = repository or ToolConfigRepository()
-        self.registry_service = registry_service or ToolRegistryService(repo)
         self.environment_service = (
             environment_service or ToolEnvironmentRegistryService(repo)
         )
@@ -54,12 +49,6 @@ class ToolEnvironmentService:
     # ------------------------------------------------------------------
     # ツール登録
     # ------------------------------------------------------------------
-    def list_tools(self) -> List[RegisteredTool]:
-        return self.registry_service.list_tools()
-
-    def get_tool(self, tool_id: str) -> Optional[RegisteredTool]:
-        return self.registry_service.get_tool(tool_id)
-
     def register_tool(
         self,
         *,
@@ -67,25 +56,87 @@ class ToolEnvironmentService:
         executable_path: Path | str,
         template_id: str | None = None,
         version: str | None = None,
-    ) -> RegisteredTool:
+    ) -> ToolEnvironmentDefinition:
         normalized_path = self._normalize_executable_path(executable_path)
         if not normalized_path.exists():
             raise ValueError(f"実行ファイルが見つかりません: {normalized_path}")
-        return self.registry_service.register(
-            display_name=display_name,
+
+        environments = self.list_environments()
+        for environment in environments:
+            metadata = environment.metadata
+            if not isinstance(metadata, dict):
+                continue
+            recorded_path = metadata.get("executable_path")
+            if not isinstance(recorded_path, str):
+                continue
+            if Path(recorded_path).resolve() == normalized_path.resolve():
+                raise ValueError("同じ実行ファイルが既に登録されています。")
+
+        candidate = TemplateInstallationCandidate(
+            template_id=template_id or normalized_path.stem,
+            display_name=display_name.strip() or normalized_path.stem,
             executable_path=normalized_path,
-            template_id=template_id,
-            version=version,
+            version=version.strip() if version else None,
         )
+        package_name = self.rez_repository.register_candidate(candidate)
+        environment = self.environment_service.save(
+            name=candidate.display_name,
+            tool_id=package_name,
+            version_label=candidate.version or "local",
+            environments=environments,
+            template_id=template_id,
+            rez_packages=[package_name],
+            metadata={"executable_path": str(normalized_path)},
+        )
+        return environment
 
     def remove_tool(self, tool_id: str) -> bool:
-        return self.registry_service.remove(tool_id)
+        if not tool_id:
+            return False
+        environments = self.environment_service.list_environments()
+        target = next(
+            (env for env in environments if env.environment_id == tool_id), None
+        )
+        if target is None:
+            return False
+        return self.environment_service.remove(target.environment_id)
 
     # ------------------------------------------------------------------
     # 環境定義
     # ------------------------------------------------------------------
     def list_environments(self) -> List[ToolEnvironmentDefinition]:
-        return self.environment_service.list_environments()
+        repository = self.environment_service.repository
+        tools, environments = repository.load_all()
+        if tools:
+            updated = list(environments)
+            for tool in tools:
+                if any(
+                    isinstance(env.metadata, dict)
+                    and env.metadata.get("executable_path") == str(tool.executable_path)
+                    for env in updated
+                ):
+                    continue
+                candidate = TemplateInstallationCandidate(
+                    template_id=tool.template_id or tool.executable_path.stem,
+                    display_name=tool.display_name,
+                    executable_path=tool.executable_path,
+                    version=tool.version,
+                )
+                package_name = self.rez_repository.register_candidate(candidate)
+                updated.append(
+                    ToolEnvironmentDefinition(
+                        environment_id=tool.tool_id,
+                        name=tool.display_name,
+                        tool_id=package_name,
+                        version_label=tool.version or "local",
+                        template_id=tool.template_id,
+                        rez_packages=(package_name,),
+                        metadata={"executable_path": str(tool.executable_path)},
+                    )
+                )
+            repository.save_all([], updated)
+            return updated
+        return environments
 
     def get_environment(self, environment_id: str) -> Optional[ToolEnvironmentDefinition]:
         return self.environment_service.get_environment(environment_id)
@@ -103,14 +154,11 @@ class ToolEnvironmentService:
         rez_environment: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
-        tools = self.registry_service.list_tools()
-        environments = self.environment_service.list_environments()
         return self.environment_service.save(
             name=name,
             tool_id=tool_id,
             version_label=version_label,
-            tools=tools,
-            environments=environments,
+            environments=self.list_environments(),
             environment_id=environment_id,
             template_id=template_id,
             rez_packages=rez_packages,
@@ -180,22 +228,16 @@ class ToolEnvironmentService:
                 stderr="environment_id が指定されていません。",
             )
 
-        environment = self.environment_service.get_environment(environment_id)
+        environment = next(
+            (env for env in self.list_environments() if env.environment_id == environment_id),
+            None,
+        )
         if environment is None:
             return RezLaunchResult(
                 success=False,
                 command=(),
                 return_code=2,
                 stderr="指定された環境が登録されていません。",
-            )
-
-        tool = self.registry_service.get_tool(environment.tool_id)
-        if tool is None:
-            return RezLaunchResult(
-                success=False,
-                command=(),
-                return_code=2,
-                stderr="環境が参照するツールが登録されていません。",
             )
 
         packages = list(environment.rez_packages)
@@ -233,11 +275,22 @@ class ToolEnvironmentService:
                 stderr="Rez 実行環境が初期化されていません。",
             )
 
+        executable_path = None
+        if isinstance(environment.metadata, dict):
+            executable_path = environment.metadata.get("executable_path")
+        if not isinstance(executable_path, str) or not executable_path:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="起動対象の実行ファイルが設定されていません。",
+            )
+
         return resolver.launch(
             packages=packages,
             variants=list(environment.rez_variants),
             environment=environment.rez_environment,
-            command=[str(tool.executable_path)],
+            command=[executable_path],
             packages_path=[str(self.rez_repository.root_dir)],
         )
 

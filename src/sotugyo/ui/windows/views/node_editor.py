@@ -49,11 +49,7 @@ from ...components.nodes import (
     ToolEnvironmentNode,
 )
 from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
-from sotugyo.domain.tooling import (
-    RegisteredTool,
-    RezPackageSpec,
-    ToolEnvironmentDefinition,
-)
+from sotugyo.domain.tooling import RezPackageSpec, ToolEnvironmentDefinition
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -149,7 +145,6 @@ class NodeEditorWindow(QMainWindow):
         self._project_service = self._coordinator.project_service
         self._user_manager = self._coordinator.user_manager
         self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
-        self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
         self._local_rez_packages: Dict[str, RezPackageSpec] = {}
         self._project_rez_packages: Dict[str, RezPackageSpec] = {}
@@ -415,7 +410,6 @@ class NodeEditorWindow(QMainWindow):
     def _refresh_tool_configuration(self) -> None:
         snapshot = self._coordinator.load_tool_snapshot()
         self._tool_snapshot = snapshot
-        self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
         self._local_rez_packages = {
             spec.name: spec for spec in self._coordinator.list_rez_packages()
@@ -727,20 +721,16 @@ class NodeEditorWindow(QMainWindow):
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return
-        tool = self._registered_tools.get(definition.tool_id)
-        if tool is None:
-            self._show_warning_dialog("環境が参照するツールが登録されていません。")
-            return
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
         if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload(tool)
+            payload = definition.build_payload()
             node.configure_environment(
                 environment_id=definition.environment_id,
                 environment_name=definition.name,
-                tool_id=tool.tool_id,
-                tool_name=tool.display_name,
+                tool_id=definition.tool_id,
+                tool_name=definition.name,
                 version_label=definition.version_label,
                 environment_payload=payload,
             )

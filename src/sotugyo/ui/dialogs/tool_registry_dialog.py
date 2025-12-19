@@ -32,7 +32,7 @@ from ...domain.tooling import TemplateInstallationCandidate, ToolEnvironmentServ
 
 
 class ToolRegistryDialog(QDialog):
-    """登録済みツールの一覧と追加・削除を行う。"""
+    """登録済みツール環境の一覧と追加・削除を行う。"""
 
     def __init__(self, service: ToolEnvironmentService, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -56,7 +56,7 @@ class ToolRegistryDialog(QDialog):
         layout.setSpacing(10)
 
         description = QLabel(
-            "マシンに登録する DCC ツールを管理します。追加したツールは環境定義で利用できます。",
+            "マシンに登録するツールを Rez パッケージとして管理します。追加したツールは環境定義として登録されます。",
             self,
         )
         description.setWordWrap(True)
@@ -64,7 +64,7 @@ class ToolRegistryDialog(QDialog):
 
         tool_list = QTreeWidget(self)
         tool_list.setColumnCount(4)
-        tool_list.setHeaderLabels(["表示名", "テンプレート", "バージョン", "実行ファイル"])
+        tool_list.setHeaderLabels(["環境名", "Rez パッケージ", "バージョン", "実行ファイル"])
         tool_list.setRootIsDecorated(False)
         tool_list.setAlternatingRowColors(True)
         tool_list.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -87,7 +87,7 @@ class ToolRegistryDialog(QDialog):
         button_row.addStretch(1)
         layout.addLayout(button_row)
 
-        status_label = QLabel("登録されているツール数: 0", self)
+        status_label = QLabel("登録されている環境数: 0", self)
         status_label.setObjectName("statusLabel")
         layout.addWidget(status_label)
         self._status_label = status_label
@@ -100,27 +100,33 @@ class ToolRegistryDialog(QDialog):
         if self._tool_list is None:
             return
         try:
-            tools = self._service.list_tools()
+            environments = self._service.list_environments()
         except OSError as exc:
-            QMessageBox.critical(self, "エラー", f"ツールの読み込みに失敗しました: {exc}")
-            tools = []
+            QMessageBox.critical(self, "エラー", f"環境の読み込みに失敗しました: {exc}")
+            environments = []
         self._tool_list.clear()
-        for tool in tools:
+        for environment in environments:
+            executable_path = "-"
+            if isinstance(environment.metadata, dict):
+                metadata_path = environment.metadata.get("executable_path")
+                if isinstance(metadata_path, str) and metadata_path:
+                    executable_path = metadata_path
+            package_name = environment.rez_packages[0] if environment.rez_packages else "-"
             item = QTreeWidgetItem(
                 [
-                    tool.display_name,
-                    tool.template_id or "-",
-                    tool.version or "-",
-                    str(tool.executable_path),
+                    environment.name,
+                    package_name,
+                    environment.version_label or "-",
+                    executable_path,
                 ]
             )
-            item.setData(0, Qt.UserRole, tool.tool_id)
+            item.setData(0, Qt.UserRole, environment.environment_id)
             self._tool_list.addTopLevelItem(item)
         self._tool_list.resizeColumnToContents(0)
         self._tool_list.resizeColumnToContents(1)
         self._tool_list.resizeColumnToContents(2)
         if self._status_label is not None:
-            self._status_label.setText(f"登録されているツール数: {len(tools)}")
+            self._status_label.setText(f"登録されている環境数: {len(environments)}")
 
     def _open_add_menu(self) -> None:
         button = self.sender()
@@ -164,27 +170,27 @@ class ToolRegistryDialog(QDialog):
             return
         current = self._tool_list.currentItem()
         if current is None:
-            QMessageBox.information(self, "削除", "削除するツールを選択してください。")
+            QMessageBox.information(self, "削除", "削除する環境を選択してください。")
             return
-        tool_id = current.data(0, Qt.UserRole)
-        if not isinstance(tool_id, str):
+        environment_id = current.data(0, Qt.UserRole)
+        if not isinstance(environment_id, str):
             return
         reply = QMessageBox.question(
             self,
             "確認",
-            "選択したツールを削除しますか？関連する環境定義も削除されます。",
+            "選択した環境を削除しますか？",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if reply != QMessageBox.Yes:
             return
         try:
-            removed = self._service.remove_tool(tool_id)
+            removed = self._service.remove_tool(environment_id)
         except OSError as exc:
             QMessageBox.critical(self, "削除に失敗", str(exc))
             return
         if not removed:
-            QMessageBox.warning(self, "削除", "指定されたツールが見つかりませんでした。")
+            QMessageBox.warning(self, "削除", "指定された環境が見つかりませんでした。")
             return
         self._refresh_on_accept = True
         self._refresh_tool_list()

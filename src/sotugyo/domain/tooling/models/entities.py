@@ -145,6 +145,8 @@ class ToolEnvironmentDefinition:
             payload["tool_name"] = tool.display_name
             if tool.version:
                 payload["tool_version"] = tool.version
+        else:
+            payload["tool_name"] = self.name
         if self.template_id:
             payload["template_id"] = self.template_id
         if self.rez_packages:

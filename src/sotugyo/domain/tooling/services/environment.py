@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
-from ..models import RegisteredTool, ToolEnvironmentDefinition
+from ..models import ToolEnvironmentDefinition
 from ..repositories.config import ToolConfigRepository
 from .rez import RezEnvironmentResolver, RezResolveResult
 
@@ -37,7 +37,6 @@ class ToolEnvironmentRegistryService:
         name: str,
         tool_id: str,
         version_label: str,
-        tools: List[RegisteredTool],
         environments: List[ToolEnvironmentDefinition],
         environment_id: Optional[str] = None,
         template_id: Optional[str] = None,
@@ -46,13 +45,14 @@ class ToolEnvironmentRegistryService:
         rez_environment: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
-        tool_map: Dict[str, RegisteredTool] = {tool.tool_id: tool for tool in tools}
-        if tool_id not in tool_map:
-            raise ValueError("選択されたツールが登録されていません。")
-
         normalized_packages = self._normalize_sequence(rez_packages)
         normalized_variants = self._normalize_sequence(rez_variants)
         normalized_env = self._normalize_environment(rez_environment)
+        resolved_tool_id = tool_id.strip()
+        if not resolved_tool_id and normalized_packages:
+            resolved_tool_id = normalized_packages[0]
+        if not resolved_tool_id:
+            resolved_tool_id = "rez-tool"
 
         now = datetime.utcnow()
         if environment_id:
@@ -64,7 +64,7 @@ class ToolEnvironmentRegistryService:
             if target is None:
                 raise ValueError("指定された環境が存在しません。")
             target.name = name.strip() or target.name
-            target.tool_id = tool_id
+            target.tool_id = resolved_tool_id
             target.version_label = version_label.strip()
             target.template_id = template_id or None
             if normalized_packages is not None:
@@ -81,7 +81,7 @@ class ToolEnvironmentRegistryService:
             environment = ToolEnvironmentDefinition(
                 environment_id=ToolEnvironmentIdGenerator.next_id(),
                 name=name.strip() or "環境",
-                tool_id=tool_id,
+                tool_id=resolved_tool_id,
                 version_label=version_label.strip(),
                 template_id=template_id or None,
                 rez_packages=normalized_packages or (),
@@ -100,7 +100,7 @@ class ToolEnvironmentRegistryService:
         )
         environment.metadata["rez_validation"] = validation_result.to_dict()
         environment.updated_at = now
-        self.repository.save_all(tools, environments)
+        self.repository.save_all([], environments)
         return environment
 
     def remove(self, environment_id: str) -> bool:
