@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import locale
 import os
 import sys
 import threading
@@ -208,6 +209,8 @@ class RezEnvironmentResolver:
                 stdout=PIPE,
                 stderr=PIPE,
                 text=True,
+                encoding=self._encoding,
+                errors="replace",
             )
         except OSError as exc:  # pragma: no cover - 実行環境依存
             LOGGER.error("Rez 起動処理に失敗しました: %s", exc)
@@ -338,9 +341,15 @@ class RezEnvironmentResolver:
         entries = [entry.strip() for entry in raw_paths.split(os.pathsep) if entry.strip()]
         return entries or None
 
+    @property
+    def _encoding(self) -> str:
+        return locale.getpreferredencoding(False)
+
     @staticmethod
     def _stream_output(stream, is_error: bool) -> None:
         for line in stream:
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="replace")
             if is_error:
                 print(line, end="", file=sys.stderr)
             else:
