@@ -257,9 +257,16 @@ class ToolEnvironmentService:
                 stderr="起動に必要な Rez パッケージが設定されていません。",
             )
 
-        missing = [
-            package for package in packages if self.rez_repository.find_package(package) is None
-        ]
+        missing = []
+        for package in packages:
+            if self.rez_repository.find_package(package) is not None:
+                continue
+            fallback = None
+            if "-" in package:
+                fallback = package.rsplit("-", 1)[0]
+            if fallback and self.rez_repository.find_package(fallback) is not None:
+                continue
+            missing.append(package)
         if missing:
             missing_list = ", ".join(missing)
             return RezLaunchResult(
