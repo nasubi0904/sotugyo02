@@ -120,6 +120,32 @@ class ToolEnvironmentRegistryService:
             environment=environment or {},
         )
 
+    def test_launch_tool(
+        self,
+        *,
+        tool: RegisteredTool,
+        packages: Iterable[str] | None = None,
+        variants: Iterable[str] | None = None,
+        environment: Optional[Dict[str, str]] = None,
+        timeout: int | None = 60,
+    ) -> RezResolveResult:
+        resolver = self.rez_resolver
+        if resolver is None:  # pragma: no cover - 予防的措置
+            return RezResolveResult(
+                success=False,
+                command=(),
+                return_code=-1,
+                stderr="Rez リゾルバが初期化されていません。",
+            )
+        command = (str(tool.executable_path),)
+        return resolver.run_command(
+            command=command,
+            packages=list(packages or ()),
+            variants=list(variants or ()),
+            environment=environment or {},
+            timeout=timeout,
+        )
+
     @staticmethod
     def _normalize_sequence(values: Optional[Iterable[str]]) -> Optional[tuple[str, ...]]:
         if values is None:
