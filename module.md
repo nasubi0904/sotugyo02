@@ -83,4 +83,8 @@
 - [ ] Windows 環境固有の制約を洗い出したか。
 - [ ] Qt バージョンと依存関係の整合性を確認したか。
 
-最終更新日: 2025-01-01
+## 調査メモ (2025-10-21)
+- コンテンツブラウザのアイコンは `src/sotugyo/ui/components/content_browser.py` の `NodeCatalogEntry.icon_path` から `QFileIconProvider` で取得されるため、`.exe` のパスを渡すと Windows の実行ファイルアイコンが反映される。
+- ツール環境の定義側で `.exe` が指定されている場合は、環境定義 (`ToolEnvironmentDefinition`) の `rez_environment` や `metadata` に格納された実行パスを優先して `icon_path` を解決するのが安全。
+
+最終更新日: 2025-10-21
