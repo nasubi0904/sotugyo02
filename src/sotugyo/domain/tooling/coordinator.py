@@ -89,9 +89,7 @@ class NodeEditorCoordinator:
                 environment.environment_id,
                 tool.display_name if tool is not None else "",
             )
-            icon_path = None
-            if tool is not None and tool.template_id:
-                icon_path = str(tool.executable_path)
+            icon_path = self._resolve_tool_icon_path(environment, tool)
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
@@ -103,6 +101,39 @@ class NodeEditorCoordinator:
                 )
             )
         return records
+
+    @staticmethod
+    def _resolve_tool_icon_path(
+        environment: ToolEnvironmentDefinition,
+        tool: RegisteredTool | None,
+    ) -> str | None:
+        environment_icon = NodeEditorCoordinator._extract_environment_exe_path(environment)
+        if environment_icon:
+            return environment_icon
+        if tool is not None and tool.template_id:
+            return str(tool.executable_path)
+        return None
+
+    @staticmethod
+    def _extract_environment_exe_path(environment: ToolEnvironmentDefinition) -> str | None:
+        candidates: List[str] = []
+        metadata = environment.metadata
+        if isinstance(metadata, dict):
+            for key in ("executable_path", "exe_path", "exe", "icon_path"):
+                value = metadata.get(key)
+                if isinstance(value, str):
+                    candidates.append(value)
+        for value in environment.rez_environment.values():
+            if isinstance(value, str):
+                candidates.append(value)
+        for value in candidates:
+            cleaned = value.strip().strip('"')
+            if not cleaned:
+                continue
+            path = Path(cleaned)
+            if path.suffix.lower() == ".exe":
+                return str(path)
+        return None
 
     def extend_catalog(
         self,
