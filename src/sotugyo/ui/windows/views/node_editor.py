@@ -1155,6 +1155,17 @@ class NodeEditorWindow(QMainWindow):
             if result.command:
                 command_text = " ".join(result.command)
                 message += f"\nCommand: {command_text}"
+            if isinstance(node, ToolEnvironmentNode):
+                payload = node.get_environment_payload()
+                rez_environment = payload.get("rez_environment")
+                if isinstance(rez_environment, dict) and rez_environment:
+                    lines = [
+                        f"{key}={value}"
+                        for key, value in sorted(rez_environment.items())
+                        if isinstance(key, str)
+                    ]
+                    if lines:
+                        message += "\nEnvironment:\n" + "\n".join(lines)
             self._show_info_dialog(message)
             return
         self._show_warning_dialog(result.message())
