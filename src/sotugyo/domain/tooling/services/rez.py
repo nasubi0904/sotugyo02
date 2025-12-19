@@ -78,10 +78,13 @@ class RezEnvironmentResolver:
         executable: str = "rez",
         *,
         path_env_var: str = "SOTUGYO_REZ_PATH",
+        debug_log_path: bool = False,
+        debug_path_limit: int = 5,
     ) -> None:
         self._executable = executable
         self._path_env_var = path_env_var
-        self._apply_rez_path_hint()
+        self._debug_log_path = self._resolve_debug_log_path(debug_log_path)
+        self._debug_path_limit = self._resolve_debug_path_limit(debug_path_limit)
 
     def resolve(
         self,
@@ -204,6 +207,8 @@ class RezEnvironmentResolver:
 
         try:
             resolved_env = context.get_environ(parent_environ=env)
+            if self._debug_log_path:
+                self._log_path_head(resolved_env, tuple(command))
             process = subprocess.Popen(
                 [str(entry) for entry in command],
                 env=resolved_env,
@@ -302,10 +307,7 @@ class RezEnvironmentResolver:
                 merged = list(dict.fromkeys([*resolved_paths, *existing_entries]))
                 base_env["REZ_PACKAGES_PATH"] = os.pathsep.join(merged)
 
-        path_value = self._build_path_value(base_env)
-        base_env["PATH"] = path_value
-        base_env["Path"] = path_value
-        return base_env
+        return self._apply_rez_path_hint(base_env)
 
     def _build_path_value(self, env: Mapping[str, str]) -> str:
         rez_path_raw = env.get(self._path_env_var, "")
@@ -316,16 +318,14 @@ class RezEnvironmentResolver:
         merged_entries = list(dict.fromkeys([*hint_paths, *existing_entries]))
         return os.pathsep.join(merged_entries)
 
-    def _apply_rez_path_hint(self) -> None:
-        """PATH を上書きして後続のプロセスに Rez パスを伝搬させる。"""
+    def _apply_rez_path_hint(self, env: Mapping[str, str]) -> dict[str, str]:
+        """Rez 用の PATH ヒントを env のコピーへ適用する。"""
 
-        updated_env = self._build_environment({})
-        os.environ.update(
-            {
-                "PATH": updated_env["PATH"],
-                "Path": updated_env["Path"],
-            }
-        )
+        updated_env = dict(env)
+        path_value = self._build_path_value(updated_env)
+        updated_env["PATH"] = path_value
+        updated_env["Path"] = path_value
+        return updated_env
 
     @staticmethod
     def _is_context_solved(context: ResolvedContext) -> bool:
@@ -341,6 +341,35 @@ class RezEnvironmentResolver:
         raw_paths = env.get("REZ_PACKAGES_PATH", "")
         entries = [entry.strip() for entry in raw_paths.split(os.pathsep) if entry.strip()]
         return entries or None
+
+    def _log_path_head(self, env: Mapping[str, str], command: Tuple[str, ...]) -> None:
+        path_value = env.get("PATH") or env.get("Path") or ""
+        entries = [entry for entry in path_value.split(os.pathsep) if entry]
+        limit = max(self._debug_path_limit, 0)
+        head = entries[:limit] if limit else []
+        joined = "; ".join(head)
+        LOGGER.debug(
+            "Rez 起動 PATH 先頭 %s 件 (%s): %s",
+            len(head),
+            " ".join(command),
+            joined,
+        )
+
+    def _resolve_debug_log_path(self, default: bool) -> bool:
+        raw = os.environ.get("SOTUGYO_REZ_DEBUG_PATH")
+        if raw is None:
+            return default
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+    def _resolve_debug_path_limit(self, default: int) -> int:
+        raw = os.environ.get("SOTUGYO_REZ_DEBUG_PATH_LIMIT")
+        if raw is None:
+            return default
+        try:
+            value = int(raw)
+        except ValueError:
+            return default
+        return max(value, 0)
 
     @property
     def _encoding(self) -> str:
