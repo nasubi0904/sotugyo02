@@ -149,12 +149,17 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text("#!/bin/sh\nexit 0\n")
-    rez_executable.chmod(0o755)
+    rez_module_dir = tmp_path / "rez_module"
+    rez_module_dir.mkdir()
+    rez_package_dir = rez_module_dir / "rez"
+    rez_package_dir.mkdir()
+    (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (rez_package_dir / "__main__.py").write_text("print('rez dummy')\n", encoding="utf-8")
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
+    monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
+    monkeypatch.syspath_prepend(str(rez_module_dir))
 
     called_env: dict | None = None
 
@@ -173,18 +178,22 @@ def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
     assert called_env is not None
     path_entries = called_env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
-    assert shutil.which("rez") is not None
 
 
 def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text("#!/bin/sh\nexit 0\n")
-    rez_executable.chmod(0o755)
+    rez_module_dir = tmp_path / "rez_module"
+    rez_module_dir.mkdir()
+    rez_package_dir = rez_module_dir / "rez"
+    rez_package_dir.mkdir()
+    (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
+    (rez_package_dir / "__main__.py").write_text("print('rez dummy')\n", encoding="utf-8")
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("SOTUGYO_REZ_PATH", raising=False)
+    monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
+    monkeypatch.syspath_prepend(str(rez_module_dir))
 
     resolver = RezEnvironmentResolver()
 

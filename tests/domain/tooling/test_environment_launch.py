@@ -28,6 +28,11 @@ def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
         package_root = root / "packages"
         package_root.mkdir(parents=True, exist_ok=True)
         output_file = root / "launch.txt"
+        rez_module_dir = root / "rez_module"
+        rez_module_dir.mkdir(parents=True, exist_ok=True)
+        rez_package_dir = rez_module_dir / "rez"
+        rez_package_dir.mkdir()
+        (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
 
         dummy_tool = root / "dummyTool.exe.test"
         _write_executable(
@@ -62,9 +67,30 @@ def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
                 ]
             ),
         )
+        (rez_package_dir / "__main__.py").write_text(
+            "\n".join(
+                [
+                    "import subprocess",
+                    "import sys",
+                    "args = sys.argv[1:]",
+                    "if '--' in args:",
+                    "    idx = args.index('--')",
+                    "    command = args[idx + 1:]",
+                    "else:",
+                    "    command = []",
+                    "if not command:",
+                    "    sys.exit(2)",
+                    "completed = subprocess.run(command, check=False)",
+                    "sys.exit(completed.returncode)",
+                ]
+            ),
+            encoding="utf-8",
+        )
 
         monkeypatch.setenv("SOTUGYO_REZ_PATH", str(rez_dir))
         monkeypatch.setenv("PATH", "")
+        monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
+        monkeypatch.syspath_prepend(str(rez_module_dir))
 
         repository = ToolConfigRepository(storage_dir=package_root)
         rez_repository = RezPackageRepository(root_dir=package_root)

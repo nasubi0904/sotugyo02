@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import logging
+import importlib.util
 import os
-import shutil
 import subprocess
 import sys
 import threading
@@ -97,18 +97,15 @@ class RezEnvironmentResolver:
             )
 
         env = self._build_environment(environment)
-        path_env = env.get("PATH") or env.get("Path") or ""
-
-        executable = self._executable
-        if shutil.which(executable, path=path_env) is None:
+        if not self._rez_available():
             return RezResolveResult(
                 success=False,
-                command=(executable,),
+                command=self._build_rez_command_prefix(),
                 return_code=127,
-                stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                stderr="rez モジュールが見つかりません。パス設定を確認してください。",
             )
 
-        command: list[str] = [executable, "env", *normalized]
+        command: list[str] = [*self._build_rez_command_prefix(), "env", *normalized]
         variant_args = self._build_variant_arguments(variants or ())
         command.extend(variant_args)
         command.extend(["--", "python", "-c", "pass"])
@@ -177,17 +174,15 @@ class RezEnvironmentResolver:
             )
 
         env = self._build_environment(environment, packages_path=packages_path)
-        path_env = env.get("PATH") or env.get("Path") or ""
-        executable = self._executable
-        if shutil.which(executable, path=path_env) is None:
+        if not self._rez_available():
             return RezLaunchResult(
                 success=False,
-                command=(executable,),
+                command=self._build_rez_command_prefix(),
                 return_code=127,
-                stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                stderr="rez モジュールが見つかりません。パス設定を確認してください。",
             )
 
-        rez_command: list[str] = [executable, "env", *normalized]
+        rez_command: list[str] = [*self._build_rez_command_prefix(), "env", *normalized]
         rez_command.extend(self._build_variant_arguments(variants or ()))
         rez_command.append("--")
         rez_command.extend(str(entry) for entry in command)
@@ -288,6 +283,14 @@ class RezEnvironmentResolver:
                 "Path": updated_env["Path"],
             }
         )
+
+    @staticmethod
+    def _rez_available() -> bool:
+        return importlib.util.find_spec("rez") is not None
+
+    @staticmethod
+    def _build_rez_command_prefix() -> Tuple[str, ...]:
+        return (sys.executable, "-m", "rez")
 
     @staticmethod
     def _stream_output(stream, is_error: bool) -> None:
