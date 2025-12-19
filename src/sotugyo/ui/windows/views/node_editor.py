@@ -1117,8 +1117,8 @@ class NodeEditorWindow(QMainWindow):
             inspector.show_properties(properties)
             inspector.enable_rename(name)
             if isinstance(node, ToolEnvironmentNode):
-            tooltip = self._build_tool_launch_tooltip(node)
-            inspector.set_tool_launch_available(True, tooltip=tooltip)
+                tooltip = self._build_tool_launch_tooltip(node)
+                inspector.set_tool_launch_available(True, tooltip=tooltip)
             else:
                 inspector.set_tool_launch_available(False)
         self._update_memo_controls(node)
