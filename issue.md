@@ -115,6 +115,11 @@
 - **原因**: `text=True` の既定 UTF-8 デコードが Windows の出力エンコードと一致せず、バイト列のデコードに失敗した。
 - **対応**: `locale.getpreferredencoding(False)` を使って OS 既定のエンコードを指定し、`errors="replace"` でデコード失敗を回避するようにした。
 
+#### Rez shell 実行の無効化 (2025-12-19)
+- **現象**: Windows の PowerShell 実行ポリシーにより、Rez の shell 実行で生成されたスクリプトが読み込めず起動が失敗した。
+- **原因**: `ResolvedContext.execute_shell` が PowerShell のスクリプト実行を伴い、実行ポリシーに阻まれた。
+- **対応**: Rez には `get_environ` で環境変数のみ構築させ、Python 側で `subprocess.Popen` を使ってコマンドを起動する方式へ切り替えた。
+
 ### main エントリの終了理由判定誤り
 - **現象**: Qt アプリケーションのイベントループが非ゼロの終了コードで終わった場合でも、終了理由が手動終了として扱われ、異常終了を自動検知できなかった。
 - **原因**: `_run_application` で `app.exec()` の戻り値を考慮せず、例外発生時のみ `reason="error"` を付与していた。

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import locale
 import os
+import subprocess
 import sys
 import threading
 from dataclasses import dataclass
@@ -202,10 +203,10 @@ class RezEnvironmentResolver:
             )
 
         try:
-            process = context.execute_shell(
-                command=[str(entry) for entry in command],
-                parent_environ=env,
-                block=False,
+            resolved_env = context.get_environ(parent_environ=env)
+            process = subprocess.Popen(
+                [str(entry) for entry in command],
+                env=resolved_env,
                 stdout=PIPE,
                 stderr=PIPE,
                 text=True,
