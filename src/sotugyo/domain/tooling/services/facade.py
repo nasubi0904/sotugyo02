@@ -79,13 +79,16 @@ class ToolEnvironmentService:
             version=version.strip() if version else None,
         )
         package_name = self.rez_repository.register_candidate(candidate)
+        package_spec = package_name
+        if candidate.version:
+            package_spec = f"{package_name}-{candidate.version}"
         environment = self.environment_service.save(
             name=candidate.display_name,
             tool_id=package_name,
             version_label=candidate.version or "local",
             environments=environments,
             template_id=template_id,
-            rez_packages=[package_name],
+            rez_packages=[package_spec],
             metadata={"executable_path": str(normalized_path)},
         )
         return environment

@@ -53,6 +53,11 @@ class ToolEnvironmentRegistryService:
             resolved_tool_id = normalized_packages[0]
         if not resolved_tool_id:
             resolved_tool_id = "rez-tool"
+        normalized_packages = self._apply_versioned_packages(
+            normalized_packages,
+            resolved_tool_id,
+            version_label,
+        )
 
         now = datetime.utcnow()
         if environment_id:
@@ -149,6 +154,27 @@ class ToolEnvironmentRegistryService:
             if isinstance(key, str) and isinstance(value, str):
                 normalized[key.strip()] = value.strip()
         return normalized
+
+    @staticmethod
+    def _apply_versioned_packages(
+        packages: Optional[tuple[str, ...]],
+        tool_id: str,
+        version_label: str,
+    ) -> Optional[tuple[str, ...]]:
+        if not packages:
+            return packages
+        base = tool_id.strip()
+        version = version_label.strip()
+        if not base or not version:
+            return packages
+        updated: list[str] = []
+        for entry in packages:
+            normalized = entry.strip()
+            if normalized == base:
+                updated.append(f"{base}-{version}")
+            else:
+                updated.append(normalized)
+        return tuple(updated)
 
 
 class ToolEnvironmentIdGenerator:

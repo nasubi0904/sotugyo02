@@ -101,17 +101,17 @@ def test_environment_registry_saves_rez_metadata() -> None:
 
         assert resolver.calls
         packages, variants, env_map = resolver.calls[0]
-        assert packages == ("maya",)
+        assert packages == ("maya-v1",)
         assert variants == ("platform-windows",)
         assert env_map == {"MAYA_APP_DIR": "C:/maya"}
 
-        assert environment.rez_packages == ("maya",)
+        assert environment.rez_packages == ("maya-v1",)
         assert environment.template_id == "autodesk.maya"
         assert environment.metadata["rez_validation"]["success"] is False
 
         stored_tools, stored_envs = repository.load_all()
         assert stored_tools == []
-        assert stored_envs[0].rez_packages == ("maya",)
+        assert stored_envs[0].rez_packages == ("maya-v1",)
 
 
 def test_environment_registry_can_clear_template_and_packages() -> None:
