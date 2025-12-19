@@ -65,7 +65,6 @@ class RegisteredTool:
 class ToolEnvironmentDefinition:
     """ツールを利用した環境ノードの定義。"""
 
-    environment_id: str
     name: str
     tool_id: str
     version_label: str
@@ -79,7 +78,6 @@ class ToolEnvironmentDefinition:
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "environment_id": self.environment_id,
             "name": self.name,
             "tool_id": self.tool_id,
             "version_label": self.version_label,
@@ -117,7 +115,6 @@ class ToolEnvironmentDefinition:
         if isinstance(raw_metadata, dict):
             metadata = dict(raw_metadata)
         return cls(
-            environment_id=str(data.get("environment_id", "")),
             name=str(data.get("name", "")),
             tool_id=str(data.get("tool_id", "")),
             version_label=str(data.get("version_label", "")),
@@ -136,7 +133,6 @@ class ToolEnvironmentDefinition:
         """ノードへ伝播する環境情報を構築する。"""
 
         payload: Dict[str, Any] = {
-            "environment_id": self.environment_id,
             "environment_name": self.name,
             "tool_id": self.tool_id,
             "version_label": self.version_label,

@@ -114,7 +114,8 @@ class ToolEnvironmentManagerDialog(QDialog):
                     executable_text,
                 ]
             )
-            item.setData(0, Qt.UserRole, environment.environment_id)
+            package_name = environment.rez_packages[0] if environment.rez_packages else "-"
+            item.setData(0, Qt.UserRole, package_name)
             tooltip_parts = []
             if environment.template_id:
                 tooltip_parts.append(f"テンプレート: {environment.template_id}")
@@ -153,7 +154,7 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._refresh_on_accept = True
         self._refresh_listing()
 
-    def _current_environment_id(self) -> Optional[str]:
+    def _current_environment_package(self) -> Optional[str]:
         if self._environment_list is None:
             return None
         current = self._environment_list.currentItem()
@@ -163,8 +164,8 @@ class ToolEnvironmentManagerDialog(QDialog):
         return identifier if isinstance(identifier, str) else None
 
     def _edit_environment(self) -> None:
-        env_id = self._current_environment_id()
-        if not env_id:
+        package_name = self._current_environment_package()
+        if not package_name:
             QMessageBox.information(self, "編集", "編集する環境を選択してください。")
             return
         try:
@@ -172,7 +173,14 @@ class ToolEnvironmentManagerDialog(QDialog):
         except OSError as exc:
             QMessageBox.critical(self, "取得失敗", str(exc))
             return
-        target = next((env for env in environments if env.environment_id == env_id), None)
+        target = next(
+            (
+                env
+                for env in environments
+                if env.rez_packages and env.rez_packages[0] == package_name
+            ),
+            None,
+        )
         if target is None:
             QMessageBox.warning(self, "編集", "指定された環境が見つかりませんでした。")
             return
@@ -186,7 +194,7 @@ class ToolEnvironmentManagerDialog(QDialog):
         payload = dialog.result_payload()
         if not payload:
             return
-        payload["environment_id"] = env_id
+        payload["package_name"] = package_name
         try:
             environment = self._service.save_environment(**payload)
         except ValueError as exc:
@@ -200,8 +208,8 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._refresh_listing()
 
     def _remove_environment(self) -> None:
-        env_id = self._current_environment_id()
-        if not env_id:
+        package_name = self._current_environment_package()
+        if not package_name:
             QMessageBox.information(self, "削除", "削除する環境を選択してください。")
             return
         reply = QMessageBox.question(
@@ -214,7 +222,7 @@ class ToolEnvironmentManagerDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
         try:
-            removed = self._service.remove_environment(env_id)
+            removed = self._service.remove_environment(package_name)
         except OSError as exc:
             QMessageBox.critical(self, "削除に失敗", str(exc))
             return

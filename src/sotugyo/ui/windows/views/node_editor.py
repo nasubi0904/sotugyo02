@@ -619,8 +619,8 @@ class NodeEditorWindow(QMainWindow):
 
     def _spawn_node_by_type(self, node_type: str) -> None:
         if node_type.startswith("tool-environment:"):
-            environment_id = node_type.split(":", 1)[1]
-            self._create_tool_environment_node(environment_id)
+            package_name = node_type.split(":", 1)[1]
+            self._create_tool_environment_node(package_name)
             return
         if node_type.startswith("rez-package:"):
             package_name = node_type.split(":", 1)[1]
@@ -716,8 +716,8 @@ class NodeEditorWindow(QMainWindow):
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
-    def _create_tool_environment_node(self, environment_id: str) -> None:
-        definition = self._tool_environments.get(environment_id)
+    def _create_tool_environment_node(self, package_name: str) -> None:
+        definition = self._tool_environments.get(package_name)
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return
@@ -727,7 +727,7 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(node, ToolEnvironmentNode):
             payload = definition.build_payload()
             node.configure_environment(
-                environment_id=definition.environment_id,
+                package_name=package_name,
                 environment_name=definition.name,
                 tool_id=definition.tool_id,
                 tool_name=definition.name,
@@ -755,7 +755,7 @@ class NodeEditorWindow(QMainWindow):
             )
             payload["rez_source"] = source
             node.configure_environment(
-                environment_id=f"rez:{spec.name}",
+                package_name=spec.name,
                 environment_name=f"Rez: {spec.name}",
                 tool_id=spec.name,
                 tool_name=f"Rez Package ({source})",
@@ -1117,8 +1117,8 @@ class NodeEditorWindow(QMainWindow):
             inspector.show_properties(properties)
             inspector.enable_rename(name)
             if isinstance(node, ToolEnvironmentNode):
-                tooltip = self._build_tool_launch_tooltip(node)
-                inspector.set_tool_launch_available(True, tooltip=tooltip)
+            tooltip = self._build_tool_launch_tooltip(node)
+            inspector.set_tool_launch_available(True, tooltip=tooltip)
             else:
                 inspector.set_tool_launch_available(False)
         self._update_memo_controls(node)
@@ -1126,13 +1126,13 @@ class NodeEditorWindow(QMainWindow):
 
     def _build_tool_launch_tooltip(self, node: ToolEnvironmentNode) -> str:
         try:
-            environment_id = str(node.get_property("environment_id")).strip()
+            package_name = str(node.get_property("package_name")).strip()
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
-            LOGGER.debug("environment_id の取得に失敗しました。", exc_info=True)
-            return "environment_id を取得できません。"
-        if not environment_id:
-            return "environment_id が設定されていません。"
-        return f"environment_id: {environment_id}"
+            LOGGER.debug("package_name の取得に失敗しました。", exc_info=True)
+            return "パッケージ名を取得できません。"
+        if not package_name:
+            return "パッケージ名が設定されていません。"
+        return f"package_name: {package_name}"
 
     def _handle_tool_launch_requested(self) -> None:
         node = self._current_node
@@ -1140,14 +1140,14 @@ class NodeEditorWindow(QMainWindow):
             self._show_info_dialog("ツール環境ノードを選択してください。")
             return
         try:
-            environment_id = str(node.get_property("environment_id")).strip()
+            package_name = str(node.get_property("package_name")).strip()
         except Exception:  # pragma: no cover - NodeGraph 依存の例外
-            LOGGER.debug("environment_id の取得に失敗しました。", exc_info=True)
-            environment_id = ""
-        if not environment_id:
-            self._show_warning_dialog("environment_id が設定されていません。")
+            LOGGER.debug("package_name の取得に失敗しました。", exc_info=True)
+            package_name = ""
+        if not package_name:
+            self._show_warning_dialog("パッケージ名が設定されていません。")
             return
-        result = self._coordinator.launch_environment(environment_id)
+        result = self._coordinator.launch_environment(package_name)
         if result.success:
             message = "Rez でツールを起動しました。"
             if result.process_id is not None:

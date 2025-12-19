@@ -80,7 +80,8 @@ def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
             version="2025",
         )
 
-        result = service.launch_environment(environment.environment_id)
+        package_name = environment.rez_packages[0] if environment.rez_packages else ""
+        result = service.launch_environment(package_name)
         assert result.success is True
 
         timeout = time.time() + 5.0

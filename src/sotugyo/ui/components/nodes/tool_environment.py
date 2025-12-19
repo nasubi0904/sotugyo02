@@ -27,10 +27,10 @@ class ToolEnvironmentNode(BaseNode):
         self.add_input("前段")
         self.add_output("起動")
         self.create_property(
-            "environment_id",
+            "package_name",
             "",
             widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="環境定義の識別子",
+            widget_tooltip="起動に使用する Rez パッケージ名",
         )
         self.create_property(
             "tool_id",
@@ -67,7 +67,7 @@ class ToolEnvironmentNode(BaseNode):
     def configure_environment(
         self,
         *,
-        environment_id: str,
+        package_name: str,
         environment_name: str,
         tool_id: str,
         tool_name: str,
@@ -75,12 +75,12 @@ class ToolEnvironmentNode(BaseNode):
         environment_payload: Mapping[str, Any] | None = None,
     ) -> None:
         self.set_name(environment_name)
-        self.set_property("environment_id", environment_id, push_undo=False)
+        self.set_property("package_name", package_name, push_undo=False)
         self.set_property("tool_id", tool_id, push_undo=False)
         self.set_property("tool_name", tool_name, push_undo=False)
         self.set_property("version_label", version_label, push_undo=False)
         payload = {
-            "environment_id": environment_id,
+            "package_name": package_name,
             "tool_id": tool_id,
             "tool_name": tool_name,
             "version_label": version_label,

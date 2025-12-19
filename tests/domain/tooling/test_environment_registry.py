@@ -45,7 +45,6 @@ class DummyResolver:
 
 def test_tool_environment_definition_serialization_roundtrip() -> None:
     definition = ToolEnvironmentDefinition(
-        environment_id="env-1",
         name="レンダー環境",
         tool_id="tool-1",
         version_label="2024.1",
@@ -58,7 +57,6 @@ def test_tool_environment_definition_serialization_roundtrip() -> None:
 
     restored = ToolEnvironmentDefinition.from_dict(definition.to_dict())
 
-    assert restored.environment_id == definition.environment_id
     assert restored.template_id == "autodesk.maya"
     assert restored.rez_packages == ("maya", "arnold")
     assert restored.rez_variants == ("platform-windows",)
@@ -135,7 +133,7 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
             tool_id="maya",
             version_label="v2",
             environments=environments,
-            environment_id=initial.environment_id,
+            package_name=initial.rez_packages[0],
             template_id=None,
             rez_packages=[],
             rez_variants=[],

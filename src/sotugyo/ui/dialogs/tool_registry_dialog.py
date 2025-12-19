@@ -120,7 +120,8 @@ class ToolRegistryDialog(QDialog):
                     executable_path,
                 ]
             )
-            item.setData(0, Qt.UserRole, environment.environment_id)
+            package_name = environment.rez_packages[0] if environment.rez_packages else "-"
+            item.setData(0, Qt.UserRole, package_name)
             self._tool_list.addTopLevelItem(item)
         self._tool_list.resizeColumnToContents(0)
         self._tool_list.resizeColumnToContents(1)
@@ -172,8 +173,8 @@ class ToolRegistryDialog(QDialog):
         if current is None:
             QMessageBox.information(self, "削除", "削除する環境を選択してください。")
             return
-        environment_id = current.data(0, Qt.UserRole)
-        if not isinstance(environment_id, str):
+        package_name = current.data(0, Qt.UserRole)
+        if not isinstance(package_name, str):
             return
         reply = QMessageBox.question(
             self,
@@ -185,7 +186,7 @@ class ToolRegistryDialog(QDialog):
         if reply != QMessageBox.Yes:
             return
         try:
-            removed = self._service.remove_tool(environment_id)
+            removed = self._service.remove_tool(package_name)
         except OSError as exc:
             QMessageBox.critical(self, "削除に失敗", str(exc))
             return

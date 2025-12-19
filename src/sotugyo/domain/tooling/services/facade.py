@@ -98,11 +98,16 @@ class ToolEnvironmentService:
             return False
         environments = self.environment_service.list_environments()
         target = next(
-            (env for env in environments if env.environment_id == tool_id), None
+            (
+                env
+                for env in environments
+                if env.rez_packages and env.rez_packages[0] == tool_id
+            ),
+            None,
         )
         if target is None:
             return False
-        return self.environment_service.remove(target.environment_id)
+        return self.environment_service.remove(target.rez_packages[0])
 
     # ------------------------------------------------------------------
     # 環境定義
@@ -128,7 +133,6 @@ class ToolEnvironmentService:
                 package_name = self.rez_repository.register_candidate(candidate)
                 updated.append(
                     ToolEnvironmentDefinition(
-                        environment_id=tool.tool_id,
                         name=tool.display_name,
                         tool_id=package_name,
                         version_label=tool.version or "local",
@@ -141,8 +145,8 @@ class ToolEnvironmentService:
             return updated
         return environments
 
-    def get_environment(self, environment_id: str) -> Optional[ToolEnvironmentDefinition]:
-        return self.environment_service.get_environment(environment_id)
+    def get_environment(self, package_name: str) -> Optional[ToolEnvironmentDefinition]:
+        return self.environment_service.get_environment(package_name)
 
     def save_environment(
         self,
@@ -150,7 +154,7 @@ class ToolEnvironmentService:
         name: str,
         tool_id: str,
         version_label: str,
-        environment_id: Optional[str] = None,
+        package_name: Optional[str] = None,
         template_id: Optional[str] = None,
         rez_packages: Optional[Iterable[str]] = None,
         rez_variants: Optional[Iterable[str]] = None,
@@ -162,7 +166,7 @@ class ToolEnvironmentService:
             tool_id=tool_id,
             version_label=version_label,
             environments=self.list_environments(),
-            environment_id=environment_id,
+            package_name=package_name,
             template_id=template_id,
             rez_packages=rez_packages,
             rez_variants=rez_variants,
@@ -170,8 +174,8 @@ class ToolEnvironmentService:
             metadata=metadata,
         )
 
-    def remove_environment(self, environment_id: str) -> bool:
-        return self.environment_service.remove(environment_id)
+    def remove_environment(self, package_name: str) -> bool:
+        return self.environment_service.remove(package_name)
 
     # ------------------------------------------------------------------
     # テンプレート連携
@@ -222,17 +226,17 @@ class ToolEnvironmentService:
     # ------------------------------------------------------------------
     # Rez 起動
     # ------------------------------------------------------------------
-    def launch_environment(self, environment_id: str) -> RezLaunchResult:
-        if not environment_id:
+    def launch_environment(self, package_name: str) -> RezLaunchResult:
+        if not package_name:
             return RezLaunchResult(
                 success=False,
                 command=(),
                 return_code=2,
-                stderr="environment_id が指定されていません。",
+                stderr="パッケージ名が指定されていません。",
             )
 
         environment = next(
-            (env for env in self.list_environments() if env.environment_id == environment_id),
+            (env for env in self.list_environments() if package_name in env.rez_packages),
             None,
         )
         if environment is None:
@@ -240,7 +244,7 @@ class ToolEnvironmentService:
                 success=False,
                 command=(),
                 return_code=2,
-                stderr="指定された環境が登録されていません。",
+                stderr="指定されたパッケージの環境が登録されていません。",
             )
 
         packages = list(environment.rez_packages)

@@ -22,12 +22,13 @@ class ToolEnvironmentRegistryService:
         _, environments = self.repository.load_all()
         return environments
 
-    def get_environment(self, environment_id: str) -> Optional[ToolEnvironmentDefinition]:
-        if not environment_id:
+    def get_environment(self, package_name: str) -> Optional[ToolEnvironmentDefinition]:
+        if not package_name:
             return None
         _, environments = self.repository.load_all()
         for environment in environments:
-            if environment.environment_id == environment_id:
+            primary = self._primary_package(environment)
+            if primary == package_name:
                 return environment
         return None
 
@@ -38,7 +39,7 @@ class ToolEnvironmentRegistryService:
         tool_id: str,
         version_label: str,
         environments: List[ToolEnvironmentDefinition],
-        environment_id: Optional[str] = None,
+        package_name: Optional[str] = None,
         template_id: Optional[str] = None,
         rez_packages: Optional[Iterable[str]] = None,
         rez_variants: Optional[Iterable[str]] = None,
@@ -60,10 +61,10 @@ class ToolEnvironmentRegistryService:
         )
 
         now = datetime.utcnow()
-        if environment_id:
+        if package_name:
             target = None
             for env in environments:
-                if env.environment_id == environment_id:
+                if self._primary_package(env) == package_name:
                     target = env
                     break
             if target is None:
@@ -84,7 +85,6 @@ class ToolEnvironmentRegistryService:
             environment = target
         else:
             environment = ToolEnvironmentDefinition(
-                environment_id=ToolEnvironmentIdGenerator.next_id(),
                 name=name.strip() or "環境",
                 tool_id=resolved_tool_id,
                 version_label=version_label.strip(),
@@ -108,10 +108,10 @@ class ToolEnvironmentRegistryService:
         self.repository.save_all([], environments)
         return environment
 
-    def remove(self, environment_id: str) -> bool:
+    def remove(self, package_name: str) -> bool:
         tools_list, environments = self.repository.load_all()
         new_environments = [
-            env for env in environments if env.environment_id != environment_id
+            env for env in environments if self._primary_package(env) != package_name
         ]
         if len(new_environments) == len(environments):
             return False
@@ -176,12 +176,10 @@ class ToolEnvironmentRegistryService:
                 updated.append(normalized)
         return tuple(updated)
 
-
-class ToolEnvironmentIdGenerator:
-    """環境 ID 生成をラップしてテスト容易性を高める。"""
-
     @staticmethod
-    def next_id() -> str:
-        import uuid
+    def _primary_package(environment: ToolEnvironmentDefinition) -> str:
+        if environment.rez_packages:
+            return environment.rez_packages[0]
+        return environment.tool_id
 
-        return str(uuid.uuid4())
+

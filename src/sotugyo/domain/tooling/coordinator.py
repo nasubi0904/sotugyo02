@@ -57,7 +57,8 @@ class NodeEditorCoordinator:
 
         filtered_envs: Dict[str, ToolEnvironmentDefinition] = {}
         for environment in environments:
-            filtered_envs[environment.environment_id] = environment
+            key = environment.rez_packages[0] if environment.rez_packages else environment.tool_id
+            filtered_envs[key] = environment
         return ToolEnvironmentSnapshot(filtered_envs)
 
     def build_tool_catalog(self, snapshot: ToolEnvironmentSnapshot) -> List[NodeCatalogRecord]:
@@ -67,9 +68,12 @@ class NodeEditorCoordinator:
             if environment.version_label:
                 subtitle_parts.append(environment.version_label)
             subtitle = " / ".join(part for part in subtitle_parts if part)
-            node_type = f"tool-environment:{environment.environment_id}"
+            primary_package = (
+                environment.rez_packages[0] if environment.rez_packages else environment.tool_id
+            )
+            node_type = f"tool-environment:{primary_package}"
             keywords: Tuple[str, ...] = (
-                environment.environment_id,
+                primary_package,
                 environment.tool_id,
             )
             icon_path = None
@@ -113,5 +117,5 @@ class NodeEditorCoordinator:
     def validate_project_rez_packages(self, project_root: Path):
         return self.tool_service.validate_project_rez_packages(project_root)
 
-    def launch_environment(self, environment_id: str) -> RezLaunchResult:
-        return self.tool_service.launch_environment(environment_id)
+    def launch_environment(self, package_name: str) -> RezLaunchResult:
+        return self.tool_service.launch_environment(package_name)

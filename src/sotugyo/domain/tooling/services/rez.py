@@ -6,6 +6,8 @@ import logging
 import os
 import shutil
 import subprocess
+import sys
+import threading
 from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
@@ -130,6 +132,10 @@ class RezEnvironmentResolver:
             )
 
         success = completed.returncode == 0
+        if completed.stdout:
+            print(completed.stdout, end="")
+        if completed.stderr:
+            print(completed.stderr, end="", file=sys.stderr)
         if not success:
             if completed.stdout:
                 LOGGER.error("Rez コマンド標準出力:\n%s", completed.stdout)
@@ -190,6 +196,9 @@ class RezEnvironmentResolver:
             process = subprocess.Popen(  # noqa: S603,S607 - ツール実行を許可
                 rez_command,
                 env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
             )
         except OSError as exc:  # pragma: no cover - 実行環境依存
             LOGGER.error("Rez 起動コマンドの実行に失敗しました: %s", exc)
@@ -199,6 +208,19 @@ class RezEnvironmentResolver:
                 return_code=-1,
                 stderr=str(exc),
             )
+
+        if process.stdout:
+            threading.Thread(
+                target=self._stream_output,
+                args=(process.stdout, False),
+                daemon=True,
+            ).start()
+        if process.stderr:
+            threading.Thread(
+                target=self._stream_output,
+                args=(process.stderr, True),
+                daemon=True,
+            ).start()
 
         return RezLaunchResult(
             success=True,
@@ -266,6 +288,14 @@ class RezEnvironmentResolver:
                 "Path": updated_env["Path"],
             }
         )
+
+    @staticmethod
+    def _stream_output(stream, is_error: bool) -> None:
+        for line in stream:
+            if is_error:
+                print(line, end="", file=sys.stderr)
+            else:
+                print(line, end="")
 
 
 __all__ = ["RezEnvironmentResolver", "RezLaunchResult", "RezResolveResult"]
