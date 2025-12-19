@@ -156,9 +156,9 @@ class NodeContentBrowser(QWidget):
                 wrapping=True,
                 compact=False,
                 grid_columns=5,
-                section_spacing=16,
-                card_padding=(24, 24, 24, 24),
-                section_padding=(16, 16, 16, 16),
+                section_spacing=10,
+                card_padding=(16, 16, 16, 16),
+                section_padding=(10, 10, 10, 10),
             ),
             BrowserLayoutProfile(
                 min_width=860,
@@ -167,9 +167,9 @@ class NodeContentBrowser(QWidget):
                 wrapping=True,
                 compact=False,
                 grid_columns=4,
-                section_spacing=16,
-                card_padding=(20, 20, 20, 20),
-                section_padding=(16, 16, 16, 16),
+                section_spacing=10,
+                card_padding=(16, 16, 16, 16),
+                section_padding=(10, 10, 10, 10),
             ),
             BrowserLayoutProfile(
                 min_width=660,
@@ -178,9 +178,9 @@ class NodeContentBrowser(QWidget):
                 wrapping=True,
                 compact=False,
                 grid_columns=3,
-                section_spacing=14,
-                card_padding=(20, 20, 20, 20),
-                section_padding=(14, 14, 14, 14),
+                section_spacing=8,
+                card_padding=(14, 14, 14, 14),
+                section_padding=(8, 8, 8, 8),
             ),
             BrowserLayoutProfile(
                 min_width=520,
@@ -189,9 +189,9 @@ class NodeContentBrowser(QWidget):
                 wrapping=True,
                 compact=False,
                 grid_columns=2,
-                section_spacing=12,
-                card_padding=(18, 18, 18, 18),
-                section_padding=(12, 12, 12, 12),
+                section_spacing=8,
+                card_padding=(12, 12, 12, 12),
+                section_padding=(8, 8, 8, 8),
             ),
             BrowserLayoutProfile(
                 min_width=0,
@@ -200,9 +200,9 @@ class NodeContentBrowser(QWidget):
                 wrapping=False,
                 compact=True,
                 grid_columns=1,
-                section_spacing=10,
-                card_padding=(16, 16, 16, 16),
-                section_padding=(10, 10, 10, 10),
+                section_spacing=6,
+                card_padding=(12, 12, 12, 12),
+                section_padding=(6, 6, 6, 6),
             ),
         ]
         self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
@@ -306,20 +306,20 @@ class NodeContentBrowser(QWidget):
     def _setup_ui(self) -> None:
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
-        outer_layout.setSpacing(12)
+        outer_layout.setSpacing(6)
         self._outer_layout = outer_layout
 
         card = QFrame(self)
         card.setObjectName("panelCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(20, 20, 20, 20)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(16, 16, 16, 16)
+        card_layout.setSpacing(8)
         self._card_frame = card
         self._card_layout = card_layout
 
         header_layout = QHBoxLayout()
         header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(8)
+        header_layout.setSpacing(6)
 
         title_label = QLabel("コンテンツブラウザ", card)
         title_label.setObjectName("panelTitle")
@@ -334,7 +334,7 @@ class NodeContentBrowser(QWidget):
 
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(8)
+        search_layout.setSpacing(6)
 
         self._search_line.setPlaceholderText("ノードを検索")
         self._search_line.setClearButtonEnabled(True)
@@ -361,7 +361,7 @@ class NodeContentBrowser(QWidget):
         header_container = QWidget(card)
         header_container_layout = QHBoxLayout(header_container)
         header_container_layout.setContentsMargins(0, 0, 0, 0)
-        header_container_layout.setSpacing(8)
+        header_container_layout.setSpacing(6)
         header_container_layout.addWidget(summary_widget)
         spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
         header_container_layout.addItem(spacer)
@@ -392,7 +392,7 @@ class NodeContentBrowser(QWidget):
         widget.setIconSize(
             QSize(self._current_icon_size_value(), self._current_icon_size_value())
         )
-        widget.setSpacing(16)
+        widget.setSpacing(8)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
         widget.setUniformItemSizes(False)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -604,7 +604,7 @@ class NodeContentBrowser(QWidget):
         self._available_list.setFlow(profile.flow)
         self._available_list.setWrapping(profile.wrapping)
         self._available_list.setSpacing(
-            16 if profile.view_mode == QListWidget.IconMode else 8
+            8 if profile.view_mode == QListWidget.IconMode else 4
         )
         self._available_list.setWordWrap(
             False if profile.view_mode == QListWidget.IconMode else True
@@ -643,7 +643,7 @@ class NodeContentBrowser(QWidget):
         if self._icon_control_container is not None:
             alignment = Qt.AlignLeft if is_vertical else Qt.AlignRight
             self._control_header_layout.setAlignment(self._icon_control_container, alignment)
-        spacing = 4 if is_vertical else 8
+        spacing = 4 if is_vertical else 6
         if self._control_header_layout.spacing() != spacing:
             self._control_header_layout.setSpacing(spacing)
         if self._control_header is not None:
@@ -684,12 +684,12 @@ class NodeContentBrowser(QWidget):
         profile = self._current_profile
 
         if profile.view_mode == QListWidget.IconMode and not profile.compact:
-            padding = max(12, icon_size // 4)
+            padding = max(6, icon_size // 6)
             cell = icon_size + padding * 2
             return QSize(cell, cell)
 
         if profile.compact:
-            vertical_padding = max(10, leading + 6)
+            vertical_padding = max(6, leading + 2)
             text_lines = 2
             text_height = line_spacing * text_lines
             height = max(icon_size + vertical_padding, text_height + vertical_padding)
@@ -708,7 +708,7 @@ class NodeContentBrowser(QWidget):
         title_width = font.horizontalAdvance("M" * 18)
         width = max(width, title_width + icon_size // 2)
 
-        vertical_padding = max(18, leading + 14)
+        vertical_padding = max(10, leading + 6)
         text_lines = 2
         text_height = line_spacing * text_lines
         height = max(icon_size + vertical_padding, text_height + vertical_padding)
