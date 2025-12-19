@@ -22,6 +22,7 @@ from ..repositories.rez_packages import (
 from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
+from .rez import RezLaunchResult
 
 
 @dataclass(slots=True)
@@ -85,6 +86,9 @@ class ToolEnvironmentService:
     # ------------------------------------------------------------------
     def list_environments(self) -> List[ToolEnvironmentDefinition]:
         return self.environment_service.list_environments()
+
+    def get_environment(self, environment_id: str) -> Optional[ToolEnvironmentDefinition]:
+        return self.environment_service.get_environment(environment_id)
 
     def save_environment(
         self,
@@ -163,6 +167,79 @@ class ToolEnvironmentService:
         self, project_root: Path
     ) -> RezPackageValidationResult:
         return ProjectRezPackageRepository(project_root).validate()
+
+    # ------------------------------------------------------------------
+    # Rez 起動
+    # ------------------------------------------------------------------
+    def launch_environment(self, environment_id: str) -> RezLaunchResult:
+        if not environment_id:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="environment_id が指定されていません。",
+            )
+
+        environment = self.environment_service.get_environment(environment_id)
+        if environment is None:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="指定された環境が登録されていません。",
+            )
+
+        tool = self.registry_service.get_tool(environment.tool_id)
+        if tool is None:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="環境が参照するツールが登録されていません。",
+            )
+
+        packages = list(environment.rez_packages)
+        if not packages and environment.template_id:
+            package_name = self.rez_repository.get_package_name(environment.template_id)
+            if package_name:
+                packages = [package_name]
+
+        if not packages:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="起動に必要な Rez パッケージが設定されていません。",
+            )
+
+        missing = [
+            package for package in packages if self.rez_repository.find_package(package) is None
+        ]
+        if missing:
+            missing_list = ", ".join(missing)
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr=f"Rez パッケージが見つかりません: {missing_list}",
+            )
+
+        resolver = self.environment_service.rez_resolver
+        if resolver is None:  # pragma: no cover - 予防的措置
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="Rez 実行環境が初期化されていません。",
+            )
+
+        return resolver.launch(
+            packages=packages,
+            variants=list(environment.rez_variants),
+            environment=environment.rez_environment,
+            command=[str(tool.executable_path)],
+            packages_path=[str(self.rez_repository.root_dir)],
+        )
 
     # ------------------------------------------------------------------
     # ユーティリティ

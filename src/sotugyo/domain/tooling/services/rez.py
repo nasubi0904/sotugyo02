@@ -42,6 +42,27 @@ class RezResolveResult:
         }
 
 
+@dataclass(slots=True, frozen=True)
+class RezLaunchResult:
+    """Rez 実行の結果。"""
+
+    success: bool
+    command: Tuple[str, ...]
+    return_code: int = 0
+    stdout: str = ""
+    stderr: str = ""
+    process_id: int | None = None
+
+    def message(self) -> str:
+        if self.success:
+            return "Rez でツールを起動しました。"
+        if self.stderr.strip():
+            return self.stderr.strip()
+        if self.stdout.strip():
+            return self.stdout.strip()
+        return "Rez による起動に失敗しました。"
+
+
 class RezEnvironmentResolver:
     """Rez CLI を呼び出してパッケージ解決を検証する。"""
 
@@ -122,6 +143,69 @@ class RezEnvironmentResolver:
             stderr=completed.stderr,
         )
 
+    def launch(
+        self,
+        packages: Sequence[str],
+        *,
+        variants: Sequence[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        command: Sequence[str],
+        packages_path: Sequence[str] | None = None,
+    ) -> RezLaunchResult:
+        normalized = tuple(
+            entry.strip() for entry in packages if isinstance(entry, str) and entry.strip()
+        )
+        if not normalized:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="Rez パッケージが指定されていません。",
+            )
+        if not command:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                return_code=2,
+                stderr="起動コマンドが指定されていません。",
+            )
+
+        env = self._build_environment(environment, packages_path=packages_path)
+        path_env = env.get("PATH") or env.get("Path") or ""
+        executable = self._executable
+        if shutil.which(executable, path=path_env) is None:
+            return RezLaunchResult(
+                success=False,
+                command=(executable,),
+                return_code=127,
+                stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+            )
+
+        rez_command: list[str] = [executable, "env", *normalized]
+        rez_command.extend(self._build_variant_arguments(variants or ()))
+        rez_command.append("--")
+        rez_command.extend(str(entry) for entry in command)
+
+        try:
+            process = subprocess.Popen(  # noqa: S603,S607 - ツール実行を許可
+                rez_command,
+                env=env,
+            )
+        except OSError as exc:  # pragma: no cover - 実行環境依存
+            LOGGER.error("Rez 起動コマンドの実行に失敗しました: %s", exc)
+            return RezLaunchResult(
+                success=False,
+                command=tuple(rez_command),
+                return_code=-1,
+                stderr=str(exc),
+            )
+
+        return RezLaunchResult(
+            success=True,
+            command=tuple(rez_command),
+            process_id=process.pid,
+        )
+
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
         normalized = [variant.strip() for variant in variants if variant and variant.strip()]
@@ -131,7 +215,10 @@ class RezEnvironmentResolver:
         return ("--variants", joined)
 
     def _build_environment(
-        self, user_environment: Mapping[str, str] | None = None
+        self,
+        user_environment: Mapping[str, str] | None = None,
+        *,
+        packages_path: Sequence[str] | None = None,
     ) -> dict[str, str]:
         """Rez 実行用の環境変数セットを構築する。"""
 
@@ -140,6 +227,20 @@ class RezEnvironmentResolver:
             for key, value in user_environment.items():
                 if isinstance(key, str) and isinstance(value, str):
                     base_env[key] = value
+
+        if packages_path:
+            resolved_paths = [
+                entry.strip()
+                for entry in packages_path
+                if isinstance(entry, str) and entry.strip()
+            ]
+            if resolved_paths:
+                existing = base_env.get("REZ_PACKAGES_PATH", "")
+                existing_entries = [
+                    entry for entry in existing.split(os.pathsep) if entry.strip()
+                ]
+                merged = list(dict.fromkeys([*resolved_paths, *existing_entries]))
+                base_env["REZ_PACKAGES_PATH"] = os.pathsep.join(merged)
 
         path_value = self._build_path_value(base_env)
         base_env["PATH"] = path_value
@@ -167,4 +268,4 @@ class RezEnvironmentResolver:
         )
 
 
-__all__ = ["RezEnvironmentResolver", "RezResolveResult"]
+__all__ = ["RezEnvironmentResolver", "RezLaunchResult", "RezResolveResult"]

@@ -11,6 +11,9 @@
   - `rez-env` コマンドでの一時的なシェル環境生成。
   - Python API (`rez` パッケージ) を用いた自動化が可能。
   - Windows / macOS / Linux をサポートするが、Windows は追加依存（PowerShell、Visual Studio Build Tools 等）を要する場合がある。
+- **運用メモ**:
+  - `rez env <packages> -- <command>` 形式でツールを起動できる。
+  - ローカルパッケージを優先する場合は `REZ_PACKAGES_PATH` に KDMrez のルートディレクトリを含める。
 - **導入時の注意**:
   - Windows では「Developer Mode」や `symlink` 許可が必要になるケースがある。
   - プロジェクト固有のパッケージレポジトリ（`packages_path`）を定義し、既存システムと衝突しないようにする。
@@ -83,4 +86,4 @@
 - [ ] Windows 環境固有の制約を洗い出したか。
 - [ ] Qt バージョンと依存関係の整合性を確認したか。
 
-最終更新日: 2025-01-01
+最終更新日: 2025-02-14

@@ -229,6 +229,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1092,6 +1093,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.set_tool_launch_available(False)
             self._update_alignment_controls(None)
             return
 
@@ -1124,8 +1126,45 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+            if isinstance(node, ToolEnvironmentNode):
+                tooltip = self._build_tool_launch_tooltip(node)
+                inspector.set_tool_launch_available(True, tooltip=tooltip)
+            else:
+                inspector.set_tool_launch_available(False)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
+
+    def _build_tool_launch_tooltip(self, node: ToolEnvironmentNode) -> str:
+        try:
+            environment_id = str(node.get_property("environment_id")).strip()
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("environment_id の取得に失敗しました。", exc_info=True)
+            return "environment_id を取得できません。"
+        if not environment_id:
+            return "environment_id が設定されていません。"
+        return f"environment_id: {environment_id}"
+
+    def _handle_tool_launch_requested(self) -> None:
+        node = self._current_node
+        if not isinstance(node, ToolEnvironmentNode):
+            self._show_info_dialog("ツール環境ノードを選択してください。")
+            return
+        try:
+            environment_id = str(node.get_property("environment_id")).strip()
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("environment_id の取得に失敗しました。", exc_info=True)
+            environment_id = ""
+        if not environment_id:
+            self._show_warning_dialog("environment_id が設定されていません。")
+            return
+        result = self._coordinator.launch_environment(environment_id)
+        if result.success:
+            message = "Rez でツールを起動しました。"
+            if result.process_id is not None:
+                message += f"\nPID: {result.process_id}"
+            self._show_info_dialog(message)
+            return
+        self._show_warning_dialog(result.message())
 
     def _describe_date_node_children(self, node) -> str:
         if not isinstance(node, DateNode):

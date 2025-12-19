@@ -10,7 +10,7 @@ from typing import Dict, Iterable, List, Tuple
 from ..projects.service import ProjectService
 from ..users.settings import UserSettingsManager
 from .models import RegisteredTool, RezPackageSpec, ToolEnvironmentDefinition
-from .services import ToolEnvironmentService
+from .services import RezLaunchResult, ToolEnvironmentService
 
 LOGGER = logging.getLogger(__name__)
 
@@ -126,3 +126,6 @@ class NodeEditorCoordinator:
 
     def validate_project_rez_packages(self, project_root: Path):
         return self.tool_service.validate_project_rez_packages(project_root)
+
+    def launch_environment(self, environment_id: str) -> RezLaunchResult:
+        return self.tool_service.launch_environment(environment_id)

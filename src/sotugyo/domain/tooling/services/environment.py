@@ -22,6 +22,15 @@ class ToolEnvironmentRegistryService:
         _, environments = self.repository.load_all()
         return environments
 
+    def get_environment(self, environment_id: str) -> Optional[ToolEnvironmentDefinition]:
+        if not environment_id:
+            return None
+        _, environments = self.repository.load_all()
+        for environment in environments:
+            if environment.environment_id == environment_id:
+                return environment
+        return None
+
     def save(
         self,
         *,
