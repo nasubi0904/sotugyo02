@@ -1152,6 +1152,9 @@ class NodeEditorWindow(QMainWindow):
             message = "Rez でツールを起動しました。"
             if result.process_id is not None:
                 message += f"\nPID: {result.process_id}"
+            if result.command:
+                command_text = " ".join(result.command)
+                message += f"\nCommand: {command_text}"
             self._show_info_dialog(message)
             return
         self._show_warning_dialog(result.message())
