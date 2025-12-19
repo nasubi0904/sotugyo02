@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import logging
-import importlib.util
 import os
 import subprocess
 import sys
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
@@ -97,15 +97,16 @@ class RezEnvironmentResolver:
             )
 
         env = self._build_environment(environment)
-        if not self._rez_available():
+        rez_executable = self._find_rez_executable()
+        if rez_executable is None:
             return RezResolveResult(
                 success=False,
-                command=self._build_rez_command_prefix(),
+                command=(),
                 return_code=127,
-                stderr="rez モジュールが見つかりません。パス設定を確認してください。",
+                stderr="rez 実行ファイルが見つかりません。パス設定を確認してください。",
             )
 
-        command: list[str] = [*self._build_rez_command_prefix(), "env", *normalized]
+        command: list[str] = [rez_executable, "env", *normalized]
         variant_args = self._build_variant_arguments(variants or ())
         command.extend(variant_args)
         command.extend(["--", "python", "-c", "pass"])
@@ -174,15 +175,16 @@ class RezEnvironmentResolver:
             )
 
         env = self._build_environment(environment, packages_path=packages_path)
-        if not self._rez_available():
+        rez_executable = self._find_rez_executable()
+        if rez_executable is None:
             return RezLaunchResult(
                 success=False,
-                command=self._build_rez_command_prefix(),
+                command=(),
                 return_code=127,
-                stderr="rez モジュールが見つかりません。パス設定を確認してください。",
+                stderr="rez 実行ファイルが見つかりません。パス設定を確認してください。",
             )
 
-        rez_command: list[str] = [*self._build_rez_command_prefix(), "env", *normalized]
+        rez_command: list[str] = [rez_executable, "env", *normalized]
         rez_command.extend(self._build_variant_arguments(variants or ()))
         rez_command.append("--")
         rez_command.extend(str(entry) for entry in command)
@@ -285,12 +287,33 @@ class RezEnvironmentResolver:
         )
 
     @staticmethod
-    def _rez_available() -> bool:
-        return importlib.util.find_spec("rez") is not None
-
     @staticmethod
-    def _build_rez_command_prefix() -> Tuple[str, ...]:
-        return (sys.executable, "-m", "rez")
+    def _find_rez_executable() -> str | None:
+        python_path = Path(sys.executable)
+        candidates: list[Path] = []
+        if python_path.parent.name.lower() == "scripts":
+            candidates.extend(
+                [
+                    python_path.parent / "rez.exe",
+                    python_path.parent / "rez.bat",
+                    python_path.parent / "rez",
+                ]
+            )
+        else:
+            candidates.extend(
+                [
+                    python_path.parent / "rez",
+                    python_path.parent / "rez.exe",
+                    python_path.parent / "rez.bat",
+                    python_path.parent / "Scripts" / "rez.exe",
+                    python_path.parent / "Scripts" / "rez.bat",
+                    python_path.parent / "Scripts" / "rez",
+                ]
+            )
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+        return None
 
     @staticmethod
     def _stream_output(stream, is_error: bool) -> None:

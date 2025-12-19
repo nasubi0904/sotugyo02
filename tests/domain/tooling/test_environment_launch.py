@@ -22,24 +22,23 @@ def _write_executable(path: Path, content: str) -> None:
 
 def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
     with TemporaryDirectory() as tmp_dir:
+        real_python = sys.executable
         root = Path(tmp_dir)
         rez_dir = root / "rez_bin"
         rez_dir.mkdir(parents=True, exist_ok=True)
         package_root = root / "packages"
         package_root.mkdir(parents=True, exist_ok=True)
         output_file = root / "launch.txt"
-        rez_module_dir = root / "rez_module"
-        rez_module_dir.mkdir(parents=True, exist_ok=True)
-        rez_package_dir = rez_module_dir / "rez"
-        rez_package_dir.mkdir()
-        (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
+        fake_python = rez_dir / "python"
+        fake_python.write_text("", encoding="utf-8")
+        fake_python.chmod(0o755)
 
         dummy_tool = root / "dummyTool.exe.test"
         _write_executable(
             dummy_tool,
             "\n".join(
                 [
-                    f"#!{sys.executable}",
+                    f"#!{real_python}",
                     "from pathlib import Path",
                     f"Path(r\"{output_file}\").write_text(\"ok\", encoding=\"utf-8\")",
                 ]
@@ -51,7 +50,7 @@ def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
             rez_command,
             "\n".join(
                 [
-                    f"#!{sys.executable}",
+                    f"#!{real_python}",
                     "import subprocess",
                     "import sys",
                     "args = sys.argv[1:]",
@@ -67,30 +66,8 @@ def test_launch_environment_runs_dummy_tool(monkeypatch) -> None:
                 ]
             ),
         )
-        (rez_package_dir / "__main__.py").write_text(
-            "\n".join(
-                [
-                    "import subprocess",
-                    "import sys",
-                    "args = sys.argv[1:]",
-                    "if '--' in args:",
-                    "    idx = args.index('--')",
-                    "    command = args[idx + 1:]",
-                    "else:",
-                    "    command = []",
-                    "if not command:",
-                    "    sys.exit(2)",
-                    "completed = subprocess.run(command, check=False)",
-                    "sys.exit(completed.returncode)",
-                ]
-            ),
-            encoding="utf-8",
-        )
-
-        monkeypatch.setenv("SOTUGYO_REZ_PATH", str(rez_dir))
-        monkeypatch.setenv("PATH", "")
-        monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
-        monkeypatch.syspath_prepend(str(rez_module_dir))
+        rez_command.chmod(0o755)
+        monkeypatch.setattr(sys, "executable", str(fake_python))
 
         repository = ToolConfigRepository(storage_dir=package_root)
         rez_repository = RezPackageRepository(root_dir=package_root)

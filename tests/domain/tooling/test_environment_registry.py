@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import types
@@ -149,17 +148,17 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_module_dir = tmp_path / "rez_module"
-    rez_module_dir.mkdir()
-    rez_package_dir = rez_module_dir / "rez"
-    rez_package_dir.mkdir()
-    (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
-    (rez_package_dir / "__main__.py").write_text("print('rez dummy')\n", encoding="utf-8")
+    real_python = sys.executable
+    rez_executable = bin_dir / "rez"
+    rez_executable.write_text(f"#!{real_python}\nprint('rez dummy')\n", encoding="utf-8")
+    rez_executable.chmod(0o755)
+    fake_python = bin_dir / "python"
+    fake_python.write_text("", encoding="utf-8")
+    fake_python.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
-    monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
-    monkeypatch.syspath_prepend(str(rez_module_dir))
+    monkeypatch.setattr(sys, "executable", str(fake_python))
 
     called_env: dict | None = None
 
@@ -183,17 +182,17 @@ def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
 def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_module_dir = tmp_path / "rez_module"
-    rez_module_dir.mkdir()
-    rez_package_dir = rez_module_dir / "rez"
-    rez_package_dir.mkdir()
-    (rez_package_dir / "__init__.py").write_text("", encoding="utf-8")
-    (rez_package_dir / "__main__.py").write_text("print('rez dummy')\n", encoding="utf-8")
+    real_python = sys.executable
+    rez_executable = bin_dir / "rez"
+    rez_executable.write_text(f"#!{real_python}\nprint('rez dummy')\n", encoding="utf-8")
+    rez_executable.chmod(0o755)
+    fake_python = bin_dir / "python"
+    fake_python.write_text("", encoding="utf-8")
+    fake_python.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("SOTUGYO_REZ_PATH", raising=False)
-    monkeypatch.setenv("PYTHONPATH", str(rez_module_dir))
-    monkeypatch.syspath_prepend(str(rez_module_dir))
+    monkeypatch.setattr(sys, "executable", str(fake_python))
 
     resolver = RezEnvironmentResolver()
 
