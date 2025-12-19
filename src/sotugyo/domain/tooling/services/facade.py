@@ -145,6 +145,23 @@ class ToolEnvironmentService:
             environment=environment,
         )
 
+    def launch_tool(
+        self,
+        *,
+        executable_path: Path | str,
+        packages: Iterable[str] | None = None,
+        variants: Iterable[str] | None = None,
+        environment: Optional[Dict[str, str]] = None,
+        args: Iterable[str] | None = None,
+    ):
+        return self.environment_service.launch_tool(
+            executable_path=executable_path,
+            packages=packages,
+            variants=variants,
+            environment=environment,
+            args=args,
+        )
+
     # ------------------------------------------------------------------
     # Rez パッケージ
     # ------------------------------------------------------------------

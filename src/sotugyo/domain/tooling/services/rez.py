@@ -6,7 +6,10 @@ import logging
 import os
 import shutil
 import subprocess
+import threading
 from dataclasses import dataclass
+from pathlib import Path
+import traceback
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
 
@@ -39,6 +42,39 @@ class RezResolveResult:
             "return_code": self.return_code,
             "stdout": self.stdout,
             "stderr": self.stderr,
+        }
+
+
+@dataclass(slots=True, frozen=True)
+class RezLaunchResult:
+    """Rez 環境でツールを起動した結果。"""
+
+    success: bool
+    command: Tuple[str, ...]
+    pid: int | None = None
+    stdout: str = ""
+    stderr: str = ""
+    traceback_text: str = ""
+
+    def message(self) -> str:
+        if self.success:
+            return "Rez 環境でのツール起動に成功しました。"
+        if self.stderr.strip():
+            return self.stderr.strip()
+        if self.stdout.strip():
+            return self.stdout.strip()
+        if self.traceback_text.strip():
+            return self.traceback_text.strip()
+        return "Rez 環境でのツール起動に失敗しました。"
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "success": self.success,
+            "command": list(self.command),
+            "pid": self.pid,
+            "stdout": self.stdout,
+            "stderr": self.stderr,
+            "traceback": self.traceback_text,
         }
 
 
@@ -122,6 +158,99 @@ class RezEnvironmentResolver:
             stderr=completed.stderr,
         )
 
+    def launch_tool(
+        self,
+        executable_path: str,
+        *,
+        packages: Sequence[str] | None = None,
+        variants: Sequence[str] | None = None,
+        environment: Mapping[str, str] | None = None,
+        args: Sequence[str] | None = None,
+    ) -> RezLaunchResult:
+        normalized_packages = tuple(
+            entry.strip() for entry in (packages or ()) if isinstance(entry, str) and entry.strip()
+        )
+        executable = executable_path.strip()
+        if not executable:
+            return RezLaunchResult(
+                success=False,
+                command=(),
+                stderr="起動する実行ファイルが指定されていません。",
+            )
+        executable_path_obj = Path(executable)
+        try:
+            executable_exists = executable_path_obj.exists()
+        except OSError:
+            executable_exists = False
+        if not executable_exists:
+            return RezLaunchResult(
+                success=False,
+                command=(executable,),
+                stderr=f"実行ファイルが見つかりません: {executable}",
+            )
+        executable = str(executable_path_obj)
+        env_vars = self._build_environment(environment)
+        path_env = env_vars.get("PATH") or env_vars.get("Path") or ""
+
+        if normalized_packages:
+            if shutil.which(self._executable, path=path_env) is None:
+                return RezLaunchResult(
+                    success=False,
+                    command=(self._executable,),
+                    stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                )
+            command: list[str] = [self._executable, "env", *normalized_packages]
+            variant_args = self._build_variant_arguments(variants or ())
+            command.extend(variant_args)
+            command.extend(["--", executable])
+        else:
+            command = [executable]
+
+        if args:
+            command.extend(str(arg) for arg in args if str(arg).strip())
+
+        try:
+            process = subprocess.Popen(  # noqa: S603,S607 - 実行コマンドを明示
+                command,
+                env=env_vars,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
+            return RezLaunchResult(
+                success=False,
+                command=tuple(command),
+                stderr=str(exc),
+                traceback_text=traceback.format_exc(),
+            )
+
+        self._stream_output(process, stream_name="stdout", level=logging.INFO)
+        self._stream_output(process, stream_name="stderr", level=logging.ERROR)
+
+        return RezLaunchResult(
+            success=True,
+            command=tuple(command),
+            pid=process.pid,
+        )
+
+    @staticmethod
+    def _stream_output(process: subprocess.Popen, *, stream_name: str, level: int) -> None:
+        stream = getattr(process, stream_name, None)
+        if stream is None:
+            return
+
+        def _run() -> None:
+            try:
+                for line in stream:
+                    if not line:
+                        continue
+                    LOGGER.log(level, "[rez %s] %s", stream_name, line.rstrip())
+            except Exception:  # pragma: no cover - ストリーム読み取りエラーはログのみ
+                LOGGER.debug("Rez 出力の読み取り中に例外が発生しました", exc_info=True)
+
+        threading.Thread(target=_run, name=f"RezStream-{stream_name}", daemon=True).start()
+
     @staticmethod
     def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
         normalized = [variant.strip() for variant in variants if variant and variant.strip()]
@@ -167,4 +296,4 @@ class RezEnvironmentResolver:
         )
 
 
-__all__ = ["RezEnvironmentResolver", "RezResolveResult"]
+__all__ = ["RezEnvironmentResolver", "RezLaunchResult", "RezResolveResult"]

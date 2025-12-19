@@ -229,6 +229,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.launch_requested.connect(self._handle_launch_tool)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -419,7 +420,16 @@ class NodeEditorWindow(QMainWindow):
         self._local_rez_packages = {
             spec.name: spec for spec in self._coordinator.list_rez_packages()
         }
+        self._log_registered_tools()
         self._refresh_content_browser_entries()
+
+    def _log_registered_tools(self) -> None:
+        if not self._registered_tools:
+            LOGGER.info("Registered tools: (none)")
+            return
+        sorted_tools = sorted(self._registered_tools.values(), key=lambda t: t.tool_id)
+        preview = ", ".join(tool.tool_id for tool in sorted_tools)
+        LOGGER.info("Registered tools: %s", preview)
 
     def _refresh_content_browser_entries(self) -> None:
         if self._content_dock is None:
@@ -956,11 +966,23 @@ class NodeEditorWindow(QMainWindow):
     def _show_info_dialog(self, message: str) -> None:
         QMessageBox.information(self, "操作案内", message)
 
-    def _show_warning_dialog(self, message: str) -> None:
-        QMessageBox.warning(self, "警告", message)
+    def _show_warning_dialog(self, message: str, *, detailed_text: str | None = None) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("警告")
+        dialog.setText(message)
+        if detailed_text:
+            dialog.setDetailedText(detailed_text)
+        dialog.exec()
 
-    def _show_error_dialog(self, message: str) -> None:
-        QMessageBox.critical(self, "エラー", message)
+    def _show_error_dialog(self, message: str, *, detailed_text: str | None = None) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Critical)
+        dialog.setWindowTitle("エラー")
+        dialog.setText(message)
+        if detailed_text:
+            dialog.setDetailedText(detailed_text)
+        dialog.exec()
 
     def _search_nodes(
         self, keyword: Optional[str] = None, *, show_dialog: bool = True
@@ -1092,6 +1114,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.configure_launch_button(visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1124,6 +1147,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+        self._update_launch_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1214,6 +1238,86 @@ class NodeEditorWindow(QMainWindow):
             return "-"
         return str(value)
 
+    def _read_text_property(self, node, name: str) -> str:
+        getter = getattr(node, "get_property", None)
+        if callable(getter):
+            try:
+                value = getter(name)
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug(
+                    "ノードプロパティの取得に失敗しました: node=%s, property=%s",
+                    self._safe_node_name(node),
+                    name,
+                    exc_info=True,
+                )
+            else:
+                if isinstance(value, str):
+                    return value.strip()
+                if value is not None:
+                    return str(value).strip()
+
+        fallback = getattr(node, name, None)
+        if isinstance(fallback, str):
+            return fallback.strip()
+        if fallback is not None:
+            return str(fallback).strip()
+        return ""
+
+    def _resolve_tool_for_node(self, node: ToolEnvironmentNode) -> RegisteredTool | None:
+        tool_id = self._read_text_property(node, "tool_id")
+        if not tool_id:
+            payload = node.get_environment_payload()
+            if isinstance(payload, Mapping):
+                raw_tool_id = payload.get("tool_id")
+                if isinstance(raw_tool_id, str):
+                    tool_id = raw_tool_id.strip()
+                elif raw_tool_id is not None:
+                    tool_id = str(raw_tool_id).strip()
+        if not tool_id:
+            return None
+        return self._registered_tools.get(tool_id)
+
+    def _extract_rez_parameters(
+        self, payload: Mapping[str, object] | None
+    ) -> Tuple[List[str], List[str], Dict[str, str]]:
+        packages: List[str] = []
+        variants: List[str] = []
+        environment: Dict[str, str] = {}
+        if payload is None:
+            return packages, variants, environment
+
+        raw_packages = payload.get("rez_packages") if isinstance(payload, Mapping) else None
+        if isinstance(raw_packages, (list, tuple)):
+            packages = [str(entry).strip() for entry in raw_packages if str(entry).strip()]
+
+        raw_variants = payload.get("rez_variants") if isinstance(payload, Mapping) else None
+        if isinstance(raw_variants, (list, tuple)):
+            variants = [str(entry).strip() for entry in raw_variants if str(entry).strip()]
+
+        raw_env = payload.get("rez_environment") if isinstance(payload, Mapping) else None
+        if isinstance(raw_env, Mapping):
+            environment = {
+                str(key).strip(): str(value).strip()
+                for key, value in raw_env.items()
+                if isinstance(key, str) and isinstance(value, str) and str(key).strip()
+            }
+        return packages, variants, environment
+
+    def _build_launch_tooltip(
+        self, exec_path: str | None, payload: Mapping[str, object] | None
+    ) -> str:
+        lines = ["Rez 環境を構築してツールを起動します。"]
+        if exec_path:
+            lines.append(f"実行ファイル: {exec_path}")
+        else:
+            lines.append("起動コマンドが未設定です。environment_payload を確認してください。")
+        summary = None
+        if isinstance(payload, Mapping):
+            summary = payload.get("summary") or payload.get("version_label")
+        if summary:
+            lines.append(f"環境概要: {summary}")
+        return "\n".join(lines)
+
     def _handle_rename_requested(self, new_name: str) -> None:
         if self._current_node is None:
             self._show_info_dialog("名前を変更するノードを選択してください。")
@@ -1265,6 +1369,101 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_launch_tool(self) -> None:
+        node = self._current_node
+        if not isinstance(node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツール環境ノードを選択してください。")
+            return
+
+        payload = node.get_environment_payload()
+        packages, variants, environment = self._extract_rez_parameters(
+            payload if isinstance(payload, Mapping) else None
+        )
+        exec_path, args = self._extract_launch_command(
+            payload if isinstance(payload, Mapping) else None,
+            packages,
+        )
+        if not exec_path:
+            self._show_warning_dialog("起動コマンドが設定されていません。ノードの environment_payload を確認してください。")
+            return
+        validation = self._coordinator.tool_service.validate_rez_environment(
+            packages=packages,
+            variants=variants,
+            environment=environment,
+        )
+
+        if not getattr(validation, "success", False):
+            detail = (getattr(validation, "stderr", "") or getattr(validation, "stdout", "")).strip()
+            self._show_error_dialog(
+                "Rez 環境の検証に失敗したためツールを起動できません。",
+                detailed_text=detail or "詳細ログはありません。",
+            )
+            return
+        result = self._coordinator.tool_service.launch_tool(
+            executable_path=exec_path,
+            packages=packages,
+            variants=variants,
+            environment=environment,
+            args=args,
+        )
+
+        if not result.success:
+            detail = (result.stderr or result.stdout or getattr(result, "traceback_text", "")).strip()
+            self._show_error_dialog(
+                "ツールの起動に失敗しました。",
+                detailed_text=detail or "詳細ログはありません。",
+            )
+            return
+
+        pid_text = f" (PID: {result.pid})" if result.pid is not None else ""
+        command_text = " ".join(result.command)
+        self._show_info_dialog(f"ツールを起動しました{pid_text}。\n{command_text}")
+
+    def _format_rez_error(self, *, stderr: str, stdout: str, traceback_text: str) -> str:
+        parts = []
+        if stderr.strip():
+            parts.append(f"[stderr]\n{stderr.strip()}")
+        if stdout.strip():
+            parts.append(f"[stdout]\n{stdout.strip()}")
+        if traceback_text.strip():
+            parts.append(f"[traceback]\n{traceback_text.strip()}")
+        if not parts:
+            return "詳細なログは出力されませんでした。"
+        return "\n\n".join(parts)
+
+    def _extract_launch_command(
+        self, payload: Mapping[str, object] | None, packages: List[str]
+    ) -> Tuple[str, List[str]]:
+        if not isinstance(payload, Mapping):
+            return "", []
+
+        raw_command = payload.get("command")
+        if isinstance(raw_command, str):
+            try:
+                parts = shlex.split(raw_command)
+            except ValueError:
+                parts = [raw_command]
+        elif isinstance(raw_command, (list, tuple)):
+            parts = [str(entry) for entry in raw_command if str(entry).strip()]
+        else:
+            parts = []
+
+        if not parts:
+            for key in ("executable_path", "executable"):
+                candidate = payload.get(key)
+                if isinstance(candidate, str) and candidate.strip():
+                    parts = [candidate.strip()]
+                    break
+
+        if not parts:
+            if packages:
+                return "rez", ["run", packages[0]]
+            return "", []
+
+        executable = parts[0].strip()
+        args = [str(arg) for arg in parts[1:]]
+        return executable, args
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1631,6 +1830,42 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("ノード位置の更新に失敗しました", exc_info=True)
             return False
         return True
+
+    def _update_launch_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, ToolEnvironmentNode):
+            inspector.configure_launch_button(visible=False)
+            LOGGER.info(
+                "Launch control skipped: selected node is not a ToolEnvironmentNode (%s)",
+                self._safe_node_name(node),
+            )
+            return
+
+        payload = node.get_environment_payload()
+        packages, variants, _env = self._extract_rez_parameters(
+            payload if isinstance(payload, Mapping) else None
+        )
+        exec_path, args = self._extract_launch_command(
+            payload if isinstance(payload, Mapping) else None,
+            packages,
+        )
+        tooltip = self._build_launch_tooltip(exec_path, payload)
+        inspector.configure_launch_button(
+            visible=True,
+            text="起動",
+            enabled=bool(exec_path),
+            tooltip=tooltip,
+        )
+        LOGGER.info(
+            "Launch control: node=%s, exec=%s, args=%s, packages=%s, variants=%s",
+            self._safe_node_name(node),
+            exec_path or "(none)",
+            " ".join(args) if args else "(none)",
+            ", ".join(packages) if packages else "(none)",
+            ", ".join(variants) if variants else "(none)",
+        )
 
     def _update_memo_controls(self, node) -> None:
         inspector = self._inspector_dock
