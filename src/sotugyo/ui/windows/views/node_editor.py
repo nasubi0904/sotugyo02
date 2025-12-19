@@ -541,7 +541,15 @@ class NodeEditorWindow(QMainWindow):
     def _build_rez_package_records(self) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
         all_packages = self._all_rez_packages()
+        linked_packages = set()
+        for environment in self._tool_environments.values():
+            if environment.rez_packages:
+                linked_packages.update(environment.rez_packages)
+            elif environment.tool_id:
+                linked_packages.add(environment.tool_id)
         for name, spec in sorted(all_packages.items()):
+            if name in linked_packages:
+                continue
             subtitle = spec.version or "Rez パッケージ"
             origin = "プロジェクト" if name in self._project_rez_packages else "KDMrez"
             keywords = (name, subtitle, origin)
