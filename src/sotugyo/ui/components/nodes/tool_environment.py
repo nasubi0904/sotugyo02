@@ -27,28 +27,10 @@ class ToolEnvironmentNode(BaseNode):
         self.add_input("前段")
         self.add_output("起動")
         self.create_property(
-            "environment_id",
+            "environment_key",
             "",
             widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="環境定義の識別子",
-        )
-        self.create_property(
-            "tool_id",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="参照しているツールの識別子",
-        )
-        self.create_property(
-            "tool_name",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="ツール名",
-        )
-        self.create_property(
-            "version_label",
-            "",
-            widget_type=NodePropWidgetEnum.QLINE_EDIT.value,
-            widget_tooltip="使用するバージョンの表示名",
+            widget_tooltip="環境定義のキー (Rez パッケージ集合)",
         )
         self.create_property(
             "environment_payload",
@@ -67,23 +49,15 @@ class ToolEnvironmentNode(BaseNode):
     def configure_environment(
         self,
         *,
-        environment_id: str,
+        environment_key: str,
         environment_name: str,
-        tool_id: str,
-        tool_name: str,
-        version_label: str,
         environment_payload: Mapping[str, Any] | None = None,
     ) -> None:
         self.set_name(environment_name)
-        self.set_property("environment_id", environment_id, push_undo=False)
-        self.set_property("tool_id", tool_id, push_undo=False)
-        self.set_property("tool_name", tool_name, push_undo=False)
-        self.set_property("version_label", version_label, push_undo=False)
+        self.set_property("environment_key", environment_key, push_undo=False)
         payload = {
-            "environment_id": environment_id,
-            "tool_id": tool_id,
-            "tool_name": tool_name,
-            "version_label": version_label,
+            "environment_key": environment_key,
+            "environment_name": environment_name,
         }
         if environment_payload:
             payload.update(environment_payload)
@@ -94,7 +68,7 @@ class ToolEnvironmentNode(BaseNode):
 
     def set_property(self, name, value, push_undo: bool = True):  # type: ignore[override]
         super().set_property(name, value, push_undo=push_undo)
-        if name in {"tool_name", "version_label", "environment_payload"}:
+        if name in {"environment_payload"}:
             self._update_summary()
 
     def get_environment_payload(self) -> Dict[str, Any]:
@@ -125,15 +99,6 @@ class ToolEnvironmentNode(BaseNode):
 
     def _update_summary(self) -> None:
         try:
-            tool_name = str(self.get_property("tool_name"))
-        except Exception:  # pragma: no cover - NodeGraph 依存の例外
-            LOGGER.debug("tool_name の取得に失敗しました", exc_info=True)
-            tool_name = ""
-        try:
-            version_label = str(self.get_property("version_label"))
-        except Exception:  # pragma: no cover - NodeGraph 依存の例外
-            LOGGER.debug("version_label の取得に失敗しました", exc_info=True)
-            version_label = ""
         payload = self.get_environment_payload()
         summary_hint = payload.get("summary")
         packages = payload.get("rez_packages")
@@ -143,10 +108,6 @@ class ToolEnvironmentNode(BaseNode):
             validation = metadata.get("rez_validation")
         validation_status = payload.get("rez_validation")
         summary_lines = []
-        if tool_name:
-            summary_lines.append(tool_name)
-        if version_label:
-            summary_lines.append(f"Version: {version_label}")
         if summary_hint:
             summary_lines.append(str(summary_hint))
         if isinstance(packages, (list, tuple)) and packages:

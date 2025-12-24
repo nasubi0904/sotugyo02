@@ -90,10 +90,6 @@ class ToolEnvironmentService:
         self,
         *,
         name: str,
-        tool_id: str,
-        version_label: str,
-        environment_id: Optional[str] = None,
-        template_id: Optional[str] = None,
         rez_packages: Optional[Iterable[str]] = None,
         rez_variants: Optional[Iterable[str]] = None,
         rez_environment: Optional[Dict[str, str]] = None,
@@ -103,20 +99,16 @@ class ToolEnvironmentService:
         environments = self.environment_service.list_environments()
         return self.environment_service.save(
             name=name,
-            tool_id=tool_id,
-            version_label=version_label,
             tools=tools,
             environments=environments,
-            environment_id=environment_id,
-            template_id=template_id,
             rez_packages=rez_packages,
             rez_variants=rez_variants,
             rez_environment=rez_environment,
             metadata=metadata,
         )
 
-    def remove_environment(self, environment_id: str) -> bool:
-        return self.environment_service.remove(environment_id)
+    def remove_environment(self, package_key_label: str) -> bool:
+        return self.environment_service.remove(package_key_label)
 
     # ------------------------------------------------------------------
     # テンプレート連携

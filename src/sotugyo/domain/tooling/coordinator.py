@@ -62,36 +62,20 @@ class NodeEditorCoordinator:
             environments = []
 
         tool_map = {tool.tool_id: tool for tool in tools}
-        filtered_envs: Dict[str, ToolEnvironmentDefinition] = {}
-        for environment in environments:
-            if environment.tool_id in tool_map:
-                filtered_envs[environment.environment_id] = environment
-            else:
-                LOGGER.warning(
-                    "ツール %s が存在しないため環境 %s を読み込みから除外しました。",
-                    environment.tool_id,
-                    environment.environment_id,
-                )
-        return ToolEnvironmentSnapshot(tool_map, filtered_envs)
+        env_map: Dict[str, ToolEnvironmentDefinition] = {
+            environment.package_key_label(): environment
+            for environment in environments
+        }
+        return ToolEnvironmentSnapshot(tool_map, env_map)
 
     def build_tool_catalog(self, snapshot: ToolEnvironmentSnapshot) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
         for environment in sorted(snapshot.environments.values(), key=lambda item: item.name):
-            tool = snapshot.tools.get(environment.tool_id)
-            subtitle_parts = []
-            if tool is not None:
-                subtitle_parts.append(tool.display_name)
-            if environment.version_label:
-                subtitle_parts.append(environment.version_label)
-            subtitle = " / ".join(part for part in subtitle_parts if part)
-            node_type = f"tool-environment:{environment.environment_id}"
-            keywords: Tuple[str, ...] = (
-                environment.environment_id,
-                tool.display_name if tool is not None else "",
-            )
+            packages_text = ", ".join(environment.rez_packages)
+            subtitle = packages_text or "Rez パッケージ未指定"
+            node_type = f"tool-environment:{environment.package_key_label()}"
+            keywords: Tuple[str, ...] = (environment.name, packages_text)
             icon_path = None
-            if tool is not None and tool.template_id:
-                icon_path = str(tool.executable_path)
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,

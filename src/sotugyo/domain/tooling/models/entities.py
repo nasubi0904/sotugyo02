@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+import json
 from pathlib import Path
-from typing import Any, ClassVar, Dict, Optional, Tuple
+from typing import Any, ClassVar, Dict, Iterable, Optional, Tuple
 
 ISO_FORMAT: ClassVar[str] = "%Y-%m-%dT%H:%M:%S"
 
@@ -23,6 +24,15 @@ def _format_timestamp(value: datetime | None) -> str:
     if value is None:
         value = datetime.utcnow()
     return value.strftime(ISO_FORMAT)
+
+
+def _normalize_packages_key(values: Iterable[str]) -> Tuple[str, ...]:
+    entries = {
+        entry.strip()
+        for entry in values
+        if isinstance(entry, str) and entry.strip()
+    }
+    return tuple(sorted(entries))
 
 
 @dataclass(slots=True)
@@ -65,31 +75,19 @@ class RegisteredTool:
 class ToolEnvironmentDefinition:
     """ツールを利用した環境ノードの定義。"""
 
-    environment_id: str
     name: str
-    tool_id: str
-    version_label: str
-    template_id: Optional[str] = None
     rez_packages: Tuple[str, ...] = field(default_factory=tuple)
     rez_variants: Tuple[str, ...] = field(default_factory=tuple)
     rez_environment: Dict[str, str] = field(default_factory=dict)
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=datetime.utcnow)
-    updated_at: datetime = field(default_factory=datetime.utcnow)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "environment_id": self.environment_id,
             "name": self.name,
-            "tool_id": self.tool_id,
-            "version_label": self.version_label,
-            "template_id": self.template_id,
             "rez_packages": list(self.rez_packages),
             "rez_variants": list(self.rez_variants),
             "rez_environment": dict(self.rez_environment),
             "metadata": dict(self.metadata),
-            "created_at": _format_timestamp(self.created_at),
-            "updated_at": _format_timestamp(self.updated_at),
         }
 
     @classmethod
@@ -116,37 +114,35 @@ class ToolEnvironmentDefinition:
         raw_metadata = data.get("metadata")
         if isinstance(raw_metadata, dict):
             metadata = dict(raw_metadata)
+        legacy_fields = {
+            "environment_id": data.get("environment_id"),
+            "tool_id": data.get("tool_id"),
+            "version_label": data.get("version_label"),
+            "template_id": data.get("template_id"),
+        }
+        if any(value is not None for value in legacy_fields.values()):
+            legacy_payload = {
+                key: value for key, value in legacy_fields.items() if value is not None
+            }
+            existing_legacy = metadata.get("legacy_environment")
+            if isinstance(existing_legacy, dict):
+                existing_legacy.update(legacy_payload)
+            else:
+                metadata["legacy_environment"] = legacy_payload
         return cls(
-            environment_id=str(data.get("environment_id", "")),
-            name=str(data.get("name", "")),
-            tool_id=str(data.get("tool_id", "")),
-            version_label=str(data.get("version_label", "")),
-            template_id=(
-                str(data.get("template_id")) if data.get("template_id") is not None else None
-            ),
+            name=str(data.get("name") or data.get("tool_id") or "環境"),
             rez_packages=packages,
             rez_variants=variants,
             rez_environment=env_map,
             metadata=metadata,
-            created_at=_parse_timestamp(data.get("created_at")),
-            updated_at=_parse_timestamp(data.get("updated_at")),
         )
 
-    def build_payload(self, tool: Optional[RegisteredTool] = None) -> Dict[str, Any]:
+    def build_payload(self) -> Dict[str, Any]:
         """ノードへ伝播する環境情報を構築する。"""
 
         payload: Dict[str, Any] = {
-            "environment_id": self.environment_id,
             "environment_name": self.name,
-            "tool_id": self.tool_id,
-            "version_label": self.version_label,
         }
-        if tool is not None:
-            payload["tool_name"] = tool.display_name
-            if tool.version:
-                payload["tool_version"] = tool.version
-        if self.template_id:
-            payload["template_id"] = self.template_id
         if self.rez_packages:
             payload["rez_packages"] = list(self.rez_packages)
         if self.rez_variants:
@@ -155,8 +151,14 @@ class ToolEnvironmentDefinition:
             payload["rez_environment"] = dict(self.rez_environment)
         if self.metadata:
             payload["metadata"] = dict(self.metadata)
-        payload.setdefault("summary", self.version_label or payload.get("tool_name", ""))
+        payload.setdefault("summary", self.name)
         return payload
+
+    def package_key(self) -> Tuple[str, ...]:
+        return _normalize_packages_key(self.rez_packages)
+
+    def package_key_label(self) -> str:
+        return json.dumps(self.package_key(), ensure_ascii=False)
 
 
 @dataclass(slots=True)

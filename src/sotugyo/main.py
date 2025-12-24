@@ -140,9 +140,12 @@ def _run_application(
         result = MainRunResult(exit_code=1, reason="error", error_message=str(exc))
     else:
         reason = exit_reason["value"]
-        if exit_code != 0 and reason != "error":
+        adjusted_exit_code = exit_code
+        if reason == "auto_exit":
+            adjusted_exit_code = 1
+        if adjusted_exit_code != 0 and reason == "manual":
             reason = "error"
-        result = MainRunResult(exit_code=exit_code, reason=reason)
+        result = MainRunResult(exit_code=adjusted_exit_code, reason=reason)
 
     if exit_report_path:
         _write_exit_report(exit_report_path, result)

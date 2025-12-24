@@ -55,11 +55,7 @@ def make_tool(tool_id: str) -> RegisteredTool:
 
 def test_tool_environment_definition_serialization_roundtrip() -> None:
     definition = ToolEnvironmentDefinition(
-        environment_id="env-1",
         name="レンダー環境",
-        tool_id="tool-1",
-        version_label="2024.1",
-        template_id="autodesk.maya",
         rez_packages=("maya", "arnold"),
         rez_variants=("platform-windows",),
         rez_environment={"MAYA_APP_DIR": "C:/Project/maya"},
@@ -68,8 +64,7 @@ def test_tool_environment_definition_serialization_roundtrip() -> None:
 
     restored = ToolEnvironmentDefinition.from_dict(definition.to_dict())
 
-    assert restored.environment_id == definition.environment_id
-    assert restored.template_id == "autodesk.maya"
+    assert restored.name == definition.name
     assert restored.rez_packages == ("maya", "arnold")
     assert restored.rez_variants == ("platform-windows",)
     assert restored.rez_environment == {"MAYA_APP_DIR": "C:/Project/maya"}
@@ -102,11 +97,8 @@ def test_environment_registry_saves_rez_metadata() -> None:
 
         environment = service.save(
             name="テスト環境",
-            tool_id=tool.tool_id,
-            version_label="v1",
             tools=tools,
             environments=environments,
-            template_id="autodesk.maya",
             rez_packages=["maya"],
             rez_variants=["platform-windows"],
             rez_environment={"MAYA_APP_DIR": "C:/maya"},
@@ -119,7 +111,6 @@ def test_environment_registry_saves_rez_metadata() -> None:
         assert env_map == {"MAYA_APP_DIR": "C:/maya"}
 
         assert environment.rez_packages == ("maya",)
-        assert environment.template_id == "autodesk.maya"
         assert environment.metadata["rez_validation"]["success"] is False
 
         stored_tools, stored_envs = repository.load_all()
@@ -127,7 +118,7 @@ def test_environment_registry_saves_rez_metadata() -> None:
         assert stored_envs[0].rez_packages == ("maya",)
 
 
-def test_environment_registry_can_clear_template_and_packages() -> None:
+def test_environment_registry_can_clear_variants_and_environment() -> None:
     with TemporaryDirectory() as tmp_dir:
         repository = ToolConfigRepository(storage_dir=Path(tmp_dir))
         resolver = DummyResolver(success=True, message="ok")
@@ -136,30 +127,24 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
         tool = make_tool("tool-1")
         initial = service.save(
             name="環境A",
-            tool_id=tool.tool_id,
-            version_label="v1",
             tools=[tool],
             environments=[],
-            template_id="autodesk.maya",
             rez_packages=["maya"],
+            rez_variants=["platform-windows"],
+            rez_environment={"MAYA_APP_DIR": "C:/maya"},
         )
 
         tools, environments = repository.load_all()
         updated = service.save(
             name="環境A",
-            tool_id=tool.tool_id,
-            version_label="v2",
             tools=tools,
             environments=environments,
-            environment_id=initial.environment_id,
-            template_id=None,
-            rez_packages=[],
+            rez_packages=list(initial.rez_packages),
             rez_variants=[],
             rez_environment={},
         )
 
-        assert updated.template_id is None
-        assert updated.rez_packages == ()
+        assert updated.rez_packages == ("maya",)
         assert updated.rez_variants == ()
         assert updated.rez_environment == {}
 
@@ -223,4 +208,3 @@ def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> Non
     assert called_env is not None
     path_entries = called_env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
-

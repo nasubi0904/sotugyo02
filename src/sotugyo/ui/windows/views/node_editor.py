@@ -49,11 +49,7 @@ from ...components.nodes import (
     ToolEnvironmentNode,
 )
 from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSettings
-from sotugyo.domain.tooling import (
-    RegisteredTool,
-    RezPackageSpec,
-    ToolEnvironmentDefinition,
-)
+from sotugyo.domain.tooling import RezPackageSpec, ToolEnvironmentDefinition
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -149,7 +145,6 @@ class NodeEditorWindow(QMainWindow):
         self._project_service = self._coordinator.project_service
         self._user_manager = self._coordinator.user_manager
         self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
-        self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
         self._local_rez_packages: Dict[str, RezPackageSpec] = {}
         self._project_rez_packages: Dict[str, RezPackageSpec] = {}
@@ -414,7 +409,6 @@ class NodeEditorWindow(QMainWindow):
     def _refresh_tool_configuration(self) -> None:
         snapshot = self._coordinator.load_tool_snapshot()
         self._tool_snapshot = snapshot
-        self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
         self._load_local_rez_packages()
         self._refresh_content_browser_entries()
@@ -641,8 +635,8 @@ class NodeEditorWindow(QMainWindow):
 
     def _spawn_node_by_type(self, node_type: str) -> None:
         if node_type.startswith("tool-environment:"):
-            environment_id = node_type.split(":", 1)[1]
-            self._create_tool_environment_node(environment_id)
+            package_key_label = node_type.split(":", 1)[1]
+            self._create_tool_environment_node(package_key_label)
             return
         if node_type.startswith("rez-package:"):
             package_name = node_type.split(":", 1)[1]
@@ -738,26 +732,19 @@ class NodeEditorWindow(QMainWindow):
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
-    def _create_tool_environment_node(self, environment_id: str) -> None:
-        definition = self._tool_environments.get(environment_id)
+    def _create_tool_environment_node(self, package_key_label: str) -> None:
+        definition = self._tool_environments.get(package_key_label)
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
-            return
-        tool = self._registered_tools.get(definition.tool_id)
-        if tool is None:
-            self._show_warning_dialog("環境が参照するツールが登録されていません。")
             return
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
         if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload(tool)
+            payload = definition.build_payload()
             node.configure_environment(
-                environment_id=definition.environment_id,
+                environment_key=definition.package_key_label(),
                 environment_name=definition.name,
-                tool_id=tool.tool_id,
-                tool_name=tool.display_name,
-                version_label=definition.version_label,
                 environment_payload=payload,
             )
 
@@ -770,20 +757,16 @@ class NodeEditorWindow(QMainWindow):
             ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
         )
         if isinstance(node, ToolEnvironmentNode):
-            version_label = spec.version or "local"
             payload = {
                 "rez_packages": [spec.name],
                 "package_path": str(spec.path),
-                "summary": version_label,
+                "summary": f"Rez: {spec.name}",
             }
             source = self._rez_package_source_tag(package_name)
             payload["rez_source"] = source
             node.configure_environment(
-                environment_id=f"rez:{spec.name}",
+                environment_key=f"rez:{spec.name}",
                 environment_name=f"Rez: {spec.name}",
-                tool_id=spec.name,
-                tool_name=f"Rez Package ({source})",
-                version_label=version_label,
                 environment_payload=payload,
             )
 

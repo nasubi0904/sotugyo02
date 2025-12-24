@@ -9,7 +9,7 @@ from typing import Iterable, List, Tuple
 from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RegisteredTool, ToolEnvironmentDefinition
 
-DEFAULT_DATA = {"version": 2, "tools": [], "environments": []}
+DEFAULT_DATA = {"version": 3, "tools": [], "environments": []}
 
 
 class ToolConfigRepository:
@@ -30,6 +30,8 @@ class ToolConfigRepository:
         data = self._read_raw()
         tool_entries = data.get("tools", [])
         env_entries = data.get("environments", [])
+        if isinstance(env_entries, dict):
+            env_entries = list(env_entries.values())
         tools = [
             RegisteredTool.from_dict(entry)
             for entry in tool_entries
