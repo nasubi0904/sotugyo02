@@ -7,7 +7,7 @@ from qtpy import QtWidgets
 from sotugyo import main as main_module
 
 
-def test_run_application_writes_auto_exit_report(tmp_path):
+def test_run_application_writes_headless_exit_report(tmp_path):
     report_path = tmp_path / "exit_report.json"
 
     result = main_module._run_application(
@@ -17,11 +17,11 @@ def test_run_application_writes_auto_exit_report(tmp_path):
         exit_report_path=str(report_path),
     )
 
-    assert result.reason == "auto_exit"
+    assert result.reason == "manual"
     assert result.exit_code == 0
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
-    assert report["reason"] == "auto_exit"
+    assert report["reason"] == "manual"
     assert report["exit_code"] == 0
 
 

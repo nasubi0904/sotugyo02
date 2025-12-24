@@ -129,7 +129,8 @@ def _run_application(
         from qtpy import QtCore
 
         def _quit_application() -> None:
-            exit_reason["value"] = "auto_exit"
+            if not headless:
+                exit_reason["value"] = "auto_exit"
             app.quit()
 
         QtCore.QTimer.singleShot(auto_exit_ms, _quit_application)
@@ -140,7 +141,7 @@ def _run_application(
         result = MainRunResult(exit_code=1, reason="error", error_message=str(exc))
     else:
         reason = exit_reason["value"]
-        if exit_code != 0 and reason != "error":
+        if exit_code != 0 and reason == "manual":
             reason = "error"
         result = MainRunResult(exit_code=exit_code, reason=reason)
 

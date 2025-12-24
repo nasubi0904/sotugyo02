@@ -59,8 +59,7 @@ class ToolRegistryService:
         new_tools = [tool for tool in tools if tool.tool_id != tool_id]
         if len(new_tools) == len(tools):
             return False
-        new_environments = [env for env in environments if env.tool_id != tool_id]
-        self.repository.save_all(new_tools, new_environments)
+        self.repository.save_all(new_tools, environments)
         return True
 
     def save_snapshot(
