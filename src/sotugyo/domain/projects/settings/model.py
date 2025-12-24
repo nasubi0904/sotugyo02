@@ -93,6 +93,7 @@ class ProjectSettings:
             last_user_id=last_user_id,
             last_user_password=last_user_password,
         )
+
     @classmethod
     def default(cls, root: Path) -> "ProjectSettings":
         """ルートディレクトリから既定値を生成する。"""

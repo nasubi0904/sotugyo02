@@ -416,9 +416,7 @@ class NodeEditorWindow(QMainWindow):
         self._tool_snapshot = snapshot
         self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
-        self._local_rez_packages = {
-            spec.name: spec for spec in self._coordinator.list_rez_packages()
-        }
+        self._load_local_rez_packages()
         self._refresh_content_browser_entries()
 
     def _refresh_content_browser_entries(self) -> None:
@@ -448,10 +446,29 @@ class NodeEditorWindow(QMainWindow):
         specs = self._coordinator.list_project_rez_packages(self._current_project_root)
         self._project_rez_packages = {spec.name: spec for spec in specs}
 
+    def _load_local_rez_packages(self) -> None:
+        specs = self._coordinator.list_rez_packages()
+        self._local_rez_packages = {spec.name: spec for spec in specs}
+
     def _all_rez_packages(self) -> Dict[str, RezPackageSpec]:
         merged = dict(self._local_rez_packages)
         merged.update(self._project_rez_packages)
         return merged
+
+    def _rez_package_origin_label(self, package_name: str) -> str:
+        if package_name in self._project_rez_packages:
+            return "プロジェクト"
+        return "KDMrez"
+
+    def _rez_package_source_tag(self, package_name: str) -> str:
+        if package_name in self._project_rez_packages:
+            return "project"
+        return "local"
+
+    def _project_rez_package_dir(self) -> str:
+        if self._current_project_root is None:
+            return "-"
+        return str(self._current_project_root / "config" / "rez_packages")
 
     # ------------------------------------------------------------------
     # プロジェクトコンテキスト管理
@@ -548,7 +565,7 @@ class NodeEditorWindow(QMainWindow):
         all_packages = self._all_rez_packages()
         for name, spec in sorted(all_packages.items()):
             subtitle = spec.version or "Rez パッケージ"
-            origin = "プロジェクト" if name in self._project_rez_packages else "KDMrez"
+            origin = self._rez_package_origin_label(name)
             keywords = (name, subtitle, origin)
             records.append(
                 NodeCatalogRecord(
@@ -759,9 +776,7 @@ class NodeEditorWindow(QMainWindow):
                 "package_path": str(spec.path),
                 "summary": version_label,
             }
-            source = (
-                "project" if package_name in self._project_rez_packages else "local"
-            )
+            source = self._rez_package_source_tag(package_name)
             payload["rez_source"] = source
             node.configure_environment(
                 environment_id=f"rez:{spec.name}",
@@ -1815,7 +1830,7 @@ class NodeEditorWindow(QMainWindow):
             lines = [
                 "次の Rez パッケージがローカルにもプロジェクトにも見つかりません。",
                 f"KDMrez: {get_rez_package_dir()}",
-                f"Project: {self._current_project_root / 'config' / 'rez_packages' if self._current_project_root else '-'}",
+                f"Project: {self._project_rez_package_dir()}",
             ]
             lines.extend(f"・{name}" for name in missing)
             warnings.append("\n".join(lines))
