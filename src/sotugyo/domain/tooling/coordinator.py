@@ -90,8 +90,9 @@ class NodeEditorCoordinator:
                 tool.display_name if tool is not None else "",
             )
             icon_path = None
-            if tool is not None and tool.template_id:
-                icon_path = str(tool.executable_path)
+            if tool is not None and tool.executable_path.suffix.lower() == ".exe":
+                if tool.executable_path.exists():
+                    icon_path = str(tool.executable_path)
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
