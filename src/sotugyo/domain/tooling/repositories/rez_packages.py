@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 from dataclasses import dataclass, field
@@ -20,15 +19,13 @@ class RezPackageRepository:
     """テンプレート検出結果から Rez パッケージを生成・管理する。"""
 
     root_dir: Path
-    index_file: str = "packages.json"
-    _index_path: Path = field(init=False)
+    _last_scan: List[RezPackageSpec] = field(init=False)
 
     def __init__(self, root_dir: Path | None = None) -> None:
         base_dir = root_dir or get_rez_package_dir()
         self.root_dir = Path(base_dir)
         self.root_dir.mkdir(parents=True, exist_ok=True)
-        self.index_file = "packages.json"
-        self._index_path = self.root_dir / self.index_file
+        self._last_scan = []
 
     def register_candidate(self, candidate: TemplateInstallationCandidate) -> str:
         """検出したインストールから Rez パッケージを生成する。"""
@@ -46,13 +43,6 @@ class RezPackageRepository:
             )
         except OSError:
             LOGGER.warning("Rez パッケージの書き込みに失敗しました: %s", package_file, exc_info=True)
-
-        self._update_index(
-            candidate.template_id,
-            package_name=package_name,
-            version=version,
-            executable_path=candidate.executable_path,
-        )
         return package_name
 
     def get_package_name(self, template_id: str) -> Optional[str]:
@@ -60,25 +50,27 @@ class RezPackageRepository:
 
         if not template_id:
             return None
-        entry = self._read_index().get(template_id)
-        if isinstance(entry, dict):
-            package_name = entry.get("package")
-            if isinstance(package_name, str) and package_name.strip():
-                return package_name
-        return self._normalize_package_name(template_id)
+        normalized = self._normalize_package_name(template_id)
+        self._scan_packages()
+        if any(spec.name == normalized for spec in self._last_scan):
+            return normalized
+        return None
 
     def list_packages(self) -> List[RezPackageSpec]:
         """KDMrez 直下に存在する Rez パッケージ一覧を返す。"""
 
-        return list(self._collect_packages(self.root_dir))
+        self._scan_packages()
+        return list(self._last_scan)
 
     def find_package(self, package_name: str) -> Optional[RezPackageSpec]:
         """指定パッケージの最新版と思しき定義を返す。"""
 
         if not package_name:
             return None
-        for spec in self._collect_packages(self.root_dir, target=package_name):
-            return spec
+        self._scan_packages()
+        for spec in self._last_scan:
+            if spec.name == package_name:
+                return spec
         return None
 
     def sync_packages_to_project(
@@ -96,46 +88,7 @@ class RezPackageRepository:
                 continue
             copied_spec = destination.copy_from(spec)
             copied[package] = copied_spec
-        if copied:
-            destination.write_index(copied.values())
         return RezPackageSyncResult(copied=copied, missing=tuple(missing))
-
-    def _read_index(self) -> Dict[str, Dict[str, str]]:
-        if not self._index_path.exists():
-            return {}
-        try:
-            with self._index_path.open("r", encoding="utf-8") as handle:
-                data = json.load(handle)
-        except (OSError, json.JSONDecodeError):
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        templates = data.get("templates")
-        if isinstance(templates, dict):
-            filtered: Dict[str, Dict[str, str]] = {}
-            for key, value in templates.items():
-                if isinstance(key, str) and isinstance(value, dict):
-                    filtered[key] = value
-            return filtered
-        return {}
-
-    def _update_index(
-        self,
-        template_id: str,
-        *,
-        package_name: str,
-        version: str,
-        executable_path: Path,
-    ) -> None:
-        data = {"templates": self._read_index()}
-        data.setdefault("templates", {})[template_id] = {
-            "package": package_name,
-            "version": version,
-            "executable_path": str(executable_path),
-        }
-        self.root_dir.mkdir(parents=True, exist_ok=True)
-        with self._index_path.open("w", encoding="utf-8") as handle:
-            json.dump(data, handle, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _normalize_package_name(template_id: str) -> str:
@@ -209,6 +162,9 @@ class RezPackageRepository:
         scored_candidates.sort(key=lambda item: (item[0], item[1], item[2]), reverse=True)
         return scored_candidates[0][3]
 
+    def _scan_packages(self) -> None:
+        self._last_scan = list(self._collect_packages(self.root_dir))
+
 
 @dataclass(slots=True, frozen=True)
 class RezPackageSyncResult:
@@ -269,22 +225,6 @@ class ProjectRezPackageRepository:
             if not (spec / "package.py").exists():
                 missing.append(entry.name)
         return RezPackageValidationResult(missing=tuple(missing), invalid=tuple(invalid))
-
-    def write_index(self, specs: Iterable[RezPackageSpec]) -> None:
-        self.root_dir.mkdir(parents=True, exist_ok=True)
-        index_path = self.root_dir / "packages.json"
-        payload = {
-            "packages": [
-                {
-                    "name": spec.name,
-                    "version": spec.version,
-                    "path": str(spec.path),
-                }
-                for spec in specs
-            ]
-        }
-        with index_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
 
 
 __all__ = [
