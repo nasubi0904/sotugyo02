@@ -98,7 +98,6 @@ class ToolEnvironmentNode(BaseNode):
             return "{}"
 
     def _update_summary(self) -> None:
-        try:
         payload = self.get_environment_payload()
         summary_hint = payload.get("summary")
         packages = payload.get("rez_packages")
