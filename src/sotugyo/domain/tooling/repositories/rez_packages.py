@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -179,6 +180,22 @@ class RezPackageRepository:
             shutil.rmtree(target_dir)
         except OSError:
             LOGGER.warning("Rez パッケージの削除に失敗しました: %s", target_dir, exc_info=True)
+
+    def resolve_executable(self, spec: RezPackageSpec) -> Optional[Path]:
+        package_file = spec.path / "package.py"
+        if not package_file.exists():
+            return None
+        try:
+            content = package_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            LOGGER.debug("package.py の読み込みに失敗しました: %s", package_file, exc_info=True)
+            return None
+        matches = re.findall(r"([A-Za-z]:[^\"\n]+\\.exe)", content, flags=re.IGNORECASE)
+        for match in matches:
+            candidate = Path(match)
+            if candidate.exists():
+                return candidate
+        return None
 
 
 @dataclass(slots=True, frozen=True)

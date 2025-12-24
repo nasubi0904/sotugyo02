@@ -223,12 +223,13 @@ class ToolEnvironmentService:
         synced_envs: List[ToolEnvironmentDefinition] = []
 
         for name, spec in sorted(package_map.items()):
+            resolved_executable = self.rez_repository.resolve_executable(spec)
             tool = tool_map.get(name) or tool_by_package.get(name)
             if tool is None:
                 tool = RegisteredTool(
                     tool_id=name,
                     display_name=name,
-                    executable_path=spec.path / "package.py",
+                    executable_path=resolved_executable or (spec.path / "package.py"),
                     template_id=None,
                     version=spec.version,
                     created_at=now,
@@ -238,7 +239,9 @@ class ToolEnvironmentService:
                 tool.tool_id = name
                 if not tool.display_name:
                     tool.display_name = name
-                if not tool.executable_path.exists():
+                if resolved_executable is not None:
+                    tool.executable_path = resolved_executable
+                elif not tool.executable_path.exists():
                     tool.executable_path = spec.path / "package.py"
                 tool.version = spec.version
                 tool.updated_at = now

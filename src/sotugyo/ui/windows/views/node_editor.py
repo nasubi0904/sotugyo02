@@ -425,7 +425,6 @@ class NodeEditorWindow(QMainWindow):
         records = self._build_available_node_records()
         if self._tool_snapshot is not None:
             records = self._coordinator.extend_catalog(records, self._tool_snapshot)
-        records.extend(self._build_rez_package_records())
         entries = [
             NodeCatalogEntry(
                 node_type=record.node_type,
@@ -454,16 +453,6 @@ class NodeEditorWindow(QMainWindow):
         merged = dict(self._local_rez_packages)
         merged.update(self._project_rez_packages)
         return merged
-
-    def _rez_package_origin_label(self, package_name: str) -> str:
-        if package_name in self._project_rez_packages:
-            return "プロジェクト"
-        return "KDMrez"
-
-    def _rez_package_source_tag(self, package_name: str) -> str:
-        if package_name in self._project_rez_packages:
-            return "project"
-        return "local"
 
     def _project_rez_package_dir(self) -> str:
         if self._current_project_root is None:
@@ -560,24 +549,6 @@ class NodeEditorWindow(QMainWindow):
         ]
         return records
 
-    def _build_rez_package_records(self) -> List[NodeCatalogRecord]:
-        records: List[NodeCatalogRecord] = []
-        all_packages = self._all_rez_packages()
-        for name, spec in sorted(all_packages.items()):
-            subtitle = spec.version or "Rez パッケージ"
-            origin = self._rez_package_origin_label(name)
-            keywords = (name, subtitle, origin)
-            records.append(
-                NodeCatalogRecord(
-                    node_type=f"rez-package:{name}",
-                    title=f"Rez: {name}",
-                    subtitle=f"{subtitle} / {origin}",
-                    genre="Rez パッケージ",
-                    keywords=keywords,
-                )
-            )
-        return records
-
     def _open_graph_context_menu(self, position: QPoint) -> None:
         menu = QMenu(self)
 
@@ -643,10 +614,6 @@ class NodeEditorWindow(QMainWindow):
         if node_type.startswith("tool-environment:"):
             environment_id = node_type.split(":", 1)[1]
             self._create_tool_environment_node(environment_id)
-            return
-        if node_type.startswith("rez-package:"):
-            package_name = node_type.split(":", 1)[1]
-            self._create_rez_package_node(package_name)
             return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
@@ -748,15 +715,6 @@ class NodeEditorWindow(QMainWindow):
             return
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
-        )
-
-    def _create_rez_package_node(self, package_name: str) -> None:
-        spec = self._all_rez_packages().get(package_name)
-        if spec is None:
-            self._show_warning_dialog("選択された Rez パッケージが見つかりません。")
-            return
-        self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
         )
 
     def _create_node(self, node_type: str, display_name: str):
