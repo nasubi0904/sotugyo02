@@ -129,7 +129,8 @@ def _run_application(
         from qtpy import QtCore
 
         def _quit_application() -> None:
-            exit_reason["value"] = "auto_exit"
+            if not headless:
+                exit_reason["value"] = "auto_exit"
             app.quit()
 
         QtCore.QTimer.singleShot(auto_exit_ms, _quit_application)
