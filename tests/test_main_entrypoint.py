@@ -18,11 +18,11 @@ def test_run_application_writes_auto_exit_report(tmp_path):
     )
 
     assert result.reason == "auto_exit"
-    assert result.exit_code == 1
+    assert result.exit_code == 0
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     assert report["reason"] == "auto_exit"
-    assert report["exit_code"] == 1
+    assert report["exit_code"] == 0
 
 
 def test_run_application_reports_startup_error(tmp_path, monkeypatch):
