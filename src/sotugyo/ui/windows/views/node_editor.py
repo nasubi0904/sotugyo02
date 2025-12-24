@@ -743,49 +743,21 @@ class NodeEditorWindow(QMainWindow):
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return
-        tool = self._registered_tools.get(definition.tool_id)
-        if tool is None:
+        if definition.tool_id not in self._registered_tools:
             self._show_warning_dialog("環境が参照するツールが登録されていません。")
             return
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
-        if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload(tool)
-            node.configure_environment(
-                environment_id=definition.environment_id,
-                environment_name=definition.name,
-                tool_id=tool.tool_id,
-                tool_name=tool.display_name,
-                version_label=definition.version_label,
-                environment_payload=payload,
-            )
 
     def _create_rez_package_node(self, package_name: str) -> None:
         spec = self._all_rez_packages().get(package_name)
         if spec is None:
             self._show_warning_dialog("選択された Rez パッケージが見つかりません。")
             return
-        node = self._create_node(
+        self._create_node(
             ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
         )
-        if isinstance(node, ToolEnvironmentNode):
-            version_label = spec.version or "local"
-            payload = {
-                "rez_packages": [spec.name],
-                "package_path": str(spec.path),
-                "summary": version_label,
-            }
-            source = self._rez_package_source_tag(package_name)
-            payload["rez_source"] = source
-            node.configure_environment(
-                environment_id=f"rez:{spec.name}",
-                environment_name=f"Rez: {spec.name}",
-                tool_id=spec.name,
-                tool_name=f"Rez Package ({source})",
-                version_label=version_label,
-                environment_payload=payload,
-            )
 
     def _create_node(self, node_type: str, display_name: str):
         node = self._graph.create_node(node_type, name=display_name)
@@ -1808,14 +1780,12 @@ class NodeEditorWindow(QMainWindow):
         for node in self._collect_all_nodes():
             if not isinstance(node, ToolEnvironmentNode):
                 continue
-            payload = node.get_environment_payload()
-            packages_raw = payload.get("rez_packages") if isinstance(payload, dict) else None
-            if not isinstance(packages_raw, (list, tuple)):
+            node_name = self._safe_node_name(node)
+            if not node_name.startswith("Rez:"):
                 continue
-            for package in packages_raw:
-                text = str(package).strip()
-                if text:
-                    packages.add(text)
+            candidate = node_name.split("Rez:", 1)[1].strip()
+            if candidate:
+                packages.add(candidate)
         return sorted(packages)
 
     def _check_rez_environments_in_project(self) -> None:
