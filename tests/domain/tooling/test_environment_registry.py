@@ -55,20 +55,14 @@ def make_tool(tool_id: str) -> RegisteredTool:
 
 def test_tool_environment_definition_serialization_roundtrip() -> None:
     definition = ToolEnvironmentDefinition(
-        name="レンダー環境",
         rez_packages=("maya", "arnold"),
         rez_variants=("platform-windows",),
-        rez_environment={"MAYA_APP_DIR": "C:/Project/maya"},
-        metadata={"rez_validation": {"success": True}},
     )
 
     restored = ToolEnvironmentDefinition.from_dict(definition.to_dict())
 
-    assert restored.name == definition.name
     assert restored.rez_packages == ("maya", "arnold")
     assert restored.rez_variants == ("platform-windows",)
-    assert restored.rez_environment == {"MAYA_APP_DIR": "C:/Project/maya"}
-    assert restored.metadata.get("rez_validation", {}).get("success") is True
 
 
 def test_tool_config_repository_uses_rez_package_dir(tmp_path, monkeypatch) -> None:
@@ -85,7 +79,7 @@ def test_tool_config_repository_uses_rez_package_dir(tmp_path, monkeypatch) -> N
     assert repository._storage_path.name == config_module.ToolConfigRepository.FILE_NAME
 
 
-def test_environment_registry_saves_rez_metadata() -> None:
+def test_environment_registry_stores_rez_packages() -> None:
     with TemporaryDirectory() as tmp_dir:
         repository = ToolConfigRepository(storage_dir=Path(tmp_dir))
         resolver = DummyResolver(success=False, message="package missing")
@@ -96,22 +90,13 @@ def test_environment_registry_saves_rez_metadata() -> None:
         environments: list[ToolEnvironmentDefinition] = []
 
         environment = service.save(
-            name="テスト環境",
             tools=tools,
             environments=environments,
             rez_packages=["maya"],
             rez_variants=["platform-windows"],
-            rez_environment={"MAYA_APP_DIR": "C:/maya"},
         )
 
-        assert resolver.calls
-        packages, variants, env_map = resolver.calls[0]
-        assert packages == ("maya",)
-        assert variants == ("platform-windows",)
-        assert env_map == {"MAYA_APP_DIR": "C:/maya"}
-
         assert environment.rez_packages == ("maya",)
-        assert environment.metadata["rez_validation"]["success"] is False
 
         stored_tools, stored_envs = repository.load_all()
         assert stored_tools[0].tool_id == tool.tool_id
@@ -126,27 +111,22 @@ def test_environment_registry_can_clear_variants_and_environment() -> None:
 
         tool = make_tool("tool-1")
         initial = service.save(
-            name="環境A",
             tools=[tool],
             environments=[],
             rez_packages=["maya"],
             rez_variants=["platform-windows"],
-            rez_environment={"MAYA_APP_DIR": "C:/maya"},
         )
 
         tools, environments = repository.load_all()
         updated = service.save(
-            name="環境A",
             tools=tools,
             environments=environments,
             rez_packages=list(initial.rez_packages),
             rez_variants=[],
-            rez_environment={},
         )
 
         assert updated.rez_packages == ("maya",)
         assert updated.rez_variants == ()
-        assert updated.rez_environment == {}
 
 
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:

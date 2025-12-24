@@ -101,11 +101,7 @@ class ToolEnvironmentNode(BaseNode):
         payload = self.get_environment_payload()
         summary_hint = payload.get("summary")
         packages = payload.get("rez_packages")
-        validation = None
-        metadata = payload.get("metadata")
-        if isinstance(metadata, dict):
-            validation = metadata.get("rez_validation")
-        validation_status = payload.get("rez_validation")
+        variants = payload.get("rez_variants")
         summary_lines = []
         if summary_hint:
             summary_lines.append(str(summary_hint))
@@ -114,19 +110,8 @@ class ToolEnvironmentNode(BaseNode):
             if len(packages) > 3:
                 preview += " …"
             summary_lines.append(f"Rez: {preview}")
-        validation_map = None
-        if isinstance(validation, dict):
-            validation_map = validation
-        elif isinstance(validation_status, dict):
-            validation_map = validation_status
-        if isinstance(validation_map, dict) and not validation_map.get("success", False):
-            message = (
-                validation_map.get("stderr")
-                or validation_map.get("stdout")
-                or validation_map.get("message")
-                or "Rez 環境の解決に失敗しました。"
-            )
-            summary_lines.append(f"⚠️ {message}")
+        if isinstance(variants, (list, tuple)) and variants:
+            summary_lines.append(f"Variants: {', '.join(str(var) for var in variants)}")
         tooltip = "\n".join(summary_lines) if summary_lines else "ツール環境"
         view = getattr(self, "view", None)
         if view is not None and hasattr(view, "setToolTip"):

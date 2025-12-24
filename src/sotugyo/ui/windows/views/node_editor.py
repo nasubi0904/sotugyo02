@@ -738,13 +738,17 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return
         node = self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), definition.name
+            ToolEnvironmentNode.node_type_identifier(), definition.display_label()
         )
         if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload()
+            payload = {
+                "rez_packages": list(definition.package_key()),
+                "rez_variants": list(definition.variant_key()),
+                "summary": definition.display_label(),
+            }
             node.configure_environment(
                 environment_key=definition.package_key_label(),
-                environment_name=definition.name,
+                environment_name=definition.display_label(),
                 environment_payload=payload,
             )
 

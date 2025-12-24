@@ -70,16 +70,21 @@ class NodeEditorCoordinator:
 
     def build_tool_catalog(self, snapshot: ToolEnvironmentSnapshot) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
-        for environment in sorted(snapshot.environments.values(), key=lambda item: item.name):
-            packages_text = ", ".join(environment.rez_packages)
+        for environment in sorted(
+            snapshot.environments.values(), key=lambda item: item.display_label()
+        ):
+            packages_text = " ".join(environment.rez_packages)
+            variants_text = ", ".join(environment.rez_variants)
             subtitle = packages_text or "Rez パッケージ未指定"
+            if variants_text:
+                subtitle = f"{subtitle} / {variants_text}"
             node_type = f"tool-environment:{environment.package_key_label()}"
-            keywords: Tuple[str, ...] = (environment.name, packages_text)
+            keywords: Tuple[str, ...] = (packages_text, variants_text)
             icon_path = None
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
-                    title=environment.name,
+                    title=environment.display_label(),
                     subtitle=subtitle,
                     genre="ツール環境",
                     keywords=keywords,

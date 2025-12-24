@@ -89,22 +89,16 @@ class ToolEnvironmentService:
     def save_environment(
         self,
         *,
-        name: str,
         rez_packages: Optional[Iterable[str]] = None,
         rez_variants: Optional[Iterable[str]] = None,
-        rez_environment: Optional[Dict[str, str]] = None,
-        metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
         tools = self.registry_service.list_tools()
         environments = self.environment_service.list_environments()
         return self.environment_service.save(
-            name=name,
             tools=tools,
             environments=environments,
             rez_packages=rez_packages,
             rez_variants=rez_variants,
-            rez_environment=rez_environment,
-            metadata=metadata,
         )
 
     def remove_environment(self, package_key_label: str) -> bool:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Optional
+from typing import Iterable, List, Optional
 
 from ..models import RegisteredTool, ToolEnvironmentDefinition
 from ..repositories.config import ToolConfigRepository
@@ -24,47 +24,27 @@ class ToolEnvironmentRegistryService:
     def save(
         self,
         *,
-        name: str,
         tools: List[RegisteredTool],
         environments: List[ToolEnvironmentDefinition],
         rez_packages: Optional[Iterable[str]] = None,
         rez_variants: Optional[Iterable[str]] = None,
-        rez_environment: Optional[Dict[str, str]] = None,
-        metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
         normalized_packages = self._normalize_sequence(rez_packages) or ()
-        normalized_variants = self._normalize_sequence(rez_variants)
-        normalized_env = self._normalize_environment(rez_environment)
+        normalized_variants = self._normalize_sequence(rez_variants) or ()
 
         target = self._find_matching_environment(
-            environments, normalized_packages
+            environments, normalized_packages, normalized_variants
         )
         if target is None:
             environment = ToolEnvironmentDefinition(
-                name=name.strip() or "環境",
                 rez_packages=normalized_packages,
-                rez_variants=normalized_variants or (),
-                rez_environment=normalized_env or {},
-                metadata=dict(metadata) if metadata else {},
+                rez_variants=normalized_variants,
             )
             environments.append(environment)
         else:
-            target.name = name.strip() or target.name
             target.rez_packages = normalized_packages
-            if normalized_variants is not None:
-                target.rez_variants = normalized_variants
-            if normalized_env is not None:
-                target.rez_environment = normalized_env
-            if metadata is not None:
-                target.metadata = dict(metadata)
+            target.rez_variants = normalized_variants
             environment = target
-
-        validation_result = self.validate_rez_environment(
-            packages=environment.rez_packages,
-            variants=environment.rez_variants,
-            environment=environment.rez_environment,
-        )
-        environment.metadata["rez_validation"] = validation_result.to_dict()
         self.repository.save_all(tools, environments)
         return environment
 
@@ -111,21 +91,14 @@ class ToolEnvironmentRegistryService:
     def _find_matching_environment(
         environments: Iterable[ToolEnvironmentDefinition],
         rez_packages: Iterable[str],
+        rez_variants: Iterable[str],
     ) -> ToolEnvironmentDefinition | None:
-        if rez_packages is None:
-            return None
         normalized_key = set(rez_packages)
+        normalized_variants = set(rez_variants)
         for environment in environments:
-            if set(environment.rez_packages) == normalized_key:
+            if (
+                set(environment.rez_packages) == normalized_key
+                and set(environment.rez_variants) == normalized_variants
+            ):
                 return environment
         return None
-
-    @staticmethod
-    def _normalize_environment(values: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
-        if values is None:
-            return None
-        normalized: Dict[str, str] = {}
-        for key, value in values.items():
-            if isinstance(key, str) and isinstance(value, str):
-                normalized[key.strip()] = value.strip()
-        return normalized

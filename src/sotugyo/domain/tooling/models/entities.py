@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Iterable, Optional, Tuple
 
@@ -26,13 +26,13 @@ def _format_timestamp(value: datetime | None) -> str:
     return value.strftime(ISO_FORMAT)
 
 
-def _normalize_packages_key(values: Iterable[str]) -> Tuple[str, ...]:
-    entries = {
+def _normalize_key(values: Iterable[str]) -> Tuple[str, ...]:
+    entries = [
         entry.strip()
         for entry in values
         if isinstance(entry, str) and entry.strip()
-    }
-    return tuple(sorted(entries))
+    ]
+    return tuple(sorted(set(entries)))
 
 
 @dataclass(slots=True)
@@ -75,19 +75,13 @@ class RegisteredTool:
 class ToolEnvironmentDefinition:
     """ツールを利用した環境ノードの定義。"""
 
-    name: str
     rez_packages: Tuple[str, ...] = field(default_factory=tuple)
     rez_variants: Tuple[str, ...] = field(default_factory=tuple)
-    rez_environment: Dict[str, str] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "name": self.name,
             "rez_packages": list(self.rez_packages),
             "rez_variants": list(self.rez_variants),
-            "rez_environment": dict(self.rez_environment),
-            "metadata": dict(self.metadata),
         }
 
     @classmethod
@@ -102,63 +96,30 @@ class ToolEnvironmentDefinition:
             for entry in data.get("rez_variants", [])
             if isinstance(entry, str) and entry.strip()
         )
-        env_map = {}
-        raw_env = data.get("rez_environment")
-        if isinstance(raw_env, dict):
-            env_map = {
-                str(key): str(value)
-                for key, value in raw_env.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-        metadata = {}
-        raw_metadata = data.get("metadata")
-        if isinstance(raw_metadata, dict):
-            metadata = dict(raw_metadata)
-        legacy_fields = {
-            "environment_id": data.get("environment_id"),
-            "tool_id": data.get("tool_id"),
-            "version_label": data.get("version_label"),
-            "template_id": data.get("template_id"),
-        }
-        if any(value is not None for value in legacy_fields.values()):
-            legacy_payload = {
-                key: value for key, value in legacy_fields.items() if value is not None
-            }
-            existing_legacy = metadata.get("legacy_environment")
-            if isinstance(existing_legacy, dict):
-                existing_legacy.update(legacy_payload)
-            else:
-                metadata["legacy_environment"] = legacy_payload
         return cls(
-            name=str(data.get("name") or data.get("tool_id") or "環境"),
             rez_packages=packages,
             rez_variants=variants,
-            rez_environment=env_map,
-            metadata=metadata,
         )
 
-    def build_payload(self) -> Dict[str, Any]:
-        """ノードへ伝播する環境情報を構築する。"""
-
-        payload: Dict[str, Any] = {
-            "environment_name": self.name,
-        }
-        if self.rez_packages:
-            payload["rez_packages"] = list(self.rez_packages)
-        if self.rez_variants:
-            payload["rez_variants"] = list(self.rez_variants)
-        if self.rez_environment:
-            payload["rez_environment"] = dict(self.rez_environment)
-        if self.metadata:
-            payload["metadata"] = dict(self.metadata)
-        payload.setdefault("summary", self.name)
-        return payload
-
     def package_key(self) -> Tuple[str, ...]:
-        return _normalize_packages_key(self.rez_packages)
+        return _normalize_key(self.rez_packages)
+
+    def variant_key(self) -> Tuple[str, ...]:
+        return _normalize_key(self.rez_variants)
 
     def package_key_label(self) -> str:
-        return json.dumps(self.package_key(), ensure_ascii=False)
+        payload = {
+            "packages": list(self.package_key()),
+            "variants": list(self.variant_key()),
+        }
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True)
+
+    def display_label(self) -> str:
+        packages = " ".join(self.package_key())
+        variants = ", ".join(self.variant_key())
+        if variants:
+            return f"{packages} [{variants}]"
+        return packages or "Rez 環境"
 
 
 @dataclass(slots=True)

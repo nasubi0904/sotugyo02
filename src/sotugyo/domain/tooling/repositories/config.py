@@ -9,7 +9,7 @@ from typing import Iterable, List, Tuple
 from ....infrastructure.paths.storage import get_rez_package_dir
 from ..models import RegisteredTool, ToolEnvironmentDefinition
 
-DEFAULT_DATA = {"version": 3, "tools": [], "environments": []}
+DEFAULT_DATA = {"version": 4, "tools": [], "environments": []}
 
 
 class ToolConfigRepository:
