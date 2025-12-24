@@ -94,6 +94,10 @@ class RezPackageRepository:
     def _normalize_package_name(template_id: str) -> str:
         return template_id.replace(".", "_").strip()
 
+    @classmethod
+    def normalize_template_id(cls, template_id: str) -> str:
+        return cls._normalize_package_name(template_id)
+
     @staticmethod
     def _render_package(
         candidate: TemplateInstallationCandidate,
@@ -164,6 +168,17 @@ class RezPackageRepository:
 
     def _scan_packages(self) -> None:
         self._last_scan = list(self._collect_packages(self.root_dir))
+
+    def remove_package(self, package_name: str) -> None:
+        if not package_name:
+            return
+        target_dir = self.root_dir / package_name
+        if not target_dir.exists():
+            return
+        try:
+            shutil.rmtree(target_dir)
+        except OSError:
+            LOGGER.warning("Rez パッケージの削除に失敗しました: %s", target_dir, exc_info=True)
 
 
 @dataclass(slots=True, frozen=True)

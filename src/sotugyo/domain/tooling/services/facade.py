@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+import re
 from typing import Dict, Iterable, List, Optional
 
 from ..models import (
@@ -54,6 +56,7 @@ class ToolEnvironmentService:
     # ツール登録
     # ------------------------------------------------------------------
     def list_tools(self) -> List[RegisteredTool]:
+        self._sync_from_environment_dir()
         return self.registry_service.list_tools()
 
     def get_tool(self, tool_id: str) -> Optional[RegisteredTool]:
@@ -70,20 +73,38 @@ class ToolEnvironmentService:
         normalized_path = self._normalize_executable_path(executable_path)
         if not normalized_path.exists():
             raise ValueError(f"実行ファイルが見つかりません: {normalized_path}")
-        return self.registry_service.register(
+        resolved_template_id = self._ensure_template_id(template_id, display_name)
+        tool = self.registry_service.register(
             display_name=display_name,
             executable_path=normalized_path,
-            template_id=template_id,
+            template_id=resolved_template_id,
             version=version,
         )
+        candidate = TemplateInstallationCandidate(
+            template_id=resolved_template_id,
+            display_name=tool.display_name,
+            executable_path=tool.executable_path,
+            version=tool.version,
+        )
+        self.rez_repository.register_candidate(candidate)
+        self._sync_from_environment_dir()
+        return tool
 
     def remove_tool(self, tool_id: str) -> bool:
-        return self.registry_service.remove(tool_id)
+        tool = self.registry_service.get_tool(tool_id)
+        removed = self.registry_service.remove(tool_id)
+        if removed and tool is not None:
+            template_id = tool.template_id or tool.tool_id
+            package_name = self.rez_repository.normalize_template_id(template_id)
+            self.rez_repository.remove_package(package_name)
+            self._sync_from_environment_dir()
+        return removed
 
     # ------------------------------------------------------------------
     # 環境定義
     # ------------------------------------------------------------------
     def list_environments(self) -> List[ToolEnvironmentDefinition]:
+        self._sync_from_environment_dir()
         return self.environment_service.list_environments()
 
     def save_environment(
@@ -99,6 +120,7 @@ class ToolEnvironmentService:
         rez_environment: Optional[Dict[str, str]] = None,
         metadata: Optional[Dict[str, object]] = None,
     ) -> ToolEnvironmentDefinition:
+        self._sync_from_environment_dir()
         tools = self.registry_service.list_tools()
         environments = self.environment_service.list_environments()
         return self.environment_service.save(
@@ -116,6 +138,7 @@ class ToolEnvironmentService:
         )
 
     def remove_environment(self, environment_id: str) -> bool:
+        self._sync_from_environment_dir()
         return self.environment_service.remove(environment_id)
 
     # ------------------------------------------------------------------
@@ -176,3 +199,85 @@ class ToolEnvironmentService:
         if not resolved.is_absolute():
             resolved = resolved.resolve()
         return resolved
+
+    def _sync_from_environment_dir(self) -> None:
+        specs = self.rez_repository.list_packages()
+        package_map = {spec.name: spec for spec in specs}
+
+        tools, environments = self.registry_service.repository.load_all()
+        tool_map = {tool.tool_id: tool for tool in tools}
+        tool_by_package: Dict[str, RegisteredTool] = {}
+        for tool in tools:
+            if tool.template_id:
+                tool_by_package[
+                    self.rez_repository.normalize_template_id(tool.template_id)
+                ] = tool
+        env_map = {env.tool_id: env for env in environments}
+        env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
+        for env in environments:
+            for package in env.rez_packages:
+                env_by_package[package] = env
+
+        now = datetime.utcnow()
+        synced_tools: List[RegisteredTool] = []
+        synced_envs: List[ToolEnvironmentDefinition] = []
+
+        for name, spec in sorted(package_map.items()):
+            tool = tool_map.get(name) or tool_by_package.get(name)
+            if tool is None:
+                tool = RegisteredTool(
+                    tool_id=name,
+                    display_name=name,
+                    executable_path=spec.path / "package.py",
+                    template_id=None,
+                    version=spec.version,
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                tool.tool_id = name
+                if not tool.display_name:
+                    tool.display_name = name
+                if not tool.executable_path.exists():
+                    tool.executable_path = spec.path / "package.py"
+                tool.version = spec.version
+                tool.updated_at = now
+            synced_tools.append(tool)
+
+            environment = env_map.get(name) or env_by_package.get(name)
+            if environment is None:
+                environment = ToolEnvironmentDefinition(
+                    environment_id=f"rez:{name}",
+                    name=f"Rez: {name}",
+                    tool_id=name,
+                    version_label=spec.version or "local",
+                    rez_packages=(name,),
+                    rez_variants=(),
+                    rez_environment={},
+                    metadata={},
+                    created_at=now,
+                    updated_at=now,
+                )
+            else:
+                environment.tool_id = name
+                if not environment.name:
+                    environment.name = f"Rez: {name}"
+                environment.version_label = spec.version or environment.version_label or "local"
+                environment.rez_packages = (name,)
+                environment.updated_at = now
+            synced_envs.append(environment)
+
+        self.registry_service.repository.save_all(synced_tools, synced_envs)
+
+    def _ensure_template_id(self, template_id: str | None, display_name: str) -> str:
+        if template_id:
+            return template_id
+        slug = self._normalize_custom_template_id(display_name)
+        return f"custom.{slug}" if slug else "custom.tool"
+
+    @staticmethod
+    def _normalize_custom_template_id(display_name: str) -> str:
+        cleaned = display_name.strip().lower()
+        cleaned = re.sub(r"\s+", "_", cleaned)
+        cleaned = re.sub(r"[^a-z0-9_]", "", cleaned)
+        return cleaned
