@@ -63,9 +63,7 @@ class RezEnvironmentResolver:
         environment: Mapping[str, str] | None = None,
         timeout: int | None = 60,
     ) -> RezResolveResult:
-        normalized = tuple(
-            entry.strip() for entry in packages if isinstance(entry, str) and entry.strip()
-        )
+        normalized = self._normalize_packages(packages)
         if not normalized:
             return RezResolveResult(
                 success=True,
@@ -74,21 +72,16 @@ class RezEnvironmentResolver:
             )
 
         env = self._build_environment(environment)
-        path_env = env.get("PATH") or env.get("Path") or ""
 
-        executable = self._executable
-        if shutil.which(executable, path=path_env) is None:
+        if not self._is_executable_available(env):
             return RezResolveResult(
                 success=False,
-                command=(executable,),
+                command=(self._executable,),
                 return_code=127,
                 stderr="rez コマンドが見つかりません。パス設定を確認してください。",
             )
 
-        command: list[str] = [executable, "env", *normalized]
-        variant_args = self._build_variant_arguments(variants or ())
-        command.extend(variant_args)
-        command.extend(["--", "python", "-c", "pass"])
+        command = self._build_command(normalized, variants or ())
 
         try:
             completed = subprocess.run(  # noqa: S603,S607 - 実行コマンドを明示
@@ -130,16 +123,19 @@ class RezEnvironmentResolver:
         joined = ",".join(normalized)
         return ("--variants", joined)
 
+    def _build_command(self, packages: Sequence[str], variants: Iterable[str]) -> list[str]:
+        command: list[str] = [self._executable, "env", *packages]
+        command.extend(self._build_variant_arguments(variants))
+        command.extend(["--", "python", "-c", "pass"])
+        return command
+
     def _build_environment(
         self, user_environment: Mapping[str, str] | None = None
     ) -> dict[str, str]:
         """Rez 実行用の環境変数セットを構築する。"""
 
         base_env = os.environ.copy()
-        if user_environment:
-            for key, value in user_environment.items():
-                if isinstance(key, str) and isinstance(value, str):
-                    base_env[key] = value
+        base_env.update(self._normalize_environment(user_environment))
 
         path_value = self._build_path_value(base_env)
         base_env["PATH"] = path_value
@@ -165,6 +161,28 @@ class RezEnvironmentResolver:
                 "Path": updated_env["Path"],
             }
         )
+
+    @staticmethod
+    def _normalize_packages(packages: Sequence[str]) -> Tuple[str, ...]:
+        return tuple(
+            entry.strip() for entry in packages if isinstance(entry, str) and entry.strip()
+        )
+
+    @staticmethod
+    def _normalize_environment(
+        user_environment: Mapping[str, str] | None,
+    ) -> dict[str, str]:
+        if not user_environment:
+            return {}
+        normalized: dict[str, str] = {}
+        for key, value in user_environment.items():
+            if isinstance(key, str) and isinstance(value, str):
+                normalized[key] = value
+        return normalized
+
+    def _is_executable_available(self, env: Mapping[str, str]) -> bool:
+        path_env = env.get("PATH") or env.get("Path") or ""
+        return shutil.which(self._executable, path=path_env) is not None
 
 
 __all__ = ["RezEnvironmentResolver", "RezResolveResult"]

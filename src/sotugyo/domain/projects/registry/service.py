@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
 
+from ..pathing import PathInput, ensure_path
 from .models import ProjectRecord
 from .store import ProjectRegistry
 
@@ -39,12 +40,12 @@ class ProjectRegistryService:
         for record in records:
             self.registry.register_project(record)
 
-    def remove(self, root: Path) -> None:
+    def remove(self, root: PathInput) -> None:
         """指定ルートのプロジェクト登録を解除する。"""
 
-        self.registry.remove_project(root)
+        self.registry.remove_project(ensure_path(root))
 
-    def set_last(self, root: Path) -> None:
+    def set_last(self, root: PathInput) -> None:
         """最後に選択したプロジェクトルートを更新する。"""
 
-        self.registry.set_last_project(root)
+        self.registry.set_last_project(ensure_path(root))

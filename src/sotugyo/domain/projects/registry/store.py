@@ -36,47 +36,72 @@ class ProjectRegistry:
         self._persist()
 
     def register_project(self, record: ProjectRecord) -> None:
-        for existing in self._records:
-            if existing.root == record.root:
-                existing.name = record.name
-                break
-        else:
+        index = self._find_record_index(record.root)
+        if index is None:
             self._records.append(record)
+        else:
+            self._records[index] = record
         self._persist()
 
     def remove_project(self, root: Path) -> None:
         self._records = [record for record in self._records if record.root != root]
-        if self._last_project == root:
-            self._last_project = None
+        self._clear_last_project_if_matches(root)
         self._persist()
 
     # 内部処理 ----------------------------------------------------------
     def _load(self) -> None:
-        if not self._registry_path.exists():
+        payload = self._load_payload()
+        if not payload:
             return
+        self._records = self._parse_records(payload.get("records"))
+        self._last_project = self._parse_last_project(payload.get("last_project"))
+
+    def _persist(self) -> None:
+        self._config_dir.mkdir(parents=True, exist_ok=True)
+        payload = self._build_payload()
+        with self._registry_path.open("w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+    def _find_record_index(self, root: Path) -> Optional[int]:
+        for index, record in enumerate(self._records):
+            if record.root == root:
+                return index
+        return None
+
+    def _clear_last_project_if_matches(self, root: Path) -> None:
+        if self._last_project == root:
+            self._last_project = None
+
+    def _load_payload(self) -> Optional[dict]:
+        if not self._registry_path.exists():
+            return None
         try:
             with self._registry_path.open("r", encoding="utf-8") as handle:
                 payload = json.load(handle)
         except (OSError, json.JSONDecodeError):
-            return
+            return None
         if not isinstance(payload, dict):
-            return
-        records_payload = payload.get("records")
-        if isinstance(records_payload, list):
-            self._records = [
-                ProjectRecord.from_payload(item)
-                for item in records_payload
-                if isinstance(item, dict)
-            ]
-        last_project = payload.get("last_project")
-        if isinstance(last_project, str) and last_project:
-            self._last_project = Path(last_project)
+            return None
+        return payload
 
-    def _persist(self) -> None:
-        self._config_dir.mkdir(parents=True, exist_ok=True)
-        payload = {
+    @staticmethod
+    def _parse_records(records_payload: object) -> List[ProjectRecord]:
+        if not isinstance(records_payload, list):
+            return []
+        records: List[ProjectRecord] = []
+        for item in records_payload:
+            if isinstance(item, dict):
+                records.append(ProjectRecord.from_payload(item))
+        return records
+
+    @staticmethod
+    def _parse_last_project(last_project: object) -> Optional[Path]:
+        if isinstance(last_project, str) and last_project:
+            return Path(last_project)
+        return None
+
+    def _build_payload(self) -> dict:
+        return {
             "records": [record.to_payload() for record in self._records],
             "last_project": str(self._last_project) if self._last_project else None,
         }
-        with self._registry_path.open("w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)

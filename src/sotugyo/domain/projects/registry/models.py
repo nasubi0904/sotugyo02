@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Mapping
 
 __all__ = ["ProjectRecord"]
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class ProjectRecord:
     """プロジェクトの表示名とルートディレクトリを保持する。"""
 
@@ -22,7 +22,7 @@ class ProjectRecord:
         return {"name": self.name, "root": str(self.root)}
 
     @classmethod
-    def from_payload(cls, payload: Dict[str, str]) -> "ProjectRecord":
+    def from_payload(cls, payload: Mapping[str, str]) -> "ProjectRecord":
         """辞書データから値オブジェクトを復元する。"""
 
         return cls(name=payload.get("name", ""), root=Path(payload.get("root", "")))
