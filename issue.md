@@ -210,7 +210,7 @@
 - **原因**: プロジェクト展開時に Rez マニフェストを読み取り、Rez Python API の query を用いた検証処理が実装されていなかった。
 - **対応**: `config/rez_packages/<project>/1.0/package.py` の `requires` を読み取り、Rez query を通じて不足パッケージを検出し、見つかった場合に警告を表示するよう追加した。
 
-### Rez query インポート失敗による起動エラー
-- **現象**: プロジェクト展開時に `rez.query` の import が失敗し、起動処理が例外で停止した。
-- **原因**: 利用している Rez バージョンで `rez.query` が公開されておらず、代替 API へのフォールバックが未実装だった。
-- **対応**: `rez.query` が利用できない場合は `rez.packages` の照会 API へフォールバックし、いずれも取得できない場合は警告メッセージとして扱うよう修正した。
+### Rez Python API の照会先再整理
+- **現象**: `rez.query` が存在しない環境で import 失敗が発生し、起動処理が例外で停止していた。
+- **原因**: Rez パッケージの照会で `rez.query` を参照しており、pip 版 Rez の公開 API と一致していなかった。
+- **対応**: `rez.packages.get_package_from_string` のみに統一し、Rez Python API の存在確認と不足判定を行うよう修正した。
