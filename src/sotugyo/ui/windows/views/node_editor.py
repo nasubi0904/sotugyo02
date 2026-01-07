@@ -1668,20 +1668,6 @@ class NodeEditorWindow(QMainWindow):
     def _sync_rez_packages_to_project(self) -> None:
         if self._current_project_root is None:
             return
-        packages = self._collect_rez_packages_in_graph()
-        try:
-            result = self._coordinator.sync_rez_packages_to_project(
-                self._current_project_root, packages
-            )
-        except OSError as exc:
-            self._show_warning_dialog(f"Rez パッケージの同期に失敗しました: {exc}")
-            return
-        if result.has_missing:
-            lines = ["次の Rez パッケージを同期できませんでした。KDMrez を確認してください。"]
-            lines.extend(f"・{name}" for name in result.missing)
-            self._show_warning_dialog("\n".join(lines))
-        self._load_project_rez_packages()
-        self._refresh_content_browser_entries()
         self._save_project_rez_package_manifest()
 
     def _save_project_rez_package_manifest(self) -> None:
