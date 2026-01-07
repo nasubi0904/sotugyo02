@@ -84,9 +84,11 @@ class NodeEditorCoordinator:
             if environment.version_label:
                 subtitle_parts.append(environment.version_label)
             subtitle = " / ".join(part for part in subtitle_parts if part)
-            node_type = f"tool-environment:{environment.environment_id}"
+            node_identifier = environment.build_node_identifier()
+            node_type = f"tool-environment:{node_identifier}"
             keywords: Tuple[str, ...] = (
                 environment.environment_id,
+                environment.version_label,
                 tool.display_name if tool is not None else "",
             )
             icon_path = None

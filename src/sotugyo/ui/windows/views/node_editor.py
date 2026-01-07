@@ -151,6 +151,7 @@ class NodeEditorWindow(QMainWindow):
         self._tool_snapshot: Optional[ToolEnvironmentSnapshot] = None
         self._registered_tools: Dict[str, RegisteredTool] = {}
         self._tool_environments: Dict[str, ToolEnvironmentDefinition] = {}
+        self._tool_environments_by_node_key: Dict[str, ToolEnvironmentDefinition] = {}
         self._local_rez_packages: Dict[str, RezPackageSpec] = {}
         self._project_rez_packages: Dict[str, RezPackageSpec] = {}
 
@@ -416,6 +417,10 @@ class NodeEditorWindow(QMainWindow):
         self._tool_snapshot = snapshot
         self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
+        self._tool_environments_by_node_key = {
+            environment.build_node_identifier(): environment
+            for environment in snapshot.environments.values()
+        }
         self._load_local_rez_packages()
         self._refresh_content_browser_entries()
 
@@ -612,8 +617,8 @@ class NodeEditorWindow(QMainWindow):
 
     def _spawn_node_by_type(self, node_type: str) -> None:
         if node_type.startswith("tool-environment:"):
-            environment_id = node_type.split(":", 1)[1]
-            self._create_tool_environment_node(environment_id)
+            environment_key = node_type.split(":", 1)[1]
+            self._create_tool_environment_node(environment_key)
             return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
@@ -705,8 +710,11 @@ class NodeEditorWindow(QMainWindow):
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
-    def _create_tool_environment_node(self, environment_id: str) -> None:
-        definition = self._tool_environments.get(environment_id)
+    def _create_tool_environment_node(self, environment_key: str) -> None:
+        definition = self._tool_environments_by_node_key.get(environment_key)
+        if definition is None and "@" in environment_key:
+            fallback_id = environment_key.split("@", 1)[0]
+            definition = self._tool_environments.get(fallback_id)
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return

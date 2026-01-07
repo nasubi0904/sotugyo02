@@ -77,6 +77,12 @@ class ToolEnvironmentDefinition:
     created_at: datetime = field(default_factory=datetime.utcnow)
     updated_at: datetime = field(default_factory=datetime.utcnow)
 
+    def build_node_identifier(self) -> str:
+        version = self.version_label.strip()
+        if version:
+            return f"{self.environment_id}@{version}"
+        return self.environment_id
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "environment_id": self.environment_id,
