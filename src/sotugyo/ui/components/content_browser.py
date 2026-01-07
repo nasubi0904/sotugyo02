@@ -49,9 +49,18 @@ class NodeCatalogEntry:
     genre: str
     keywords: Tuple[str, ...] = ()
     icon_path: Optional[str] = None
+    tool_name: Optional[str] = None
+    version_label: Optional[str] = None
 
     def searchable_text(self) -> str:
-        parts = [self.title, self.subtitle, self.node_type, *self.keywords]
+        parts = [
+            self.title,
+            self.subtitle,
+            self.node_type,
+            self.tool_name or "",
+            self.version_label or "",
+            *self.keywords,
+        ]
         return "\n".join(part.lower() for part in parts if part)
 
 
@@ -122,6 +131,7 @@ class NodeContentBrowser(QWidget):
         self._available_tree: QTreeView = QTreeView(self)
         self._available_model: QStandardItemModel = QStandardItemModel(self)
         self._genre_items: Dict[str, QStandardItem] = {}
+        self._tool_group_items: Dict[Tuple[str, str], QStandardItem] = {}
         self._entry_items: List[Tuple[NodeCatalogEntry, QStandardItem]] = []
         self._tree_selection_model: Optional[QtCore.QItemSelectionModel] = None
         self._tree_selection_connected: bool = False
@@ -215,6 +225,7 @@ class NodeContentBrowser(QWidget):
         self._available_tree.setModel(self._available_model)
         self._connect_tree_selection_model()
         self._genre_items = {}
+        self._tool_group_items = {}
         self._entry_items = []
         self._icon_cache.clear()
 
@@ -239,7 +250,11 @@ class NodeContentBrowser(QWidget):
             item.setData(entry.genre, Qt.UserRole + 2)
             item.setData(entry, Qt.UserRole + 3)
             item.setIcon(self._icon_for_entry(entry))
-            genre_item.appendRow(item)
+            group_item = self._resolve_tool_group_item(entry, genre_item)
+            if group_item is not None:
+                group_item.appendRow(item)
+            else:
+                genre_item.appendRow(item)
             self._entry_items.append((entry, item))
 
         self._populate_genre_options()
@@ -497,28 +512,47 @@ class NodeContentBrowser(QWidget):
         self._view_model.set_keyword(keyword)
         visible_counts: Dict[str, int] = {}
         total_counts: Dict[str, int] = {}
+        group_visible_counts: Dict[QStandardItem, int] = {}
+        group_total_counts: Dict[QStandardItem, int] = {}
         visible_count = 0
+
+        for entry, item in self._entry_items:
+            parent_item = item.parent()
+            parent_index = parent_item.index() if parent_item is not None else QtCore.QModelIndex()
+            matches = self._view_model.matches(entry)
+            self._available_tree.setRowHidden(item.row(), parent_index, not matches)
+            total_counts[entry.genre] = total_counts.get(entry.genre, 0) + 1
+            if matches:
+                visible_counts[entry.genre] = visible_counts.get(entry.genre, 0) + 1
+                visible_count += 1
+            group_key = self._tool_group_key(entry)
+            if group_key is not None:
+                group_item = self._tool_group_items.get(group_key)
+                if group_item is not None:
+                    group_total_counts[group_item] = group_total_counts.get(group_item, 0) + 1
+                    if matches:
+                        group_visible_counts[group_item] = (
+                            group_visible_counts.get(group_item, 0) + 1
+                        )
+
+        for group_item in self._tool_group_items.values():
+            visible = group_visible_counts.get(group_item, 0)
+            parent_item = group_item.parent()
+            parent_index = parent_item.index() if parent_item is not None else QtCore.QModelIndex()
+            self._available_tree.setRowHidden(group_item.row(), parent_index, visible == 0)
+            self._available_tree.setExpanded(group_item.index(), visible > 0)
+
         root_index = QtCore.QModelIndex()
         for genre, genre_item in self._genre_items.items():
-            parent_index = genre_item.index()
-            genre_visible = 0
-            total = genre_item.rowCount()
-            total_counts[genre] = total
-            for row in range(genre_item.rowCount()):
-                child_item = genre_item.child(row)
-                entry = self._entry_from_item(child_item)
-                matches = entry is not None and self._view_model.matches(entry)
-                self._available_tree.setRowHidden(row, parent_index, not matches)
-                if matches:
-                    visible_count += 1
-                    genre_visible += 1
-            visible_counts[genre] = genre_visible
+            genre_visible = visible_counts.get(genre, 0)
             parent_row = genre_item.row()
             parent_visible = genre_visible > 0
             self._available_tree.setRowHidden(parent_row, root_index, not parent_visible)
-            self._available_tree.setExpanded(parent_index, parent_visible)
+            self._available_tree.setExpanded(genre_item.index(), parent_visible)
+
         self._visible_entry_count = visible_count
         self._update_parent_labels(visible_counts, total_counts)
+        self._update_tool_group_labels(group_visible_counts, group_total_counts)
         self._update_summary_label(visible_count)
 
     def _on_search_submitted(self) -> None:
@@ -681,7 +715,14 @@ class NodeContentBrowser(QWidget):
             for row in range(genre_item.rowCount()):
                 child = genre_item.child(row)
                 if child is not None:
-                    child.setSizeHint(item_size)
+                    if child.hasChildren():
+                        child.setSizeHint(parent_size)
+                        for nested_row in range(child.rowCount()):
+                            nested_child = child.child(nested_row)
+                            if nested_child is not None:
+                                nested_child.setSizeHint(item_size)
+                    else:
+                        child.setSizeHint(item_size)
         self._available_tree.updateGeometry()
         self._available_tree.doItemsLayout()
         viewport = self._available_tree.viewport()
@@ -861,6 +902,10 @@ class NodeContentBrowser(QWidget):
             lines.append(entry.title)
         if entry.subtitle:
             lines.append(entry.subtitle)
+        if entry.tool_name:
+            lines.append(f"ツール: {entry.tool_name}")
+        if entry.version_label:
+            lines.append(f"バージョン: {entry.version_label}")
         lines.append(f"タイプ: {entry.node_type}")
         if entry.genre:
             lines.append(f"ジャンル: {entry.genre}")
@@ -896,15 +941,54 @@ class NodeContentBrowser(QWidget):
         total_counts: Optional[Dict[str, int]] = None,
     ) -> None:
         if visible_counts is None or total_counts is None:
-            visible_counts = {
-                genre: genre_item.rowCount()
-                for genre, genre_item in self._genre_items.items()
-            }
-            total_counts = visible_counts
+            visible_counts = {}
+            total_counts = {}
+            for entry, _ in self._entry_items:
+                total_counts[entry.genre] = total_counts.get(entry.genre, 0) + 1
+                visible_counts[entry.genre] = visible_counts.get(entry.genre, 0) + 1
         for genre, genre_item in self._genre_items.items():
             visible = visible_counts.get(genre, 0)
             total = total_counts.get(genre, 0)
             genre_item.setText(f"{genre} ({visible} / {total})")
+
+    def _update_tool_group_labels(
+        self,
+        visible_counts: Dict[QStandardItem, int],
+        total_counts: Dict[QStandardItem, int],
+    ) -> None:
+        for group_item in self._tool_group_items.values():
+            tool_name = group_item.data(Qt.UserRole + 4)
+            label = str(tool_name) if tool_name is not None else group_item.text()
+            visible = visible_counts.get(group_item, 0)
+            total = total_counts.get(group_item, 0)
+            group_item.setText(f"{label} ({visible} / {total})")
+
+    def _resolve_tool_group_item(
+        self,
+        entry: NodeCatalogEntry,
+        genre_item: QStandardItem,
+    ) -> Optional[QStandardItem]:
+        group_key = self._tool_group_key(entry)
+        if group_key is None:
+            return None
+        group_item = self._tool_group_items.get(group_key)
+        if group_item is None:
+            group_item = QStandardItem(group_key[1])
+            group_item.setEditable(False)
+            group_item.setSelectable(True)
+            group_item.setData(group_key[1], Qt.UserRole + 4)
+            font = QFont()
+            font.setBold(True)
+            group_item.setFont(font)
+            genre_item.appendRow(group_item)
+            self._tool_group_items[group_key] = group_item
+        return group_item
+
+    def _tool_group_key(self, entry: NodeCatalogEntry) -> Optional[Tuple[str, str]]:
+        tool_name = (entry.tool_name or "").strip()
+        if not tool_name:
+            return None
+        return (entry.genre, tool_name)
 
     def _entry_from_item(self, item: Optional[QStandardItem]) -> Optional[NodeCatalogEntry]:
         if item is None:

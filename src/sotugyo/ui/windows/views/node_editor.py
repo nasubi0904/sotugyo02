@@ -433,6 +433,8 @@ class NodeEditorWindow(QMainWindow):
                 genre=record.genre,
                 keywords=record.keywords,
                 icon_path=record.icon_path,
+                tool_name=record.tool_name,
+                version_label=record.version_label,
             )
             for record in records
         ]

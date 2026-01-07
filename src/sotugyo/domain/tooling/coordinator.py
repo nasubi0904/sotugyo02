@@ -33,6 +33,8 @@ class NodeCatalogRecord:
     genre: str
     keywords: Tuple[str, ...] = ()
     icon_path: str | None = None
+    tool_name: str | None = None
+    version_label: str | None = None
 
 
 class NodeEditorCoordinator:
@@ -76,18 +78,26 @@ class NodeEditorCoordinator:
 
     def build_tool_catalog(self, snapshot: ToolEnvironmentSnapshot) -> List[NodeCatalogRecord]:
         records: List[NodeCatalogRecord] = []
-        for environment in sorted(snapshot.environments.values(), key=lambda item: item.name):
+        environments = sorted(
+            snapshot.environments.values(),
+            key=lambda item: (
+                snapshot.tools.get(item.tool_id).display_name
+                if item.tool_id in snapshot.tools
+                else item.name,
+                item.version_label,
+                item.environment_id,
+            ),
+        )
+        for environment in environments:
             tool = snapshot.tools.get(environment.tool_id)
-            subtitle_parts = []
-            if tool is not None:
-                subtitle_parts.append(tool.display_name)
-            if environment.version_label:
-                subtitle_parts.append(environment.version_label)
-            subtitle = " / ".join(part for part in subtitle_parts if part)
+            tool_name = tool.display_name if tool is not None else environment.name
+            version_label = environment.version_label or "未指定"
+            subtitle = environment.name if environment.name != version_label else ""
             node_type = f"tool-environment:{environment.environment_id}"
             keywords: Tuple[str, ...] = (
                 environment.environment_id,
-                tool.display_name if tool is not None else "",
+                tool_name,
+                version_label,
             )
             icon_path = None
             if tool is not None and tool.executable_path.suffix.lower() == ".exe":
@@ -96,11 +106,13 @@ class NodeEditorCoordinator:
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
-                    title=environment.name,
+                    title=version_label,
                     subtitle=subtitle,
                     genre="ツール環境",
                     keywords=keywords,
                     icon_path=icon_path,
+                    tool_name=tool_name,
+                    version_label=version_label,
                 )
             )
         return records
