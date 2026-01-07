@@ -49,6 +49,7 @@
   - Qt 名前空間が `Qt` であることを前提とするため、`QtCore` 等を `Qt` に束縛する互換処理（例: `sotugyo.qt_compat.ensure_qt_module_alias()`）を行う。
   - バージョン 0.6 系は Qt6 対応が進行中であり、グラフィックビュー周りのバグ修正が頻繁。リリースノートを確認する。
   - パフォーマンス改善には `set_render_mode(NodeGraphQt.constants.RENDER_THREADED)` 等の API を検討する。
+  - `NodeModel.custom_properties` は内部 `_custom_prop` 辞書を返すため、独自メタ情報は辞書を直接更新して永続化する。`set_property("custom", ...)` は既定プロパティに存在せず例外になる点に注意する。
 
 ## OdenGraphQt
 - **公式ドキュメント / README**: <https://github.com/odenthought/OdenGraphQt>
@@ -93,5 +94,6 @@
 - 2025-12-24: ツール環境ノードと Rez パッケージノードの統合、およびパッケージ内 .exe からのアイコン取得手順を確認した。
 - 2025-12-30: `src/sotugyo/ui/components/content_browser.py` の表示構造を `QTreeView` + `QStandardItemModel` に更新し、ジャンル階層表示とフィルタ時の展開挙動を整理した。
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
+- 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
 
-最終更新日: 2026-01-07
+最終更新日: 2026-01-12
