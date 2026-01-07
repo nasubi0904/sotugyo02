@@ -711,7 +711,6 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout.invalidate()
 
     def _refresh_item_sizes(self) -> None:
-        item_size = self._list_item_size_hint()
         parent_size = self._parent_item_size_hint()
         for genre_item in self._genre_items.values():
             genre_item.setSizeHint(parent_size)
@@ -723,9 +722,13 @@ class NodeContentBrowser(QWidget):
                         for nested_row in range(child.rowCount()):
                             nested_child = child.child(nested_row)
                             if nested_child is not None:
-                                nested_child.setSizeHint(item_size)
+                                entry = self._entry_from_item(nested_child)
+                                nested_child.setSizeHint(
+                                    self._list_item_size_hint(entry=entry)
+                                )
                     else:
-                        child.setSizeHint(item_size)
+                        entry = self._entry_from_item(child)
+                        child.setSizeHint(self._list_item_size_hint(entry=entry))
         self._available_tree.updateGeometry()
         self._available_tree.doItemsLayout()
         viewport = self._available_tree.viewport()
@@ -736,7 +739,11 @@ class NodeContentBrowser(QWidget):
         for entry, item in self._entry_items:
             item.setIcon(self._icon_for_entry(entry))
 
-    def _list_item_size_hint(self) -> QSize:
+    def _list_item_size_hint(
+        self,
+        *,
+        entry: Optional[NodeCatalogEntry] = None,
+    ) -> QSize:
         font: QFontMetrics = self._available_tree.fontMetrics()
         icon_size = self._current_icon_size_value()
         viewport = self._available_tree.viewport()
@@ -748,9 +755,10 @@ class NodeContentBrowser(QWidget):
         leading = font.leading()
         profile = self._current_profile
 
+        text_lines = 1 if entry is not None and entry.tool_name else 2
+
         if profile.compact:
             vertical_padding = max(6, leading + 2)
-            text_lines = 2
             text_height = line_spacing * text_lines
             height = max(icon_size + vertical_padding, text_height + vertical_padding)
             width = max(220, viewport_width)
@@ -761,7 +769,6 @@ class NodeContentBrowser(QWidget):
         width = max(width, title_width + icon_size // 2)
 
         vertical_padding = max(10, leading + 6)
-        text_lines = 2
         text_height = line_spacing * text_lines
         height = max(icon_size + vertical_padding, text_height + vertical_padding)
         return QSize(width, height)
