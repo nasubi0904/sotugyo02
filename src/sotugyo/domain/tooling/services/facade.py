@@ -24,6 +24,7 @@ from ..repositories.rez_packages import (
 from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
+from .rez import RezPackageQueryService, RezQueryResult
 
 
 @dataclass(slots=True)
@@ -34,6 +35,7 @@ class ToolEnvironmentService:
     environment_service: ToolEnvironmentRegistryService
     template_gateway: TemplateGateway
     rez_repository: RezPackageRepository
+    rez_query_service: RezPackageQueryService
 
     def __init__(
         self,
@@ -43,6 +45,7 @@ class ToolEnvironmentService:
         environment_service: ToolEnvironmentRegistryService | None = None,
         template_gateway: TemplateGateway | None = None,
         rez_repository: RezPackageRepository | None = None,
+        rez_query_service: RezPackageQueryService | None = None,
     ) -> None:
         repo = repository or ToolConfigRepository()
         self.registry_service = registry_service or ToolRegistryService(repo)
@@ -51,6 +54,7 @@ class ToolEnvironmentService:
         )
         self.template_gateway = template_gateway or TemplateGateway()
         self.rez_repository = rez_repository or RezPackageRepository()
+        self.rez_query_service = rez_query_service or RezPackageQueryService()
 
     # ------------------------------------------------------------------
     # ツール登録
@@ -186,6 +190,40 @@ class ToolEnvironmentService:
         self, project_root: Path
     ) -> RezPackageValidationResult:
         return ProjectRezPackageRepository(project_root).validate()
+
+    def save_project_rez_package(
+        self,
+        project_root: Path,
+        project_name: str,
+        requires: Iterable[str],
+        *,
+        version: str = "1.0",
+    ) -> Optional[Path]:
+        normalized_requires = [
+            entry.strip() for entry in requires if isinstance(entry, str) and entry.strip()
+        ]
+        if not normalized_requires:
+            return None
+        repository = ProjectRezPackageRepository(project_root)
+        return repository.write_project_package(
+            project_name,
+            normalized_requires,
+            version=version,
+        )
+
+    def check_project_rez_requirements(
+        self,
+        project_root: Path,
+        project_name: str,
+        *,
+        version: str = "1.0",
+    ) -> RezQueryResult:
+        repository = ProjectRezPackageRepository(project_root)
+        requirements = repository.read_project_manifest_requirements(
+            project_name,
+            version=version,
+        )
+        return self.rez_query_service.check_requirements(requirements)
 
     # ------------------------------------------------------------------
     # ユーティリティ
