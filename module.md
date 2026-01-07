@@ -49,6 +49,7 @@
   - Qt 名前空間が `Qt` であることを前提とするため、`QtCore` 等を `Qt` に束縛する互換処理（例: `sotugyo.qt_compat.ensure_qt_module_alias()`）を行う。
   - バージョン 0.6 系は Qt6 対応が進行中であり、グラフィックビュー周りのバグ修正が頻繁。リリースノートを確認する。
   - パフォーマンス改善には `set_render_mode(NodeGraphQt.constants.RENDER_THREADED)` 等の API を検討する。
+  - `NodeModel.custom_properties` は内部 `_custom_prop` 辞書を返すため、独自メタ情報は辞書を直接更新して永続化する。`set_property("custom", ...)` は既定プロパティに存在せず例外になる点に注意する。
 
 ## OdenGraphQt
 - **公式ドキュメント / README**: <https://github.com/odenthought/OdenGraphQt>
@@ -93,12 +94,6 @@
 - 2025-12-24: ツール環境ノードと Rez パッケージノードの統合、およびパッケージ内 .exe からのアイコン取得手順を確認した。
 - 2025-12-30: `src/sotugyo/ui/components/content_browser.py` の表示構造を `QTreeView` + `QStandardItemModel` に更新し、ジャンル階層表示とフィルタ時の展開挙動を整理した。
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
-- 2026-02-15: プロジェクト保存時にツールノードの Rez 依存一覧を `config/rez_packages` へ書き出す設計を確認し、マニフェスト生成方針を整理した。
-- 2026-02-15: プロジェクト保存時の Rez パッケージ同期を廃止し、マニフェスト出力のみとする方針を追記した。
-- 2026-02-15: プロジェクト展開時に Rez マニフェストの依存を Rez query で検証する運用を追加した。
-- 2026-02-15: Rez Python API の照会先を `rez.packages` に統一し、pip 版 Rez の公開 API に合わせた。
-- 2026-02-15: プロジェクト展開時の依存チェックで KDMrez を `REZ_PACKAGES_PATH` に補完し、ローカルパッケージの存在確認を安定化した。
-- 2026-02-15: ツールノードのカスタムプロパティに Rez の name/version を保持し、表示名依存の参照を解消した。
-- 2026-02-15: Rez の name/version を `rez_info` にまとめて保存する形式へ移行し、参照を統一した。
+- 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
 
-最終更新日: 2026-02-15
+最終更新日: 2026-01-12
