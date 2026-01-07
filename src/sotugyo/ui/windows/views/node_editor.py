@@ -716,6 +716,53 @@ class NodeEditorWindow(QMainWindow):
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
+        self._apply_tool_node_rez_properties(node, definition)
+
+    def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
+        return {
+            "environment_id": definition.environment_id,
+            "tool_id": definition.tool_id,
+            "version_label": definition.version_label,
+            "rez_packages": list(definition.rez_packages),
+            "rez_variants": list(definition.rez_variants),
+            "rez_environment": dict(definition.rez_environment),
+        }
+
+    def _apply_tool_node_rez_properties(
+        self,
+        node,
+        definition: ToolEnvironmentDefinition,
+    ) -> bool:
+        rez_info = self._build_tool_node_rez_info(definition)
+        existing = self._node_custom_property_value(node, "rez_info")
+        if isinstance(existing, Mapping) and dict(existing) == rez_info:
+            return False
+        return self._set_node_custom_property(node, "rez_info", rez_info)
+
+    def _ensure_tool_node_rez_properties(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        existing = self._node_custom_property_value(node, "rez_info")
+        if isinstance(existing, Mapping) and existing:
+            return False
+        definition = self._find_tool_environment_definition(node)
+        if definition is None:
+            return False
+        return self._apply_tool_node_rez_properties(node, definition)
+
+    def _find_tool_environment_definition(
+        self, node
+    ) -> Optional[ToolEnvironmentDefinition]:
+        node_name = self._safe_node_name(node)
+        for definition in self._tool_environments.values():
+            if definition.name == node_name:
+                return definition
+        package_name = self._extract_rez_package_name(node_name)
+        if package_name:
+            for definition in self._tool_environments.values():
+                if package_name in definition.rez_packages:
+                    return definition
+        return None
 
     def _create_node(self, node_type: str, display_name: str):
         node = self._graph.create_node(node_type, name=display_name)
@@ -1967,10 +2014,11 @@ class NodeEditorWindow(QMainWindow):
             custom_props = entry.get("custom_properties")
             if isinstance(custom_props, dict):
                 for key, value in custom_props.items():
-                    try:
-                        node.set_property(key, value, push_undo=False)
-                    except Exception:  # pragma: no cover - NodeGraph 依存の例外
-                        LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
+                    if isinstance(key, str):
+                        if not self._set_node_custom_property(node, key, value):
+                            LOGGER.debug("プロパティ %s の適用に失敗しました", key)
+            if self._ensure_tool_node_rez_properties(node):
+                metadata_changed = True
 
         failed_operations: List[str] = []
 
@@ -2100,26 +2148,63 @@ class NodeEditorWindow(QMainWindow):
                 LOGGER.debug("ノード名の取得に失敗しました: %r", node, exc_info=True)
         return str(node)
 
-    def _node_custom_properties(self, node) -> Dict[str, object]:
+    def _node_custom_properties_map(self, node) -> Optional[Dict[str, object]]:
         model = getattr(node, "model", None)
         if model is None:
-            return {}
+            return None
         props = getattr(model, "custom_properties", None)
         if callable(props):
             try:
                 props = props()
             except Exception:  # pragma: no cover - NodeGraph 依存の例外
-                props = None
+                return None
+        if isinstance(props, dict):
+            return props
+        return None
+
+    def _node_custom_property_value(self, node, key: str) -> object:
+        props = self._node_custom_properties_map(node)
+        if not isinstance(props, dict):
+            return None
+        return props.get(key)
+
+    def _normalize_custom_property_value(self, value: object) -> object:
+        if isinstance(value, Mapping):
+            normalized: Dict[str, object] = {}
+            for entry_key, entry_value in value.items():
+                if isinstance(entry_key, str):
+                    normalized[entry_key] = self._normalize_custom_property_value(entry_value)
+            return normalized
+        if isinstance(value, (list, tuple, set)):
+            return [self._normalize_custom_property_value(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    def _node_custom_properties(self, node) -> Dict[str, object]:
+        props = self._node_custom_properties_map(node)
         if not isinstance(props, dict):
             return {}
         serializable: Dict[str, object] = {}
         for key, value in props.items():
             if isinstance(key, str):
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    serializable[key] = value
-                else:
-                    serializable[key] = str(value)
+                serializable[key] = self._normalize_custom_property_value(value)
         return serializable
+
+    def _set_node_custom_property(self, node, key: str, value: object) -> bool:
+        props = self._node_custom_properties_map(node)
+        if isinstance(props, dict):
+            props[key] = value
+            return True
+        setter = getattr(node, "set_property", None)
+        if callable(setter):
+            try:
+                setter(key, value, push_undo=False)
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug("カスタムプロパティの設定に失敗しました: %s", key, exc_info=True)
+                return False
+            return True
+        return False
 
     def _node_type_identifier(self, node) -> str:
         type_getter = getattr(node, "type_", None)
