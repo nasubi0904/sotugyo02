@@ -82,18 +82,38 @@ class RezPackageQueryService:
                 missing=normalized,
                 message="rez Python モジュールが見つかりません。",
             )
-        import rez  # noqa: F401
-        from rez import query as rez_query
+        try:
+            import rez  # noqa: F401
+        except ImportError as exc:
+            return RezQueryResult(
+                success=False,
+                checked=normalized,
+                missing=normalized,
+                message=f"rez Python モジュールの読み込みに失敗しました: {exc}",
+            )
+        try:
+            from rez import query as rez_query  # type: ignore
+        except ImportError:
+            rez_query = None
 
-        getter = getattr(rez_query, "get_package_from_string", None)
+        getter = None
+        if rez_query is not None:
+            getter = getattr(rez_query, "get_package_from_string", None)
+            if getter is None:
+                getter = getattr(rez_query, "get_package", None)
         if getter is None:
-            getter = getattr(rez_query, "get_package", None)
+            try:
+                from rez import packages as rez_packages  # type: ignore
+            except ImportError:
+                rez_packages = None
+            if rez_packages is not None:
+                getter = getattr(rez_packages, "get_package_from_string", None)
         if getter is None:
             return RezQueryResult(
                 success=False,
                 checked=normalized,
                 missing=normalized,
-                message="rez.query にパッケージ照会 API が見つかりません。",
+                message="rez のパッケージ照会 API が見つかりません。",
             )
 
         missing = []
