@@ -1739,12 +1739,21 @@ class NodeEditorWindow(QMainWindow):
             if not isinstance(node, ToolEnvironmentNode):
                 continue
             node_name = self._safe_node_name(node)
-            if not node_name.startswith("Rez:"):
-                continue
-            candidate = node_name.split("Rez:", 1)[1].strip()
+            candidate = self._extract_rez_package_name(node_name)
             if candidate:
                 packages.add(candidate)
         return sorted(packages)
+
+    @staticmethod
+    def _extract_rez_package_name(node_name: str) -> Optional[str]:
+        if not node_name.startswith("Rez:"):
+            return None
+        candidate = node_name.split("Rez:", 1)[1].strip()
+        if not candidate:
+            return None
+        if candidate.endswith(")") and " (" in candidate:
+            candidate = candidate.rsplit("(", 1)[0].strip()
+        return candidate or None
 
     def _check_rez_environments_in_project(self) -> None:
         packages = self._collect_rez_packages_in_graph()
