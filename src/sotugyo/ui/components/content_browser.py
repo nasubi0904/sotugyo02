@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
+
+from ...infrastructure.settings import SettingsStore, create_settings_store
 
 Qt = QtCore.Qt
 Signal = QtCore.Signal
@@ -160,6 +163,10 @@ class NodeContentBrowser(QWidget):
         self._result_summary_label: Optional[QLabel] = None
         self._icon_cache: Dict[Tuple[str, str, int], QIcon] = {}
         self._file_icon_provider: QFileIconProvider = QFileIconProvider()
+        self._settings_store: SettingsStore = create_settings_store(
+            "Sotugyo",
+            "ContentBrowser",
+        )
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
@@ -217,7 +224,7 @@ class NodeContentBrowser(QWidget):
     # カタログ操作
     # ------------------------------------------------------------------
     def set_catalog_entries(self, entries: Iterable[NodeCatalogEntry]) -> None:
-        catalog_entries = list(entries)
+        catalog_entries = [self._apply_tool_icon_fallback(entry) for entry in entries]
         self._view_model.set_entries(catalog_entries)
         self._total_entry_count = self._view_model.total_count()
         self._available_model.clear()
@@ -875,6 +882,14 @@ class NodeContentBrowser(QWidget):
         subtitle = entry.subtitle.strip()
         node_type = entry.node_type.strip()
 
+        if entry.tool_name:
+            parts = [part for part in (title, subtitle) if part]
+            if not parts and node_type:
+                parts.append(node_type)
+            if not parts:
+                return ""
+            return " / ".join(parts)
+
         if self._compact_mode:
             parts: List[str] = []
             if title:
@@ -1025,3 +1040,48 @@ class NodeContentBrowser(QWidget):
         if normalized.startswith("sotugyo.memo."):
             return "メモ"
         return "その他"
+
+    def _apply_tool_icon_fallback(self, entry: NodeCatalogEntry) -> NodeCatalogEntry:
+        if entry.tool_name and entry.icon_path:
+            self._store_tool_icon(entry.tool_name, entry.icon_path)
+            return entry
+        if not entry.tool_name or entry.icon_path:
+            return entry
+        cached_path = self._load_tool_icon(entry.tool_name)
+        if not cached_path:
+            return entry
+        return replace(entry, icon_path=cached_path)
+
+    def _load_tool_icon(self, tool_name: str) -> Optional[str]:
+        key = self._tool_icon_key(tool_name)
+        with self._settings_group("content_browser", "tool_icons"):
+            value = self._settings_store.value(key)
+        if isinstance(value, str) and value:
+            path = QFileInfo(value)
+            if path.exists():
+                return value
+        return None
+
+    def _store_tool_icon(self, tool_name: str, icon_path: str) -> None:
+        if not tool_name or not icon_path:
+            return
+        file_info = QFileInfo(icon_path)
+        if not file_info.exists():
+            return
+        key = self._tool_icon_key(tool_name)
+        with self._settings_group("content_browser", "tool_icons"):
+            self._settings_store.set_value(key, icon_path)
+            self._settings_store.sync()
+
+    def _tool_icon_key(self, tool_name: str) -> str:
+        return tool_name.replace("/", "_").strip()
+
+    @contextmanager
+    def _settings_group(self, *names: str) -> Iterator[None]:
+        for name in names:
+            self._settings_store.begin_group(name)
+        try:
+            yield
+        finally:
+            for _ in names:
+                self._settings_store.end_group()
