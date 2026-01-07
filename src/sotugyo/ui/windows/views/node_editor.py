@@ -504,6 +504,7 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_window_title()
         self._refresh_content_browser_entries()
         self._load_project_graph()
+        self._check_project_rez_manifest_requirements()
 
         report = self._project_service.validate_structure(project_root)
         if not report.is_valid:
@@ -716,6 +717,7 @@ class NodeEditorWindow(QMainWindow):
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
+        self._apply_tool_node_rez_properties(node, definition)
 
     def _create_node(self, node_type: str, display_name: str):
         node = self._graph.create_node(node_type, name=display_name)
@@ -1668,22 +1670,22 @@ class NodeEditorWindow(QMainWindow):
     def _sync_rez_packages_to_project(self) -> None:
         if self._current_project_root is None:
             return
-        packages = self._collect_rez_packages_in_graph()
-        if not packages:
+        self._save_project_rez_package_manifest()
+
+    def _save_project_rez_package_manifest(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        requirements = self._collect_rez_requirements_in_graph()
+        if not requirements:
             return
         try:
-            result = self._coordinator.sync_rez_packages_to_project(
-                self._current_project_root, packages
+            self._coordinator.save_project_rez_package(
+                self._current_project_root,
+                self._current_project_settings.project_name,
+                requirements,
             )
         except OSError as exc:
-            self._show_warning_dialog(f"Rez パッケージの同期に失敗しました: {exc}")
-            return
-        if result.has_missing:
-            lines = ["次の Rez パッケージを同期できませんでした。KDMrez を確認してください。"]
-            lines.extend(f"・{name}" for name in result.missing)
-            self._show_warning_dialog("\n".join(lines))
-        self._load_project_rez_packages()
-        self._refresh_content_browser_entries()
+            self._show_warning_dialog(f"プロジェクト Rez パッケージの保存に失敗しました: {exc}")
 
     def _graph_file_path(self) -> Optional[Path]:
         if self._current_project_root is None:
@@ -1738,11 +1740,23 @@ class NodeEditorWindow(QMainWindow):
         for node in self._collect_all_nodes():
             if not isinstance(node, ToolEnvironmentNode):
                 continue
-            node_name = self._safe_node_name(node)
-            candidate = self._extract_rez_package_name(node_name)
-            if candidate:
-                packages.add(candidate)
+            name, _version = self._read_rez_package_properties(node)
+            if name:
+                packages.add(name)
         return sorted(packages)
+
+    def _collect_rez_requirements_in_graph(self) -> List[str]:
+        requirements: List[str] = []
+        for node in self._collect_all_nodes():
+            if not isinstance(node, ToolEnvironmentNode):
+                continue
+            name, version = self._read_rez_package_properties(node)
+            if not name:
+                continue
+            version_label = version or "local"
+            requirement = f"{name}-{version_label}" if version_label else name
+            requirements.append(requirement)
+        return sorted(dict.fromkeys(requirements))
 
     @staticmethod
     def _extract_rez_package_name(node_name: str) -> Optional[str]:
@@ -1754,6 +1768,91 @@ class NodeEditorWindow(QMainWindow):
         if candidate.endswith(")") and " (" in candidate:
             candidate = candidate.rsplit("(", 1)[0].strip()
         return candidate or None
+
+    @staticmethod
+    def _extract_rez_package_requirement(
+        node_name: str, *, default_version: str = "local"
+    ) -> Optional[str]:
+        if not node_name.startswith("Rez:"):
+            return None
+        candidate = node_name.split("Rez:", 1)[1].strip()
+        if not candidate:
+            return None
+        version = None
+        if candidate.endswith(")") and " (" in candidate:
+            raw_name, raw_version = candidate.rsplit("(", 1)
+            candidate = raw_name.strip()
+            version = raw_version.rstrip(")").strip() or None
+        if not candidate:
+            return None
+        version_label = version or default_version
+        return f"{candidate}-{version_label}" if version_label else candidate
+
+    def _read_rez_package_properties(self, node) -> Tuple[Optional[str], Optional[str]]:
+        props = self._node_custom_properties(node)
+        rez_info = props.get("rez_info")
+        name_value = None
+        version_value = None
+        if isinstance(rez_info, dict):
+            name = rez_info.get("name")
+            version = rez_info.get("version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
+        if not name_value:
+            name = props.get("rez_name")
+            version = props.get("rez_version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
+        if name_value:
+            return name_value, version_value
+        node_name = self._safe_node_name(node)
+        name_from_label = self._extract_rez_package_name(node_name)
+        if not name_from_label:
+            return None, None
+        version_from_label = None
+        if node_name.startswith("Rez:"):
+            candidate = node_name.split("Rez:", 1)[1].strip()
+            if candidate.endswith(")") and " (" in candidate:
+                _, raw_version = candidate.rsplit("(", 1)
+                version_from_label = raw_version.rstrip(")").strip() or None
+        return name_from_label, version_from_label
+
+    def _apply_tool_node_rez_properties(self, node, definition) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        if not getattr(definition, "rez_packages", None):
+            return
+        name = next((entry for entry in definition.rez_packages if entry), None)
+        if not name:
+            return
+        version = definition.version_label or "local"
+        self._set_node_custom_property(node, "rez_info", {"name": name, "version": version})
+
+    def _ensure_tool_node_rez_properties(self, node) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        props = self._node_custom_properties(node)
+        rez_info = props.get("rez_info")
+        if isinstance(rez_info, dict):
+            name_value = rez_info.get("name")
+            if isinstance(name_value, str) and name_value.strip():
+                return
+        name_value = props.get("rez_name")
+        if isinstance(name_value, str) and name_value.strip():
+            return
+        name, version = self._read_rez_package_properties(node)
+        if not name:
+            return
+        version_label = version or "local"
+        self._set_node_custom_property(
+            node, "rez_info", {"name": name, "version": version_label}
+        )
+
+    def _set_node_custom_property(self, node, key: str, value: object) -> None:
+        try:
+            node.set_property(key, value, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("ノードプロパティの設定に失敗しました: %s", key, exc_info=True)
 
     def _check_rez_environments_in_project(self) -> None:
         packages = self._collect_rez_packages_in_graph()
@@ -1801,6 +1900,25 @@ class NodeEditorWindow(QMainWindow):
 
         if warnings:
             self._show_warning_dialog("\n\n".join(warnings))
+
+    def _check_project_rez_manifest_requirements(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        result = self._coordinator.check_project_rez_requirements(
+            self._current_project_root,
+            self._current_project_settings.project_name,
+        )
+        if result.success:
+            return
+        if result.missing:
+            missing_list = "\n".join(f"・{item}" for item in result.missing)
+            self._show_warning_dialog(
+                "プロジェクトの Rez マニフェストに記載されたパッケージが不足しています。\n"
+                f"{missing_list}"
+            )
+            return
+        if result.message:
+            self._show_warning_dialog(result.message)
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
@@ -1971,6 +2089,7 @@ class NodeEditorWindow(QMainWindow):
                         node.set_property(key, value, push_undo=False)
                     except Exception:  # pragma: no cover - NodeGraph 依存の例外
                         LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
+            self._ensure_tool_node_rez_properties(node)
 
         failed_operations: List[str] = []
 
@@ -2114,11 +2233,22 @@ class NodeEditorWindow(QMainWindow):
             return {}
         serializable: Dict[str, object] = {}
         for key, value in props.items():
-            if isinstance(key, str):
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    serializable[key] = value
-                else:
-                    serializable[key] = str(value)
+            if not isinstance(key, str):
+                continue
+            if isinstance(value, dict):
+                serialized: Dict[str, object] = {}
+                for item_key, item_value in value.items():
+                    if not isinstance(item_key, str):
+                        continue
+                    if isinstance(item_value, (str, int, float, bool)) or item_value is None:
+                        serialized[item_key] = item_value
+                    else:
+                        serialized[item_key] = str(item_value)
+                serializable[key] = serialized
+            elif isinstance(value, (str, int, float, bool)) or value is None:
+                serializable[key] = value
+            else:
+                serializable[key] = str(value)
         return serializable
 
     def _node_type_identifier(self, node) -> str:
