@@ -1790,10 +1790,19 @@ class NodeEditorWindow(QMainWindow):
 
     def _read_rez_package_properties(self, node) -> Tuple[Optional[str], Optional[str]]:
         props = self._node_custom_properties(node)
-        name = props.get("rez_name")
-        version = props.get("rez_version")
-        name_value = name if isinstance(name, str) and name.strip() else None
-        version_value = version if isinstance(version, str) and version.strip() else None
+        rez_info = props.get("rez_info")
+        name_value = None
+        version_value = None
+        if isinstance(rez_info, dict):
+            name = rez_info.get("name")
+            version = rez_info.get("version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
+        if not name_value:
+            name = props.get("rez_name")
+            version = props.get("rez_version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
         if name_value:
             return name_value, version_value
         node_name = self._safe_node_name(node)
@@ -1817,13 +1826,17 @@ class NodeEditorWindow(QMainWindow):
         if not name:
             return
         version = definition.version_label or "local"
-        self._set_node_custom_property(node, "rez_name", name)
-        self._set_node_custom_property(node, "rez_version", version)
+        self._set_node_custom_property(node, "rez_info", {"name": name, "version": version})
 
     def _ensure_tool_node_rez_properties(self, node) -> None:
         if not isinstance(node, ToolEnvironmentNode):
             return
         props = self._node_custom_properties(node)
+        rez_info = props.get("rez_info")
+        if isinstance(rez_info, dict):
+            name_value = rez_info.get("name")
+            if isinstance(name_value, str) and name_value.strip():
+                return
         name_value = props.get("rez_name")
         if isinstance(name_value, str) and name_value.strip():
             return
@@ -1831,8 +1844,9 @@ class NodeEditorWindow(QMainWindow):
         if not name:
             return
         version_label = version or "local"
-        self._set_node_custom_property(node, "rez_name", name)
-        self._set_node_custom_property(node, "rez_version", version_label)
+        self._set_node_custom_property(
+            node, "rez_info", {"name": name, "version": version_label}
+        )
 
     def _set_node_custom_property(self, node, key: str, value: object) -> None:
         try:
@@ -2219,11 +2233,22 @@ class NodeEditorWindow(QMainWindow):
             return {}
         serializable: Dict[str, object] = {}
         for key, value in props.items():
-            if isinstance(key, str):
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    serializable[key] = value
-                else:
-                    serializable[key] = str(value)
+            if not isinstance(key, str):
+                continue
+            if isinstance(value, dict):
+                serialized: Dict[str, object] = {}
+                for item_key, item_value in value.items():
+                    if not isinstance(item_key, str):
+                        continue
+                    if isinstance(item_value, (str, int, float, bool)) or item_value is None:
+                        serialized[item_key] = item_value
+                    else:
+                        serialized[item_key] = str(item_value)
+                serializable[key] = serialized
+            elif isinstance(value, (str, int, float, bool)) or value is None:
+                serializable[key] = value
+            else:
+                serializable[key] = str(value)
         return serializable
 
     def _node_type_identifier(self, node) -> str:
