@@ -512,8 +512,8 @@ class NodeContentBrowser(QWidget):
         self._view_model.set_keyword(keyword)
         visible_counts: Dict[str, int] = {}
         total_counts: Dict[str, int] = {}
-        group_visible_counts: Dict[QStandardItem, int] = {}
-        group_total_counts: Dict[QStandardItem, int] = {}
+        group_visible_counts: Dict[Tuple[str, str], int] = {}
+        group_total_counts: Dict[Tuple[str, str], int] = {}
         visible_count = 0
 
         for entry, item in self._entry_items:
@@ -527,16 +527,12 @@ class NodeContentBrowser(QWidget):
                 visible_count += 1
             group_key = self._tool_group_key(entry)
             if group_key is not None:
-                group_item = self._tool_group_items.get(group_key)
-                if group_item is not None:
-                    group_total_counts[group_item] = group_total_counts.get(group_item, 0) + 1
-                    if matches:
-                        group_visible_counts[group_item] = (
-                            group_visible_counts.get(group_item, 0) + 1
-                        )
+                group_total_counts[group_key] = group_total_counts.get(group_key, 0) + 1
+                if matches:
+                    group_visible_counts[group_key] = group_visible_counts.get(group_key, 0) + 1
 
-        for group_item in self._tool_group_items.values():
-            visible = group_visible_counts.get(group_item, 0)
+        for group_key, group_item in self._tool_group_items.items():
+            visible = group_visible_counts.get(group_key, 0)
             parent_item = group_item.parent()
             parent_index = parent_item.index() if parent_item is not None else QtCore.QModelIndex()
             self._available_tree.setRowHidden(group_item.row(), parent_index, visible == 0)
@@ -953,14 +949,14 @@ class NodeContentBrowser(QWidget):
 
     def _update_tool_group_labels(
         self,
-        visible_counts: Dict[QStandardItem, int],
-        total_counts: Dict[QStandardItem, int],
+        visible_counts: Dict[Tuple[str, str], int],
+        total_counts: Dict[Tuple[str, str], int],
     ) -> None:
-        for group_item in self._tool_group_items.values():
+        for group_key, group_item in self._tool_group_items.items():
             tool_name = group_item.data(Qt.UserRole + 4)
             label = str(tool_name) if tool_name is not None else group_item.text()
-            visible = visible_counts.get(group_item, 0)
-            total = total_counts.get(group_item, 0)
+            visible = visible_counts.get(group_key, 0)
+            total = total_counts.get(group_key, 0)
             group_item.setText(f"{label} ({visible} / {total})")
 
     def _resolve_tool_group_item(
