@@ -201,8 +201,8 @@ class ToolEnvironmentService:
         return resolved
 
     def _sync_from_environment_dir(self) -> None:
-        specs = self.rez_repository.list_packages()
-        package_map = {spec.name: spec for spec in specs}
+        specs = self.rez_repository.list_package_entries()
+        package_map = {self._build_rez_tool_id(spec): spec for spec in specs}
 
         tools, environments = self.registry_service.repository.load_all()
         tool_map = {tool.tool_id: tool for tool in tools}
@@ -222,13 +222,17 @@ class ToolEnvironmentService:
         synced_tools: List[RegisteredTool] = []
         synced_envs: List[ToolEnvironmentDefinition] = []
 
-        for name, spec in sorted(package_map.items()):
+        for tool_id, spec in sorted(package_map.items()):
             resolved_executable = self.rez_repository.resolve_executable(spec)
-            tool = tool_map.get(name) or tool_by_package.get(name)
+            tool = (
+                tool_map.get(tool_id)
+                or tool_map.get(spec.name)
+                or tool_by_package.get(spec.name)
+            )
             if tool is None:
                 tool = RegisteredTool(
-                    tool_id=name,
-                    display_name=name,
+                    tool_id=tool_id,
+                    display_name=spec.name,
                     executable_path=resolved_executable or (spec.path / "package.py"),
                     template_id=None,
                     version=spec.version,
@@ -236,9 +240,9 @@ class ToolEnvironmentService:
                     updated_at=now,
                 )
             else:
-                tool.tool_id = name
+                tool.tool_id = tool_id
                 if not tool.display_name:
-                    tool.display_name = name
+                    tool.display_name = spec.name
                 if resolved_executable is not None:
                     tool.executable_path = resolved_executable
                 elif not tool.executable_path.exists():
@@ -247,14 +251,18 @@ class ToolEnvironmentService:
                 tool.updated_at = now
             synced_tools.append(tool)
 
-            environment = env_map.get(name) or env_by_package.get(name)
+            environment = (
+                env_map.get(tool_id)
+                or env_map.get(spec.name)
+                or env_by_package.get(spec.name)
+            )
             if environment is None:
                 environment = ToolEnvironmentDefinition(
-                    environment_id=f"rez:{name}",
-                    name=f"Rez: {name}",
-                    tool_id=name,
+                    environment_id=f"rez:{tool_id}",
+                    name=self._build_rez_environment_name(spec),
+                    tool_id=tool_id,
                     version_label=spec.version or "local",
-                    rez_packages=(name,),
+                    rez_packages=(spec.name,),
                     rez_variants=(),
                     rez_environment={},
                     metadata={},
@@ -262,15 +270,26 @@ class ToolEnvironmentService:
                     updated_at=now,
                 )
             else:
-                environment.tool_id = name
-                if not environment.name:
-                    environment.name = f"Rez: {name}"
+                environment.tool_id = tool_id
+                environment.name = self._build_rez_environment_name(spec)
                 environment.version_label = spec.version or environment.version_label or "local"
-                environment.rez_packages = (name,)
+                environment.rez_packages = (spec.name,)
+                environment.environment_id = f"rez:{tool_id}"
                 environment.updated_at = now
             synced_envs.append(environment)
 
         self.registry_service.repository.save_all(synced_tools, synced_envs)
+
+    @staticmethod
+    def _build_rez_tool_id(spec: RezPackageSpec) -> str:
+        version_label = spec.version or "local"
+        return f"{spec.name}@{version_label}"
+
+    @staticmethod
+    def _build_rez_environment_name(spec: RezPackageSpec) -> str:
+        if spec.version:
+            return f"Rez: {spec.name} ({spec.version})"
+        return f"Rez: {spec.name}"
 
     def _ensure_template_id(self, template_id: str | None, display_name: str) -> str:
         if template_id:
