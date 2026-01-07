@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import logging
 import re
 import shutil
@@ -295,6 +296,27 @@ class ProjectRezPackageRepository:
         package_file.write_text(payload, encoding="utf-8")
         return package_file
 
+    def read_project_manifest_requirements(
+        self,
+        project_name: str,
+        *,
+        version: str = "1.0",
+    ) -> List[str]:
+        normalized_dir = self._normalize_project_package_dir(project_name)
+        package_file = self.root_dir / normalized_dir / version / "package.py"
+        if not package_file.exists():
+            return []
+        try:
+            content = package_file.read_text(encoding="utf-8")
+        except OSError:
+            LOGGER.warning(
+                "Rez マニフェストの読み込みに失敗しました: %s",
+                package_file,
+                exc_info=True,
+            )
+            return []
+        return self._extract_requires_from_manifest(content)
+
     @staticmethod
     def _normalize_project_package_dir(project_name: str) -> str:
         normalized = project_name.strip() or "project"
@@ -321,6 +343,32 @@ class ProjectRezPackageRepository:
             f'version = "{version}"\n\n'
             f"{requires_block}"
         )
+
+    @staticmethod
+    def _extract_requires_from_manifest(content: str) -> List[str]:
+        try:
+            tree = ast.parse(content)
+        except SyntaxError:
+            return []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Assign):
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "requires":
+                    return ProjectRezPackageRepository._read_requires_literal(node.value)
+        return []
+
+    @staticmethod
+    def _read_requires_literal(node: ast.AST) -> List[str]:
+        if isinstance(node, (ast.List, ast.Tuple)):
+            values = []
+            for entry in node.elts:
+                if isinstance(entry, ast.Constant) and isinstance(entry.value, str):
+                    normalized = entry.value.strip()
+                    if normalized:
+                        values.append(normalized)
+            return values
+        return []
 
     def validate(self) -> RezPackageValidationResult:
         missing: List[str] = []

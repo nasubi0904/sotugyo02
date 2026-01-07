@@ -142,3 +142,16 @@ class NodeEditorCoordinator:
             requires,
             version=version,
         )
+
+    def check_project_rez_requirements(
+        self,
+        project_root: Path,
+        project_name: str,
+        *,
+        version: str = "1.0",
+    ):
+        return self.tool_service.check_project_rez_requirements(
+            project_root,
+            project_name,
+            version=version,
+        )

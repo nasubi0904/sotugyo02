@@ -504,6 +504,7 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_window_title()
         self._refresh_content_browser_entries()
         self._load_project_graph()
+        self._check_project_rez_manifest_requirements()
 
         report = self._project_service.validate_structure(project_root)
         if not report.is_valid:
@@ -1831,6 +1832,25 @@ class NodeEditorWindow(QMainWindow):
 
         if warnings:
             self._show_warning_dialog("\n\n".join(warnings))
+
+    def _check_project_rez_manifest_requirements(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        result = self._coordinator.check_project_rez_requirements(
+            self._current_project_root,
+            self._current_project_settings.project_name,
+        )
+        if result.success:
+            return
+        if result.missing:
+            missing_list = "\n".join(f"・{item}" for item in result.missing)
+            self._show_warning_dialog(
+                "プロジェクトの Rez マニフェストに記載されたパッケージが不足しています。\n"
+                f"{missing_list}"
+            )
+            return
+        if result.message:
+            self._show_warning_dialog(result.message)
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
