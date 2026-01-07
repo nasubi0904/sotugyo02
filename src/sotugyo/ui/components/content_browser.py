@@ -19,6 +19,8 @@ QPainter = QtGui.QPainter
 QPen = QtGui.QPen
 QPixmap = QtGui.QPixmap
 QResizeEvent = QtGui.QResizeEvent
+QStandardItem = QtGui.QStandardItem
+QStandardItemModel = QtGui.QStandardItemModel
 QAbstractItemView = QtWidgets.QAbstractItemView
 QBoxLayout = QtWidgets.QBoxLayout
 QComboBox = QtWidgets.QComboBox
@@ -26,15 +28,13 @@ QFrame = QtWidgets.QFrame
 QHBoxLayout = QtWidgets.QHBoxLayout
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
-QListView = QtWidgets.QListView
-QListWidget = QtWidgets.QListWidget
-QListWidgetItem = QtWidgets.QListWidgetItem
 QPushButton = QtWidgets.QPushButton
 QFileIconProvider = QtWidgets.QFileIconProvider
 QSizePolicy = QtWidgets.QSizePolicy
 QSlider = QtWidgets.QSlider
 QSpinBox = QtWidgets.QSpinBox
 QSpacerItem = QtWidgets.QSpacerItem
+QTreeView = QtWidgets.QTreeView
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
@@ -60,11 +60,7 @@ class BrowserLayoutProfile:
     """コンテンツブラウザのレイアウト設定。"""
 
     min_width: int
-    view_mode: QListView.ViewMode
-    flow: QListView.Flow
-    wrapping: bool
     compact: bool
-    grid_columns: int
     section_spacing: int
     card_padding: Tuple[int, int, int, int]
     section_padding: Tuple[int, int, int, int]
@@ -117,12 +113,18 @@ class NodeContentBrowser(QWidget):
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
     back_requested = Signal()
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._view_model = NodeCatalogViewModel()
         self._search_line: QLineEdit = QLineEdit(self)
         self._genre_combo: Optional[QComboBox] = None
-        self._available_list: QListWidget = QListWidget(self)
+        self._available_tree: QTreeView = QTreeView(self)
+        self._available_model: QStandardItemModel = QStandardItemModel(self)
+        self._genre_items: Dict[str, QStandardItem] = {}
+        self._entry_items: List[Tuple[NodeCatalogEntry, QStandardItem]] = []
+        self._tree_selection_model: Optional[QtCore.QItemSelectionModel] = None
+        self._tree_selection_connected: bool = False
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
         self._icon_size_levels: Dict[int, int] = {
@@ -151,55 +153,35 @@ class NodeContentBrowser(QWidget):
         self._layout_profiles: List[BrowserLayoutProfile] = [
             BrowserLayoutProfile(
                 min_width=1080,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
                 compact=False,
-                grid_columns=5,
                 section_spacing=10,
                 card_padding=(16, 16, 16, 16),
                 section_padding=(10, 10, 10, 10),
             ),
             BrowserLayoutProfile(
                 min_width=860,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
                 compact=False,
-                grid_columns=4,
                 section_spacing=10,
                 card_padding=(16, 16, 16, 16),
                 section_padding=(10, 10, 10, 10),
             ),
             BrowserLayoutProfile(
                 min_width=660,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
                 compact=False,
-                grid_columns=3,
                 section_spacing=8,
                 card_padding=(14, 14, 14, 14),
                 section_padding=(8, 8, 8, 8),
             ),
             BrowserLayoutProfile(
                 min_width=520,
-                view_mode=QListWidget.IconMode,
-                flow=QListView.LeftToRight,
-                wrapping=True,
                 compact=False,
-                grid_columns=2,
                 section_spacing=8,
                 card_padding=(12, 12, 12, 12),
                 section_padding=(8, 8, 8, 8),
             ),
             BrowserLayoutProfile(
                 min_width=0,
-                view_mode=QListWidget.ListMode,
-                flow=QListView.TopToBottom,
-                wrapping=False,
                 compact=True,
-                grid_columns=1,
                 section_spacing=6,
                 card_padding=(12, 12, 12, 12),
                 section_padding=(6, 6, 6, 6),
@@ -228,25 +210,42 @@ class NodeContentBrowser(QWidget):
         catalog_entries = list(entries)
         self._view_model.set_entries(catalog_entries)
         self._total_entry_count = self._view_model.total_count()
-        self._available_list.clear()
+        self._available_model.clear()
+        self._available_model.setHorizontalHeaderLabels(["ノード"])
+        self._available_tree.setModel(self._available_model)
+        self._connect_tree_selection_model()
+        self._genre_items = {}
+        self._entry_items = []
         self._icon_cache.clear()
 
-        alignment = Qt.AlignLeft | Qt.AlignTop
-        item_size = self._list_item_size_hint()
         for entry in catalog_entries:
-            item = QListWidgetItem(self._format_entry_text(entry))
-            item.setData(Qt.UserRole, entry.node_type)
-            item.setData(Qt.UserRole + 1, entry.searchable_text())
-            item.setData(Qt.UserRole + 2, entry.genre)
+            genre_item = self._genre_items.get(entry.genre)
+            if genre_item is None:
+                genre_item = QStandardItem(entry.genre)
+                genre_item.setEditable(False)
+                genre_item.setSelectable(True)
+                font = QFont()
+                font.setBold(True)
+                genre_item.setFont(font)
+                self._available_model.appendRow(genre_item)
+                self._genre_items[entry.genre] = genre_item
+
+            item = QStandardItem(self._format_entry_text(entry))
+            item.setEditable(False)
+            item.setSelectable(True)
             item.setToolTip(self._entry_tooltip(entry))
-            item.setTextAlignment(alignment)
-            item.setSizeHint(item_size)
+            item.setData(entry.node_type, Qt.UserRole)
+            item.setData(entry.searchable_text(), Qt.UserRole + 1)
+            item.setData(entry.genre, Qt.UserRole + 2)
+            item.setData(entry, Qt.UserRole + 3)
             item.setIcon(self._icon_for_entry(entry))
-            self._available_list.addItem(item)
+            genre_item.appendRow(item)
+            self._entry_items.append((entry, item))
 
         self._populate_genre_options()
         self._apply_icon_size()
         self._update_item_texts()
+        self._update_parent_labels()
         self._apply_filter()
 
     def set_available_nodes(self, entries: Iterable[Dict[str, str]]) -> None:
@@ -292,12 +291,11 @@ class NodeContentBrowser(QWidget):
         return self._search_line.text()
 
     def first_visible_available_type(self) -> Optional[str]:
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is not None and not item.isHidden():
-                data = item.data(Qt.UserRole)
-                if isinstance(data, str):
-                    return data
+        for entry, item in self._entry_items:
+            if self._is_item_visible(item):
+                node_type = item.data(Qt.UserRole)
+                if isinstance(node_type, str):
+                    return node_type
         return None
 
     # ------------------------------------------------------------------
@@ -354,7 +352,7 @@ class NodeContentBrowser(QWidget):
 
         card_layout.addLayout(search_layout)
 
-        self._configure_list_widget(self._available_list)
+        self._configure_tree_view(self._available_tree)
 
         icon_control = self._create_icon_size_control(card)
         summary_widget = self._create_result_summary(card)
@@ -373,7 +371,7 @@ class NodeContentBrowser(QWidget):
         card_layout.addWidget(
             self._build_section(
                 "追加可能ノード",
-                self._available_list,
+                self._available_tree,
                 header_widget=header_container,
             ),
             1,
@@ -381,27 +379,30 @@ class NodeContentBrowser(QWidget):
 
         outer_layout.addWidget(card, 1)
 
-    def _configure_list_widget(self, widget: QListWidget) -> None:
-        widget.setObjectName("contentList")
-        widget.setViewMode(QListWidget.IconMode)
-        widget.setMovement(QListWidget.Static)
-        widget.setResizeMode(QListWidget.Adjust)
-        widget.setWrapping(True)
+    def _configure_tree_view(self, widget: QTreeView) -> None:
+        widget.setObjectName("contentTree")
+        widget.setModel(self._available_model)
+        widget.setHeaderHidden(True)
+        widget.setRootIsDecorated(True)
+        widget.setAnimated(True)
+        widget.setItemsExpandable(True)
+        widget.setUniformRowHeights(False)
+        widget.setIndentation(18)
+        widget.setSelectionMode(QAbstractItemView.SingleSelection)
+        widget.setSelectionBehavior(QAbstractItemView.SelectRows)
+        widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
         widget.setWordWrap(True)
         widget.setTextElideMode(Qt.TextElideMode.ElideNone)
         widget.setIconSize(
             QSize(self._current_icon_size_value(), self._current_icon_size_value())
         )
-        widget.setSpacing(8)
-        widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        widget.setUniformItemSizes(False)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._apply_icon_size()
 
     def _build_section(
         self,
         title: str,
-        widget: QListWidget,
+        widget: QWidget,
         header_widget: Optional[QWidget] = None,
     ) -> QWidget:
         frame = QFrame(self)
@@ -484,7 +485,8 @@ class NodeContentBrowser(QWidget):
     def _connect_signals(self) -> None:
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
-        self._available_list.itemActivated.connect(self._on_available_item_activated)
+        self._available_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
+        self._connect_tree_selection_model()
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
         if self._genre_combo is not None:
@@ -493,26 +495,55 @@ class NodeContentBrowser(QWidget):
     def _apply_filter(self) -> None:
         keyword = self._search_line.text().strip().lower()
         self._view_model.set_keyword(keyword)
+        visible_counts: Dict[str, int] = {}
+        total_counts: Dict[str, int] = {}
         visible_count = 0
-        for index, entry in enumerate(self._view_model.entries):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
-            matches = self._view_model.matches(entry)
-            item.setHidden(not matches)
-            if matches:
-                visible_count += 1
+        root_index = QtCore.QModelIndex()
+        for genre, genre_item in self._genre_items.items():
+            parent_index = genre_item.index()
+            genre_visible = 0
+            total = genre_item.rowCount()
+            total_counts[genre] = total
+            for row in range(genre_item.rowCount()):
+                child_item = genre_item.child(row)
+                entry = self._entry_from_item(child_item)
+                matches = entry is not None and self._view_model.matches(entry)
+                self._available_tree.setRowHidden(row, parent_index, not matches)
+                if matches:
+                    visible_count += 1
+                    genre_visible += 1
+            visible_counts[genre] = genre_visible
+            parent_row = genre_item.row()
+            parent_visible = genre_visible > 0
+            self._available_tree.setRowHidden(parent_row, root_index, not parent_visible)
+            self._available_tree.setExpanded(parent_index, parent_visible)
         self._visible_entry_count = visible_count
+        self._update_parent_labels(visible_counts, total_counts)
         self._update_summary_label(visible_count)
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
 
-    def _on_available_item_activated(self, item: QListWidgetItem) -> None:
-        if item is None:
+    def _on_tree_item_double_clicked(self, index: QtCore.QModelIndex) -> None:
+        item = self._available_model.itemFromIndex(index)
+        self._emit_node_request_if_available(item)
+
+    def _on_tree_selection_changed(
+        self,
+        selected: QtCore.QItemSelection,
+        deselected: QtCore.QItemSelection,
+    ) -> None:
+        indexes = selected.indexes()
+        if not indexes:
+            return
+        item = self._available_model.itemFromIndex(indexes[0])
+        self._emit_node_request_if_available(item)
+
+    def _emit_node_request_if_available(self, item: Optional[QStandardItem]) -> None:
+        if item is None or item.hasChildren():
             return
         node_type = item.data(Qt.UserRole)
-        if isinstance(node_type, str):
+        if isinstance(node_type, str) and node_type:
             self.node_type_requested.emit(node_type)
 
     def _on_icon_size_changed(self, value: int) -> None:
@@ -534,7 +565,7 @@ class NodeContentBrowser(QWidget):
     def _apply_icon_size(self) -> None:
         icon_size_value = self._current_icon_size_value()
         icon_size = QSize(icon_size_value, icon_size_value)
-        self._available_list.setIconSize(icon_size)
+        self._available_tree.setIconSize(icon_size)
         self._refresh_icons()
         self._refresh_item_sizes()
         tooltip = (
@@ -600,15 +631,7 @@ class NodeContentBrowser(QWidget):
     def _apply_profile(self, profile: BrowserLayoutProfile) -> None:
         self._current_profile = profile
         self._compact_mode = profile.compact
-        self._available_list.setViewMode(profile.view_mode)
-        self._available_list.setFlow(profile.flow)
-        self._available_list.setWrapping(profile.wrapping)
-        self._available_list.setSpacing(
-            8 if profile.view_mode == QListWidget.IconMode else 4
-        )
-        self._available_list.setWordWrap(
-            False if profile.view_mode == QListWidget.IconMode else True
-        )
+        self._available_tree.setIndentation(14 if profile.compact else 18)
         padding = profile.card_padding
         if self._card_layout is not None:
             self._card_layout.setContentsMargins(*padding)
@@ -652,29 +675,27 @@ class NodeContentBrowser(QWidget):
 
     def _refresh_item_sizes(self) -> None:
         item_size = self._list_item_size_hint()
-        for index in range(self._available_list.count()):
-            item = self._available_list.item(index)
-            if item is not None:
-                item.setSizeHint(item_size)
-        self._available_list.updateGeometry()
-        self._available_list.scheduleDelayedItemsLayout()
-        viewport = self._available_list.viewport()
+        parent_size = self._parent_item_size_hint()
+        for genre_item in self._genre_items.values():
+            genre_item.setSizeHint(parent_size)
+            for row in range(genre_item.rowCount()):
+                child = genre_item.child(row)
+                if child is not None:
+                    child.setSizeHint(item_size)
+        self._available_tree.updateGeometry()
+        self._available_tree.doItemsLayout()
+        viewport = self._available_tree.viewport()
         if viewport is not None:
             viewport.update()
-        if self._available_list.viewMode() == QListWidget.IconMode:
-            self._available_list.setGridSize(item_size)
 
     def _refresh_icons(self) -> None:
-        for index, entry in enumerate(self._view_model.entries):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
+        for entry, item in self._entry_items:
             item.setIcon(self._icon_for_entry(entry))
 
     def _list_item_size_hint(self) -> QSize:
-        font: QFontMetrics = self._available_list.fontMetrics()
+        font: QFontMetrics = self._available_tree.fontMetrics()
         icon_size = self._current_icon_size_value()
-        viewport = self._available_list.viewport()
+        viewport = self._available_tree.viewport()
         viewport_width = viewport.width() if viewport is not None else 0
         if viewport_width <= 0:
             viewport_width = max(self.width() - 40, icon_size + 64)
@@ -682,11 +703,6 @@ class NodeContentBrowser(QWidget):
         line_spacing = font.lineSpacing()
         leading = font.leading()
         profile = self._current_profile
-
-        if profile.view_mode == QListWidget.IconMode and not profile.compact:
-            padding = max(6, icon_size // 6)
-            cell = icon_size + padding * 2
-            return QSize(cell, cell)
 
         if profile.compact:
             vertical_padding = max(6, leading + 2)
@@ -696,15 +712,7 @@ class NodeContentBrowser(QWidget):
             width = max(220, viewport_width)
             return QSize(width, height)
 
-        horizontal_gap = self._available_list.spacing()
-        columns = max(1, profile.grid_columns)
-        if viewport_width > 0 and profile.view_mode == QListWidget.IconMode:
-            total_spacing = horizontal_gap * max(columns - 1, 0)
-            usable_width = max(icon_size + 64, viewport_width - total_spacing)
-            width = max(icon_size + 72, usable_width // columns)
-        else:
-            width = max(icon_size + 72, viewport_width)
-
+        width = max(icon_size + 72, viewport_width)
         title_width = font.horizontalAdvance("M" * 18)
         width = max(width, title_width + icon_size // 2)
 
@@ -712,6 +720,16 @@ class NodeContentBrowser(QWidget):
         text_lines = 2
         text_height = line_spacing * text_lines
         height = max(icon_size + vertical_padding, text_height + vertical_padding)
+        return QSize(width, height)
+
+    def _parent_item_size_hint(self) -> QSize:
+        font: QFontMetrics = self._available_tree.fontMetrics()
+        line_spacing = font.lineSpacing()
+        leading = font.leading()
+        height = line_spacing + max(4, leading)
+        viewport = self._available_tree.viewport()
+        viewport_width = viewport.width() if viewport is not None else 0
+        width = max(220, viewport_width)
         return QSize(width, height)
 
     def _icon_size_from_level(self, level: int) -> int:
@@ -816,9 +834,6 @@ class NodeContentBrowser(QWidget):
         return ""
 
     def _format_entry_text(self, entry: NodeCatalogEntry) -> str:
-        if self._current_profile.view_mode == QListWidget.IconMode and not self._compact_mode:
-            return ""
-
         title = entry.title.strip()
         subtitle = entry.subtitle.strip()
         node_type = entry.node_type.strip()
@@ -854,22 +869,18 @@ class NodeContentBrowser(QWidget):
         return "\n".join(lines)
 
     def _update_item_texts(self) -> None:
-        for index, entry in enumerate(self._view_model.entries):
-            item = self._available_list.item(index)
-            if item is None:
-                continue
+        for entry, item in self._entry_items:
             item.setText(self._format_entry_text(entry))
+        self._available_tree.doItemsLayout()
 
     def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
         if self._result_summary_label is None:
             return
         if visible_count is None:
             visible_count = sum(
-                0 if item is None or item.isHidden() else 1
-                for item in (
-                    self._available_list.item(i)
-                    for i in range(self._available_list.count())
-                )
+                1
+                for entry, item in self._entry_items
+                if self._is_item_visible(item)
             )
         self._visible_entry_count = visible_count
         if self._current_genre:
@@ -878,6 +889,52 @@ class NodeContentBrowser(QWidget):
         else:
             text = f"{visible_count} 件 / 全 {self._total_entry_count} 件"
         self._result_summary_label.setText(text)
+
+    def _update_parent_labels(
+        self,
+        visible_counts: Optional[Dict[str, int]] = None,
+        total_counts: Optional[Dict[str, int]] = None,
+    ) -> None:
+        if visible_counts is None or total_counts is None:
+            visible_counts = {
+                genre: genre_item.rowCount()
+                for genre, genre_item in self._genre_items.items()
+            }
+            total_counts = visible_counts
+        for genre, genre_item in self._genre_items.items():
+            visible = visible_counts.get(genre, 0)
+            total = total_counts.get(genre, 0)
+            genre_item.setText(f"{genre} ({visible} / {total})")
+
+    def _entry_from_item(self, item: Optional[QStandardItem]) -> Optional[NodeCatalogEntry]:
+        if item is None:
+            return None
+        entry = item.data(Qt.UserRole + 3)
+        return entry if isinstance(entry, NodeCatalogEntry) else None
+
+    def _is_item_visible(self, item: QStandardItem) -> bool:
+        if item is None:
+            return False
+        index = item.index()
+        parent = index.parent()
+        if self._available_tree.isRowHidden(index.row(), parent):
+            return False
+        if parent.isValid() and self._available_tree.isRowHidden(parent.row(), parent.parent()):
+            return False
+        return True
+
+    def _connect_tree_selection_model(self) -> None:
+        if self._tree_selection_model is not None and self._tree_selection_connected:
+            self._tree_selection_model.selectionChanged.disconnect(
+                self._on_tree_selection_changed
+            )
+            self._tree_selection_connected = False
+        self._tree_selection_model = self._available_tree.selectionModel()
+        if self._tree_selection_model is not None:
+            self._tree_selection_model.selectionChanged.connect(
+                self._on_tree_selection_changed
+            )
+            self._tree_selection_connected = True
 
     def _guess_genre(self, node_type: str) -> str:
         normalized = node_type.strip()
