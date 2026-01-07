@@ -280,6 +280,48 @@ class ProjectRezPackageRepository:
         shutil.copytree(source.path, target_dir, dirs_exist_ok=True)
         return RezPackageSpec(source.name, source.version, target_dir)
 
+    def write_project_package(
+        self,
+        project_name: str,
+        requires: Iterable[str],
+        *,
+        version: str = "1.0",
+    ) -> Path:
+        normalized_dir = self._normalize_project_package_dir(project_name)
+        package_dir = self.root_dir / normalized_dir / version
+        package_dir.mkdir(parents=True, exist_ok=True)
+        package_file = package_dir / "package.py"
+        payload = self._render_project_package(project_name, version, requires)
+        package_file.write_text(payload, encoding="utf-8")
+        return package_file
+
+    @staticmethod
+    def _normalize_project_package_dir(project_name: str) -> str:
+        normalized = project_name.strip() or "project"
+        return re.sub(r"[\\\\/:*?\"<>|]", "_", normalized)
+
+    @staticmethod
+    def _render_project_package(
+        project_name: str,
+        version: str,
+        requires: Iterable[str],
+    ) -> str:
+        normalized_requires = []
+        for entry in requires:
+            if isinstance(entry, str) and entry.strip():
+                normalized_requires.append(entry.strip())
+        unique_requires = list(dict.fromkeys(normalized_requires))
+        requires_lines = "\n".join(f'    "{item}",' for item in unique_requires)
+        if requires_lines:
+            requires_block = f"requires = [\n{requires_lines}\n]\n"
+        else:
+            requires_block = "requires = []\n"
+        return (
+            f'name = "{project_name}"\n'
+            f'version = "{version}"\n\n'
+            f"{requires_block}"
+        )
+
     def validate(self) -> RezPackageValidationResult:
         missing: List[str] = []
         invalid: List[str] = []

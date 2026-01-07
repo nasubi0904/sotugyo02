@@ -187,6 +187,26 @@ class ToolEnvironmentService:
     ) -> RezPackageValidationResult:
         return ProjectRezPackageRepository(project_root).validate()
 
+    def save_project_rez_package(
+        self,
+        project_root: Path,
+        project_name: str,
+        requires: Iterable[str],
+        *,
+        version: str = "1.0",
+    ) -> Optional[Path]:
+        normalized_requires = [
+            entry.strip() for entry in requires if isinstance(entry, str) and entry.strip()
+        ]
+        if not normalized_requires:
+            return None
+        repository = ProjectRezPackageRepository(project_root)
+        return repository.write_project_package(
+            project_name,
+            normalized_requires,
+            version=version,
+        )
+
     # ------------------------------------------------------------------
     # ユーティリティ
     # ------------------------------------------------------------------

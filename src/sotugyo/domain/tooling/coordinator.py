@@ -127,3 +127,18 @@ class NodeEditorCoordinator:
 
     def validate_project_rez_packages(self, project_root: Path):
         return self.tool_service.validate_project_rez_packages(project_root)
+
+    def save_project_rez_package(
+        self,
+        project_root: Path,
+        project_name: str,
+        requires: Iterable[str],
+        *,
+        version: str = "1.0",
+    ):
+        return self.tool_service.save_project_rez_package(
+            project_root,
+            project_name,
+            requires,
+            version=version,
+        )

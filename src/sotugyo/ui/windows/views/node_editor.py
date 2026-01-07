@@ -1669,8 +1669,6 @@ class NodeEditorWindow(QMainWindow):
         if self._current_project_root is None:
             return
         packages = self._collect_rez_packages_in_graph()
-        if not packages:
-            return
         try:
             result = self._coordinator.sync_rez_packages_to_project(
                 self._current_project_root, packages
@@ -1684,6 +1682,22 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("\n".join(lines))
         self._load_project_rez_packages()
         self._refresh_content_browser_entries()
+        self._save_project_rez_package_manifest()
+
+    def _save_project_rez_package_manifest(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        requirements = self._collect_rez_requirements_in_graph()
+        if not requirements:
+            return
+        try:
+            self._coordinator.save_project_rez_package(
+                self._current_project_root,
+                self._current_project_settings.project_name,
+                requirements,
+            )
+        except OSError as exc:
+            self._show_warning_dialog(f"プロジェクト Rez パッケージの保存に失敗しました: {exc}")
 
     def _graph_file_path(self) -> Optional[Path]:
         if self._current_project_root is None:
@@ -1744,6 +1758,17 @@ class NodeEditorWindow(QMainWindow):
                 packages.add(candidate)
         return sorted(packages)
 
+    def _collect_rez_requirements_in_graph(self) -> List[str]:
+        requirements: List[str] = []
+        for node in self._collect_all_nodes():
+            if not isinstance(node, ToolEnvironmentNode):
+                continue
+            node_name = self._safe_node_name(node)
+            requirement = self._extract_rez_package_requirement(node_name)
+            if requirement:
+                requirements.append(requirement)
+        return sorted(dict.fromkeys(requirements))
+
     @staticmethod
     def _extract_rez_package_name(node_name: str) -> Optional[str]:
         if not node_name.startswith("Rez:"):
@@ -1754,6 +1779,25 @@ class NodeEditorWindow(QMainWindow):
         if candidate.endswith(")") and " (" in candidate:
             candidate = candidate.rsplit("(", 1)[0].strip()
         return candidate or None
+
+    @staticmethod
+    def _extract_rez_package_requirement(
+        node_name: str, *, default_version: str = "local"
+    ) -> Optional[str]:
+        if not node_name.startswith("Rez:"):
+            return None
+        candidate = node_name.split("Rez:", 1)[1].strip()
+        if not candidate:
+            return None
+        version = None
+        if candidate.endswith(")") and " (" in candidate:
+            raw_name, raw_version = candidate.rsplit("(", 1)
+            candidate = raw_name.strip()
+            version = raw_version.rstrip(")").strip() or None
+        if not candidate:
+            return None
+        version_label = version or default_version
+        return f"{candidate}-{version_label}" if version_label else candidate
 
     def _check_rez_environments_in_project(self) -> None:
         packages = self._collect_rez_packages_in_graph()
