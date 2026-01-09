@@ -271,8 +271,8 @@ class NodeContentBrowser(QWidget):
         card = QFrame(self)
         card.setObjectName("panelCard")
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 16, 16, 16)
-        card_layout.setSpacing(8)
+        card_layout.setContentsMargins(12, 10, 12, 10)
+        card_layout.setSpacing(6)
         self._card_frame = card
         self._card_layout = card_layout
 
@@ -280,12 +280,9 @@ class NodeContentBrowser(QWidget):
         header_layout.setContentsMargins(0, 0, 0, 0)
         header_layout.setSpacing(6)
 
-        title_label = QLabel("コンテンツブラウザ", card)
-        title_label.setObjectName("panelTitle")
-        header_layout.addWidget(title_label)
         header_layout.addStretch(1)
 
-        back_button = QPushButton("スタート画面に戻る", card)
+        back_button = QPushButton("戻る", card)
         back_button.clicked.connect(self.back_requested.emit)
         header_layout.addWidget(back_button)
 
@@ -293,23 +290,19 @@ class NodeContentBrowser(QWidget):
 
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(0, 0, 0, 0)
-        path_layout.setSpacing(6)
-
-        path_label = QLabel("場所", card)
-        path_label.setProperty("hint", "secondary")
-        path_layout.addWidget(path_label)
+        path_layout.setSpacing(4)
 
         self._path_label = QLabel("/", card)
         self._path_label.setObjectName("contentPathLabel")
         self._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         path_layout.addWidget(self._path_label, 1)
 
-        up_button = QPushButton("上の階層へ", card)
+        up_button = QPushButton("上へ", card)
         up_button.setEnabled(False)
         self._up_folder_button = up_button
         path_layout.addWidget(up_button)
 
-        new_folder_button = QPushButton("フォルダ作成", card)
+        new_folder_button = QPushButton("新規フォルダ", card)
         self._new_folder_button = new_folder_button
         path_layout.addWidget(new_folder_button)
 
@@ -317,9 +310,9 @@ class NodeContentBrowser(QWidget):
 
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
-        search_layout.setSpacing(6)
+        search_layout.setSpacing(4)
 
-        self._search_line.setPlaceholderText("アイコンやノード名を検索")
+        self._search_line.setPlaceholderText("検索")
         self._search_line.setClearButtonEnabled(True)
         search_layout.addWidget(self._search_line, 1)
 
@@ -404,15 +397,11 @@ class NodeContentBrowser(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        caption = QLabel("表示件数", container)
-        caption.setProperty("hint", "secondary")
-
         summary = QLabel("0 件", container)
         summary.setObjectName("contentSummaryLabel")
         summary.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self._result_summary_label = summary
 
-        layout.addWidget(caption)
         layout.addWidget(summary)
 
         return container
