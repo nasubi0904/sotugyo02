@@ -145,7 +145,6 @@ class NodeContentBrowser(QWidget):
 
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
-    back_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -275,18 +274,6 @@ class NodeContentBrowser(QWidget):
         card_layout.setSpacing(6)
         self._card_frame = card
         self._card_layout = card_layout
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(6)
-
-        header_layout.addStretch(1)
-
-        back_button = QPushButton("ホーム画面へ戻る", card)
-        back_button.clicked.connect(self.back_requested.emit)
-        header_layout.addWidget(back_button)
-
-        outer_layout.addLayout(header_layout)
 
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(0, 0, 0, 0)

@@ -20,7 +20,6 @@ class NodeContentBrowserDock(QDockWidget):
 
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
-    back_requested = Signal()
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__("コンテンツブラウザ", parent)
@@ -36,7 +35,6 @@ class NodeContentBrowserDock(QDockWidget):
         browser.setMinimumHeight(160)
         browser.node_type_requested.connect(self.node_type_requested)
         browser.search_submitted.connect(self.search_submitted)
-        browser.back_requested.connect(self.back_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -67,4 +65,3 @@ class NodeContentBrowserDock(QDockWidget):
         """検索入力の現在値を返す。"""
 
         return self._browser.current_search_text()
-
