@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -15,7 +14,7 @@ from src.sotugyo.domain.tooling.repositories.rez_packages import (
 )
 
 
-def test_register_candidate_writes_package_and_index(tmp_path) -> None:
+def test_register_candidate_writes_package(tmp_path) -> None:
     repo = RezPackageRepository(root_dir=tmp_path)
     executable = tmp_path / "maya.exe"
     executable.write_text("#!/bin/sh\n")
@@ -33,18 +32,13 @@ def test_register_candidate_writes_package_and_index(tmp_path) -> None:
     content = package_file.read_text(encoding="utf-8")
     assert "name = \"autodesk_maya\"" in content
     assert str(executable) in content
-
-    index_path = tmp_path / "packages.json"
-    assert index_path.exists()
-    data = json.loads(index_path.read_text(encoding="utf-8"))
-    assert data["templates"]["autodesk.maya"]["package"] == "autodesk_maya"
-    assert data["templates"]["autodesk.maya"]["version"] == "2025"
+    assert repo.get_package_name("autodesk.maya") == "autodesk_maya"
 
 
-def test_get_package_name_returns_normalized_when_unknown(tmp_path) -> None:
+def test_get_package_name_returns_none_when_unknown(tmp_path) -> None:
     repo = RezPackageRepository(root_dir=tmp_path)
 
-    assert repo.get_package_name("adobe.after_effects") == "adobe_after_effects"
+    assert repo.get_package_name("adobe.after_effects") is None
 
 
 def test_list_packages_prefers_latest_version(tmp_path) -> None:
@@ -78,10 +72,6 @@ def test_sync_packages_to_project_and_validate(tmp_path) -> None:
     copied_file = project_root / "config" / "rez_packages" / "houdini" / "20.0" / "package.py"
     assert copied_file.exists()
     assert result.missing == ("missing_pkg",)
-
-    index_path = project_root / "config" / "rez_packages" / "packages.json"
-    index = json.loads(index_path.read_text(encoding="utf-8"))
-    assert index["packages"][0]["name"] == "houdini"
 
     project_repo = ProjectRezPackageRepository(project_root)
     (project_repo.root_dir / "broken").mkdir(parents=True, exist_ok=True)

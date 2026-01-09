@@ -7,8 +7,10 @@ import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+import importlib.util
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
 
+from ....infrastructure.paths.storage import get_rez_package_dir
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,6 +42,116 @@ class RezResolveResult:
             "stdout": self.stdout,
             "stderr": self.stderr,
         }
+
+
+@dataclass(slots=True, frozen=True)
+class RezQueryResult:
+    """Rez パッケージ照会の結果。"""
+
+    success: bool
+    checked: Tuple[str, ...]
+    missing: Tuple[str, ...]
+    message: str = ""
+
+    def to_dict(self) -> Dict[str, object]:
+        return {
+            "success": self.success,
+            "checked": list(self.checked),
+            "missing": list(self.missing),
+            "message": self.message,
+        }
+
+
+class RezPackageQueryService:
+    """Rez Python API を使ってパッケージの存在を検証する。"""
+
+    def check_requirements(self, requirements: Iterable[str]) -> RezQueryResult:
+        normalized = tuple(
+            entry.strip() for entry in requirements if isinstance(entry, str) and entry.strip()
+        )
+        if not normalized:
+            return RezQueryResult(
+                success=True,
+                checked=(),
+                missing=(),
+                message="Rez パッケージの要求がありません。",
+            )
+        if importlib.util.find_spec("rez") is None:
+            return RezQueryResult(
+                success=False,
+                checked=normalized,
+                missing=normalized,
+                message="rez Python モジュールが見つかりません。",
+            )
+        with self._ensure_kdmrez_packages_path():
+            try:
+                import rez  # noqa: F401
+                from rez import packages as rez_packages  # type: ignore
+            except ImportError as exc:
+                return RezQueryResult(
+                    success=False,
+                    checked=normalized,
+                    missing=normalized,
+                    message=f"rez Python モジュールの読み込みに失敗しました: {exc}",
+                )
+
+            getter = getattr(rez_packages, "get_package_from_string", None)
+            if getter is None:
+                return RezQueryResult(
+                    success=False,
+                    checked=normalized,
+                    missing=normalized,
+                    message="rez.packages の照会 API が見つかりません。",
+                )
+
+            missing = []
+            for requirement in normalized:
+                try:
+                    package = getter(requirement)
+                except Exception as exc:
+                    LOGGER.error("rez.query の呼び出しに失敗しました: %s", exc, exc_info=True)
+                    return RezQueryResult(
+                        success=False,
+                        checked=normalized,
+                        missing=tuple(normalized),
+                        message=f"rez.query の呼び出しに失敗しました: {exc}",
+                    )
+                if package is None:
+                    missing.append(requirement)
+            return RezQueryResult(
+                success=not missing,
+                checked=normalized,
+                missing=tuple(missing),
+                message="Rez パッケージの照会が完了しました。",
+            )
+
+    @staticmethod
+    def _ensure_kdmrez_packages_path():
+        kdmrez_path = get_rez_package_dir()
+        current = os.environ.get("REZ_PACKAGES_PATH", "")
+        if not current:
+            os.environ["REZ_PACKAGES_PATH"] = str(kdmrez_path)
+            return _RezPackagesPathContext(previous=None)
+        parts = [entry for entry in current.split(os.pathsep) if entry]
+        lowered = {entry.lower() for entry in parts}
+        if str(kdmrez_path).lower() in lowered:
+            return _RezPackagesPathContext(previous=None)
+        updated = os.pathsep.join([str(kdmrez_path), *parts])
+        os.environ["REZ_PACKAGES_PATH"] = updated
+        return _RezPackagesPathContext(previous=current)
+
+
+class _RezPackagesPathContext:
+    def __init__(self, previous: str | None) -> None:
+        self._previous = previous
+
+    def __enter__(self) -> None:
+        return None
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        if self._previous is None:
+            return
+        os.environ["REZ_PACKAGES_PATH"] = self._previous
 
 
 class RezEnvironmentResolver:
@@ -185,4 +297,9 @@ class RezEnvironmentResolver:
         return shutil.which(self._executable, path=path_env) is not None
 
 
-__all__ = ["RezEnvironmentResolver", "RezResolveResult"]
+__all__ = [
+    "RezEnvironmentResolver",
+    "RezPackageQueryService",
+    "RezQueryResult",
+    "RezResolveResult",
+]

@@ -132,33 +132,6 @@ class ToolEnvironmentDefinition:
             updated_at=_parse_timestamp(data.get("updated_at")),
         )
 
-    def build_payload(self, tool: Optional[RegisteredTool] = None) -> Dict[str, Any]:
-        """ノードへ伝播する環境情報を構築する。"""
-
-        payload: Dict[str, Any] = {
-            "environment_id": self.environment_id,
-            "environment_name": self.name,
-            "tool_id": self.tool_id,
-            "version_label": self.version_label,
-        }
-        if tool is not None:
-            payload["tool_name"] = tool.display_name
-            if tool.version:
-                payload["tool_version"] = tool.version
-        if self.template_id:
-            payload["template_id"] = self.template_id
-        if self.rez_packages:
-            payload["rez_packages"] = list(self.rez_packages)
-        if self.rez_variants:
-            payload["rez_variants"] = list(self.rez_variants)
-        if self.rez_environment:
-            payload["rez_environment"] = dict(self.rez_environment)
-        if self.metadata:
-            payload["metadata"] = dict(self.metadata)
-        payload.setdefault("summary", self.version_label or payload.get("tool_name", ""))
-        return payload
-
-
 @dataclass(slots=True)
 class TemplateInstallationCandidate:
     """テンプレートから発見されたインストール候補。"""

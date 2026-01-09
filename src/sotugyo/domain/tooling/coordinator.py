@@ -90,8 +90,9 @@ class NodeEditorCoordinator:
                 tool.display_name if tool is not None else "",
             )
             icon_path = None
-            if tool is not None and tool.template_id:
-                icon_path = str(tool.executable_path)
+            if tool is not None and tool.executable_path.suffix.lower() == ".exe":
+                if tool.executable_path.exists():
+                    icon_path = str(tool.executable_path)
             records.append(
                 NodeCatalogRecord(
                     node_type=node_type,
@@ -126,3 +127,31 @@ class NodeEditorCoordinator:
 
     def validate_project_rez_packages(self, project_root: Path):
         return self.tool_service.validate_project_rez_packages(project_root)
+
+    def save_project_rez_package(
+        self,
+        project_root: Path,
+        project_name: str,
+        requires: Iterable[str],
+        *,
+        version: str = "1.0",
+    ):
+        return self.tool_service.save_project_rez_package(
+            project_root,
+            project_name,
+            requires,
+            version=version,
+        )
+
+    def check_project_rez_requirements(
+        self,
+        project_root: Path,
+        project_name: str,
+        *,
+        version: str = "1.0",
+    ):
+        return self.tool_service.check_project_rez_requirements(
+            project_root,
+            project_name,
+            version=version,
+        )

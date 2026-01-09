@@ -6,7 +6,6 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
@@ -53,6 +52,12 @@ def make_tool(tool_id: str) -> RegisteredTool:
     )
 
 
+def make_repository() -> ToolConfigRepository:
+    repository = ToolConfigRepository()
+    repository.save_all([], [])
+    return repository
+
+
 def test_tool_environment_definition_serialization_roundtrip() -> None:
     definition = ToolEnvironmentDefinition(
         environment_id="env-1",
@@ -76,92 +81,88 @@ def test_tool_environment_definition_serialization_roundtrip() -> None:
     assert restored.metadata.get("rez_validation", {}).get("success") is True
 
 
-def test_tool_config_repository_uses_rez_package_dir(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("LOCALAPPDATA", "")
-    monkeypatch.setenv("APPDATA", "")
-    from src.sotugyo.domain.tooling.repositories import config as config_module
+def test_tool_config_repository_is_memory_only() -> None:
+    repository = make_repository()
+    tool = make_tool("tool-1")
 
-    monkeypatch.setattr(config_module, "get_rez_package_dir", lambda: tmp_path)
+    repository.save_all([tool], [])
 
-    repository = config_module.ToolConfigRepository()
+    stored_tools, stored_envs = repository.load_all()
 
-    assert repository._storage_dir == tmp_path
-    assert repository._storage_path.parent == tmp_path
-    assert repository._storage_path.name == config_module.ToolConfigRepository.FILE_NAME
+    assert stored_tools[0].tool_id == "tool-1"
+    assert stored_envs == []
 
 
 def test_environment_registry_saves_rez_metadata() -> None:
-    with TemporaryDirectory() as tmp_dir:
-        repository = ToolConfigRepository(storage_dir=Path(tmp_dir))
-        resolver = DummyResolver(success=False, message="package missing")
-        service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
+    repository = make_repository()
+    resolver = DummyResolver(success=False, message="package missing")
+    service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
 
-        tool = make_tool("tool-1")
-        tools = [tool]
-        environments: list[ToolEnvironmentDefinition] = []
+    tool = make_tool("tool-1")
+    tools = [tool]
+    environments: list[ToolEnvironmentDefinition] = []
 
-        environment = service.save(
-            name="テスト環境",
-            tool_id=tool.tool_id,
-            version_label="v1",
-            tools=tools,
-            environments=environments,
-            template_id="autodesk.maya",
-            rez_packages=["maya"],
-            rez_variants=["platform-windows"],
-            rez_environment={"MAYA_APP_DIR": "C:/maya"},
-        )
+    environment = service.save(
+        name="テスト環境",
+        tool_id=tool.tool_id,
+        version_label="v1",
+        tools=tools,
+        environments=environments,
+        template_id="autodesk.maya",
+        rez_packages=["maya"],
+        rez_variants=["platform-windows"],
+        rez_environment={"MAYA_APP_DIR": "C:/maya"},
+    )
 
-        assert resolver.calls
-        packages, variants, env_map = resolver.calls[0]
-        assert packages == ("maya",)
-        assert variants == ("platform-windows",)
-        assert env_map == {"MAYA_APP_DIR": "C:/maya"}
+    assert resolver.calls
+    packages, variants, env_map = resolver.calls[0]
+    assert packages == ("maya",)
+    assert variants == ("platform-windows",)
+    assert env_map == {"MAYA_APP_DIR": "C:/maya"}
 
-        assert environment.rez_packages == ("maya",)
-        assert environment.template_id == "autodesk.maya"
-        assert environment.metadata["rez_validation"]["success"] is False
+    assert environment.rez_packages == ("maya",)
+    assert environment.template_id == "autodesk.maya"
+    assert environment.metadata["rez_validation"]["success"] is False
 
-        stored_tools, stored_envs = repository.load_all()
-        assert stored_tools[0].tool_id == tool.tool_id
-        assert stored_envs[0].rez_packages == ("maya",)
+    stored_tools, stored_envs = repository.load_all()
+    assert stored_tools[0].tool_id == tool.tool_id
+    assert stored_envs[0].rez_packages == ("maya",)
 
 
 def test_environment_registry_can_clear_template_and_packages() -> None:
-    with TemporaryDirectory() as tmp_dir:
-        repository = ToolConfigRepository(storage_dir=Path(tmp_dir))
-        resolver = DummyResolver(success=True, message="ok")
-        service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
+    repository = make_repository()
+    resolver = DummyResolver(success=True, message="ok")
+    service = ToolEnvironmentRegistryService(repository=repository, rez_resolver=resolver)
 
-        tool = make_tool("tool-1")
-        initial = service.save(
-            name="環境A",
-            tool_id=tool.tool_id,
-            version_label="v1",
-            tools=[tool],
-            environments=[],
-            template_id="autodesk.maya",
-            rez_packages=["maya"],
-        )
+    tool = make_tool("tool-1")
+    initial = service.save(
+        name="環境A",
+        tool_id=tool.tool_id,
+        version_label="v1",
+        tools=[tool],
+        environments=[],
+        template_id="autodesk.maya",
+        rez_packages=["maya"],
+    )
 
-        tools, environments = repository.load_all()
-        updated = service.save(
-            name="環境A",
-            tool_id=tool.tool_id,
-            version_label="v2",
-            tools=tools,
-            environments=environments,
-            environment_id=initial.environment_id,
-            template_id=None,
-            rez_packages=[],
-            rez_variants=[],
-            rez_environment={},
-        )
+    tools, environments = repository.load_all()
+    updated = service.save(
+        name="環境A",
+        tool_id=tool.tool_id,
+        version_label="v2",
+        tools=tools,
+        environments=environments,
+        environment_id=initial.environment_id,
+        template_id=None,
+        rez_packages=[],
+        rez_variants=[],
+        rez_environment={},
+    )
 
-        assert updated.template_id is None
-        assert updated.rez_packages == ()
-        assert updated.rez_variants == ()
-        assert updated.rez_environment == {}
+    assert updated.template_id is None
+    assert updated.rez_packages == ()
+    assert updated.rez_variants == ()
+    assert updated.rez_environment == {}
 
 
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
@@ -223,4 +224,3 @@ def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> Non
     assert called_env is not None
     path_entries = called_env["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
-

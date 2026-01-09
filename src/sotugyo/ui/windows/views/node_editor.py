@@ -31,6 +31,8 @@ QMenu = QtWidgets.QMenu
 QMenuBar = QtWidgets.QMenuBar
 QMessageBox = QtWidgets.QMessageBox
 QSizePolicy = QtWidgets.QSizePolicy
+QHBoxLayout = QtWidgets.QHBoxLayout
+QPushButton = QtWidgets.QPushButton
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
@@ -59,6 +61,7 @@ from sotugyo.domain.tooling.coordinator import (
     NodeEditorCoordinator,
     ToolEnvironmentSnapshot,
 )
+from sotugyo.scripts import RezLauncherError, launch_rez_detached
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
@@ -211,6 +214,15 @@ class NodeEditorWindow(QMainWindow):
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(16, 16, 16, 16)
         central_layout.setSpacing(12)
+        top_controls = QWidget(central)
+        top_controls_layout = QHBoxLayout(top_controls)
+        top_controls_layout.setContentsMargins(0, 0, 0, 0)
+        top_controls_layout.setSpacing(6)
+        top_controls_layout.addStretch(1)
+        back_button = QPushButton("ホーム画面へ戻る", top_controls)
+        back_button.clicked.connect(self._return_to_start)
+        top_controls_layout.addWidget(back_button)
+        central_layout.addWidget(top_controls)
         central_layout.addWidget(self._graph_widget, 1)
 
         self.setCentralWidget(central)
@@ -229,17 +241,17 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
         content_dock = NodeContentBrowserDock(self)
         content_dock.node_type_requested.connect(self._spawn_node_by_type)
         content_dock.search_submitted.connect(self._handle_content_browser_search)
-        content_dock.back_requested.connect(self._return_to_start)
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
 
-        self.resizeDocks([content_dock], [220], Qt.Vertical)
+        self.resizeDocks([content_dock], [260], Qt.Vertical)
         self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
 
     def _create_menus(self) -> None:
@@ -425,7 +437,6 @@ class NodeEditorWindow(QMainWindow):
         records = self._build_available_node_records()
         if self._tool_snapshot is not None:
             records = self._coordinator.extend_catalog(records, self._tool_snapshot)
-        records.extend(self._build_rez_package_records())
         entries = [
             NodeCatalogEntry(
                 node_type=record.node_type,
@@ -454,16 +465,6 @@ class NodeEditorWindow(QMainWindow):
         merged = dict(self._local_rez_packages)
         merged.update(self._project_rez_packages)
         return merged
-
-    def _rez_package_origin_label(self, package_name: str) -> str:
-        if package_name in self._project_rez_packages:
-            return "プロジェクト"
-        return "KDMrez"
-
-    def _rez_package_source_tag(self, package_name: str) -> str:
-        if package_name in self._project_rez_packages:
-            return "project"
-        return "local"
 
     def _project_rez_package_dir(self) -> str:
         if self._current_project_root is None:
@@ -515,6 +516,7 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_window_title()
         self._refresh_content_browser_entries()
         self._load_project_graph()
+        self._check_project_rez_manifest_requirements()
 
         report = self._project_service.validate_structure(project_root)
         if not report.is_valid:
@@ -558,24 +560,6 @@ class NodeEditorWindow(QMainWindow):
                 keywords=("note", "メモ", "記録"),
             ),
         ]
-        return records
-
-    def _build_rez_package_records(self) -> List[NodeCatalogRecord]:
-        records: List[NodeCatalogRecord] = []
-        all_packages = self._all_rez_packages()
-        for name, spec in sorted(all_packages.items()):
-            subtitle = spec.version or "Rez パッケージ"
-            origin = self._rez_package_origin_label(name)
-            keywords = (name, subtitle, origin)
-            records.append(
-                NodeCatalogRecord(
-                    node_type=f"rez-package:{name}",
-                    title=f"Rez: {name}",
-                    subtitle=f"{subtitle} / {origin}",
-                    genre="Rez パッケージ",
-                    keywords=keywords,
-                )
-            )
         return records
 
     def _open_graph_context_menu(self, position: QPoint) -> None:
@@ -643,10 +627,6 @@ class NodeEditorWindow(QMainWindow):
         if node_type.startswith("tool-environment:"):
             environment_id = node_type.split(":", 1)[1]
             self._create_tool_environment_node(environment_id)
-            return
-        if node_type.startswith("rez-package:"):
-            package_name = node_type.split(":", 1)[1]
-            self._create_rez_package_node(package_name)
             return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
@@ -743,49 +723,63 @@ class NodeEditorWindow(QMainWindow):
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
             return
-        tool = self._registered_tools.get(definition.tool_id)
-        if tool is None:
+        if definition.tool_id not in self._registered_tools:
             self._show_warning_dialog("環境が参照するツールが登録されていません。")
             return
         node = self._create_node(
             ToolEnvironmentNode.node_type_identifier(), definition.name
         )
-        if isinstance(node, ToolEnvironmentNode):
-            payload = definition.build_payload(tool)
-            node.configure_environment(
-                environment_id=definition.environment_id,
-                environment_name=definition.name,
-                tool_id=tool.tool_id,
-                tool_name=tool.display_name,
-                version_label=definition.version_label,
-                environment_payload=payload,
-            )
+        self._apply_tool_node_rez_properties(node, definition)
 
-    def _create_rez_package_node(self, package_name: str) -> None:
-        spec = self._all_rez_packages().get(package_name)
-        if spec is None:
-            self._show_warning_dialog("選択された Rez パッケージが見つかりません。")
-            return
-        node = self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), f"Rez: {spec.name}"
-        )
-        if isinstance(node, ToolEnvironmentNode):
-            version_label = spec.version or "local"
-            payload = {
-                "rez_packages": [spec.name],
-                "package_path": str(spec.path),
-                "summary": version_label,
-            }
-            source = self._rez_package_source_tag(package_name)
-            payload["rez_source"] = source
-            node.configure_environment(
-                environment_id=f"rez:{spec.name}",
-                environment_name=f"Rez: {spec.name}",
-                tool_id=spec.name,
-                tool_name=f"Rez Package ({source})",
-                version_label=version_label,
-                environment_payload=payload,
-            )
+    def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
+        env_id = ""
+        if (
+            definition.environment_id
+            and not definition.environment_id.startswith("rez:")
+            and not definition.template_id
+        ):
+            env_id = definition.environment_id
+        package_name = ""
+        if definition.rez_packages:
+            package_name = definition.rez_packages[0]
+        return {
+            "env_id": env_id,
+            "name": package_name,
+            "version": definition.version_label or "",
+        }
+
+    def _apply_tool_node_rez_properties(
+        self,
+        node,
+        definition: ToolEnvironmentDefinition,
+    ) -> bool:
+        rez_info = self._build_tool_node_rez_info(definition)
+        existing = self._node_custom_property_value(node, "rez_info")
+        if isinstance(existing, Mapping) and dict(existing) == rez_info:
+            return False
+        return self._set_node_custom_property(node, "rez_info", rez_info)
+
+    def _ensure_tool_node_rez_properties(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        definition = self._find_tool_environment_definition(node)
+        if definition is None:
+            return False
+        return self._apply_tool_node_rez_properties(node, definition)
+
+    def _find_tool_environment_definition(
+        self, node
+    ) -> Optional[ToolEnvironmentDefinition]:
+        node_name = self._safe_node_name(node)
+        for definition in self._tool_environments.values():
+            if definition.name == node_name:
+                return definition
+        package_name = self._extract_rez_package_name(node_name)
+        if package_name:
+            for definition in self._tool_environments.values():
+                if package_name in definition.rez_packages:
+                    return definition
+        return None
 
     def _create_node(self, node_type: str, display_name: str):
         node = self._graph.create_node(node_type, name=display_name)
@@ -1139,6 +1133,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+            self._update_tool_launch_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1280,6 +1275,33 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_tool_launch_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツールノードを選択してください。")
+            return
+        target = self._resolve_local_rez_launch_target(self._current_node)
+        if target is None:
+            self._show_warning_dialog("Rez 情報が見つからないため起動できません。")
+            return
+        package_request, available = target
+        if not available:
+            self._show_warning_dialog(
+                "ローカルの Rez パッケージが見つかりません。\n"
+                f"起動対象: {package_request}\n"
+                f"KDMrez: {get_rez_package_dir()}"
+            )
+            return
+        try:
+            result = launch_rez_detached(package_request=package_request, tool_args=None)
+        except RezLauncherError as exc:
+            self._show_error_dialog(f"Rez 環境の起動に失敗しました: {exc}")
+            return
+        self._show_info_dialog(
+            "Rez 環境を起動しました。\n"
+            f"PID: {result.pid}\n"
+            f"Log: {result.log_path}"
+        )
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1671,6 +1693,23 @@ class NodeEditorWindow(QMainWindow):
             normalized_size = MemoNode.DEFAULT_FONT_SIZE
         inspector.show_memo(str(memo_text or ""), normalized_size)
 
+    def _update_tool_launch_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, ToolEnvironmentNode):
+            inspector.set_tool_launch_state(enabled=False, label="-")
+            return
+        target = self._resolve_local_rez_launch_target(node)
+        if target is None:
+            inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし")
+            return
+        package_request, available = target
+        if not available:
+            inspector.set_tool_launch_state(enabled=False, label=f"{package_request} (未検出)")
+            return
+        inspector.set_tool_launch_state(enabled=True, label=package_request)
+
     def _is_memo_node(self, node) -> bool:
         if node is None:
             return False
@@ -1738,22 +1777,22 @@ class NodeEditorWindow(QMainWindow):
     def _sync_rez_packages_to_project(self) -> None:
         if self._current_project_root is None:
             return
-        packages = self._collect_rez_packages_in_graph()
-        if not packages:
+        self._save_project_rez_package_manifest()
+
+    def _save_project_rez_package_manifest(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        requirements = self._collect_rez_requirements_in_graph()
+        if not requirements:
             return
         try:
-            result = self._coordinator.sync_rez_packages_to_project(
-                self._current_project_root, packages
+            self._coordinator.save_project_rez_package(
+                self._current_project_root,
+                self._current_project_settings.project_name,
+                requirements,
             )
         except OSError as exc:
-            self._show_warning_dialog(f"Rez パッケージの同期に失敗しました: {exc}")
-            return
-        if result.has_missing:
-            lines = ["次の Rez パッケージを同期できませんでした。KDMrez を確認してください。"]
-            lines.extend(f"・{name}" for name in result.missing)
-            self._show_warning_dialog("\n".join(lines))
-        self._load_project_rez_packages()
-        self._refresh_content_browser_entries()
+            self._show_warning_dialog(f"プロジェクト Rez パッケージの保存に失敗しました: {exc}")
 
     def _graph_file_path(self) -> Optional[Path]:
         if self._current_project_root is None:
@@ -1808,15 +1847,133 @@ class NodeEditorWindow(QMainWindow):
         for node in self._collect_all_nodes():
             if not isinstance(node, ToolEnvironmentNode):
                 continue
-            payload = node.get_environment_payload()
-            packages_raw = payload.get("rez_packages") if isinstance(payload, dict) else None
-            if not isinstance(packages_raw, (list, tuple)):
-                continue
-            for package in packages_raw:
-                text = str(package).strip()
-                if text:
-                    packages.add(text)
+            name, _version = self._read_rez_package_properties(node)
+            if name:
+                packages.add(name)
         return sorted(packages)
+
+    def _collect_rez_requirements_in_graph(self) -> List[str]:
+        requirements: List[str] = []
+        for node in self._collect_all_nodes():
+            if not isinstance(node, ToolEnvironmentNode):
+                continue
+            name, version = self._read_rez_package_properties(node)
+            if not name:
+                continue
+            version_label = version or "local"
+            requirement = f"{name}-{version_label}" if version_label else name
+            requirements.append(requirement)
+        return sorted(dict.fromkeys(requirements))
+
+    @staticmethod
+    def _extract_rez_package_name(node_name: str) -> Optional[str]:
+        if not node_name.startswith("Rez:"):
+            return None
+        candidate = node_name.split("Rez:", 1)[1].strip()
+        if not candidate:
+            return None
+        if candidate.endswith(")") and " (" in candidate:
+            candidate = candidate.rsplit("(", 1)[0].strip()
+        return candidate or None
+
+    @staticmethod
+    def _extract_rez_package_requirement(
+        node_name: str, *, default_version: str = "local"
+    ) -> Optional[str]:
+        if not node_name.startswith("Rez:"):
+            return None
+        candidate = node_name.split("Rez:", 1)[1].strip()
+        if not candidate:
+            return None
+        version = None
+        if candidate.endswith(")") and " (" in candidate:
+            raw_name, raw_version = candidate.rsplit("(", 1)
+            candidate = raw_name.strip()
+            version = raw_version.rstrip(")").strip() or None
+        if not candidate:
+            return None
+        version_label = version or default_version
+        return f"{candidate}-{version_label}" if version_label else candidate
+
+    def _read_rez_package_properties(self, node) -> Tuple[Optional[str], Optional[str]]:
+        props = self._node_custom_properties(node)
+        rez_info = props.get("rez_info")
+        name_value = None
+        version_value = None
+        if isinstance(rez_info, dict):
+            name = rez_info.get("name")
+            version = rez_info.get("version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
+        if not name_value:
+            name = props.get("rez_name")
+            version = props.get("rez_version")
+            name_value = name if isinstance(name, str) and name.strip() else None
+            version_value = version if isinstance(version, str) and version.strip() else None
+        if name_value:
+            return name_value, version_value
+        node_name = self._safe_node_name(node)
+        name_from_label = self._extract_rez_package_name(node_name)
+        if not name_from_label:
+            return None, None
+        version_from_label = None
+        if node_name.startswith("Rez:"):
+            candidate = node_name.split("Rez:", 1)[1].strip()
+            if candidate.endswith(")") and " (" in candidate:
+                _, raw_version = candidate.rsplit("(", 1)
+                version_from_label = raw_version.rstrip(")").strip() or None
+        return name_from_label, version_from_label
+
+    def _resolve_local_rez_launch_target(
+        self, node
+    ) -> Optional[Tuple[str, bool]]:
+        name, version = self._read_rez_package_properties(node)
+        if not name:
+            return None
+        version_label = (version or "").strip()
+        if version_label and version_label.lower() != "local":
+            package_request = f"{name}-{version_label}"
+        else:
+            package_request = name
+        available = name in self._local_rez_packages
+        return package_request, available
+
+    def _apply_tool_node_rez_properties(self, node, definition) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        if not getattr(definition, "rez_packages", None):
+            return
+        name = next((entry for entry in definition.rez_packages if entry), None)
+        if not name:
+            return
+        version = definition.version_label or "local"
+        self._set_node_custom_property(node, "rez_info", {"name": name, "version": version})
+
+    def _ensure_tool_node_rez_properties(self, node) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        props = self._node_custom_properties(node)
+        rez_info = props.get("rez_info")
+        if isinstance(rez_info, dict):
+            name_value = rez_info.get("name")
+            if isinstance(name_value, str) and name_value.strip():
+                return
+        name_value = props.get("rez_name")
+        if isinstance(name_value, str) and name_value.strip():
+            return
+        name, version = self._read_rez_package_properties(node)
+        if not name:
+            return
+        version_label = version or "local"
+        self._set_node_custom_property(
+            node, "rez_info", {"name": name, "version": version_label}
+        )
+
+    def _set_node_custom_property(self, node, key: str, value: object) -> None:
+        try:
+            node.set_property(key, value, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("ノードプロパティの設定に失敗しました: %s", key, exc_info=True)
 
     def _check_rez_environments_in_project(self) -> None:
         packages = self._collect_rez_packages_in_graph()
@@ -1864,6 +2021,25 @@ class NodeEditorWindow(QMainWindow):
 
         if warnings:
             self._show_warning_dialog("\n\n".join(warnings))
+
+    def _check_project_rez_manifest_requirements(self) -> None:
+        if self._current_project_root is None or self._current_project_settings is None:
+            return
+        result = self._coordinator.check_project_rez_requirements(
+            self._current_project_root,
+            self._current_project_settings.project_name,
+        )
+        if result.success:
+            return
+        if result.missing:
+            missing_list = "\n".join(f"・{item}" for item in result.missing)
+            self._show_warning_dialog(
+                "プロジェクトの Rez マニフェストに記載されたパッケージが不足しています。\n"
+                f"{missing_list}"
+            )
+            return
+        if result.message:
+            self._show_warning_dialog(result.message)
 
     def _export_project_state(self) -> Dict:
         nodes = self._collect_all_nodes()
@@ -2030,10 +2206,11 @@ class NodeEditorWindow(QMainWindow):
             custom_props = entry.get("custom_properties")
             if isinstance(custom_props, dict):
                 for key, value in custom_props.items():
-                    try:
-                        node.set_property(key, value, push_undo=False)
-                    except Exception:  # pragma: no cover - NodeGraph 依存の例外
-                        LOGGER.debug("プロパティ %s の適用に失敗しました", key, exc_info=True)
+                    if isinstance(key, str):
+                        if not self._set_node_custom_property(node, key, value):
+                            LOGGER.debug("プロパティ %s の適用に失敗しました", key)
+            if self._ensure_tool_node_rez_properties(node):
+                metadata_changed = True
 
         failed_operations: List[str] = []
 
@@ -2163,26 +2340,63 @@ class NodeEditorWindow(QMainWindow):
                 LOGGER.debug("ノード名の取得に失敗しました: %r", node, exc_info=True)
         return str(node)
 
-    def _node_custom_properties(self, node) -> Dict[str, object]:
+    def _node_custom_properties_map(self, node) -> Optional[Dict[str, object]]:
         model = getattr(node, "model", None)
         if model is None:
-            return {}
+            return None
         props = getattr(model, "custom_properties", None)
         if callable(props):
             try:
                 props = props()
             except Exception:  # pragma: no cover - NodeGraph 依存の例外
-                props = None
+                return None
+        if isinstance(props, dict):
+            return props
+        return None
+
+    def _node_custom_property_value(self, node, key: str) -> object:
+        props = self._node_custom_properties_map(node)
+        if not isinstance(props, dict):
+            return None
+        return props.get(key)
+
+    def _normalize_custom_property_value(self, value: object) -> object:
+        if isinstance(value, Mapping):
+            normalized: Dict[str, object] = {}
+            for entry_key, entry_value in value.items():
+                if isinstance(entry_key, str):
+                    normalized[entry_key] = self._normalize_custom_property_value(entry_value)
+            return normalized
+        if isinstance(value, (list, tuple, set)):
+            return [self._normalize_custom_property_value(item) for item in value]
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            return value
+        return str(value)
+
+    def _node_custom_properties(self, node) -> Dict[str, object]:
+        props = self._node_custom_properties_map(node)
         if not isinstance(props, dict):
             return {}
         serializable: Dict[str, object] = {}
         for key, value in props.items():
             if isinstance(key, str):
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    serializable[key] = value
-                else:
-                    serializable[key] = str(value)
+                serializable[key] = self._normalize_custom_property_value(value)
         return serializable
+
+    def _set_node_custom_property(self, node, key: str, value: object) -> bool:
+        props = self._node_custom_properties_map(node)
+        if isinstance(props, dict):
+            props[key] = value
+            return True
+        setter = getattr(node, "set_property", None)
+        if callable(setter):
+            try:
+                setter(key, value, push_undo=False)
+            except Exception:  # pragma: no cover - NodeGraph 依存の例外
+                LOGGER.debug("カスタムプロパティの設定に失敗しました: %s", key, exc_info=True)
+                return False
+            return True
+        return False
 
     def _node_type_identifier(self, node) -> str:
         type_getter = getattr(node, "type_", None)
