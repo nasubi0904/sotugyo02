@@ -155,3 +155,14 @@ class NodeEditorCoordinator:
             project_name,
             version=version,
         )
+
+    def resolve_rez_executable(
+        self,
+        package_name: str,
+        *,
+        version: str | None = None,
+    ) -> Path | None:
+        return self.tool_service.resolve_rez_executable(
+            package_name,
+            version=version,
+        )

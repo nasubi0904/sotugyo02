@@ -1307,9 +1307,18 @@ class NodeEditorWindow(QMainWindow):
         if tool is None:
             return []
         executable = tool.executable_path
-        if not executable:
+        if executable and executable.name != "package.py" and executable.exists():
+            return [str(executable)]
+        package_name, version = self._read_rez_package_properties(node)
+        if not package_name:
             return []
-        return [str(executable)]
+        resolved = self._coordinator.resolve_rez_executable(
+            package_name,
+            version=version,
+        )
+        if resolved is None:
+            return []
+        return [str(resolved)]
 
     def _resolve_rez_package_request(self, node: ToolEnvironmentNode) -> str:
         name, version = self._read_rez_package_properties(node)

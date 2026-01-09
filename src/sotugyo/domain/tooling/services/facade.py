@@ -181,6 +181,24 @@ class ToolEnvironmentService:
     def list_project_rez_packages(self, project_root: Path) -> List[RezPackageSpec]:
         return ProjectRezPackageRepository(project_root).list_packages()
 
+    def resolve_rez_executable(
+        self,
+        package_name: str,
+        *,
+        version: Optional[str] = None,
+    ) -> Optional[Path]:
+        if not package_name:
+            return None
+        if version:
+            entries = self.rez_repository.list_package_entries()
+            for spec in entries:
+                if spec.name == package_name and spec.version == version:
+                    return self.rez_repository.resolve_executable(spec)
+        spec = self.rez_repository.find_package(package_name)
+        if spec is None:
+            return None
+        return self.rez_repository.resolve_executable(spec)
+
     def sync_rez_packages_to_project(
         self, project_root: Path, packages: Iterable[str]
     ) -> RezPackageSyncResult:
