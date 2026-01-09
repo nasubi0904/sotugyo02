@@ -683,10 +683,24 @@ def _discover_nuke_installations() -> List[TemplateInstallationCandidate]:
                 continue
             if "nuke" not in entry.name.lower():
                 continue
-            executable = entry / f"{entry.name}.exe"
-            if not executable.exists():
-                executable = entry / "Nuke.exe"
-            if not executable.exists():
+
+            executable_candidates = list(entry.glob("Nuke*.exe"))
+            executable = None
+            if executable_candidates:
+                executable_candidates.sort(
+                    key=lambda path: (_extract_version(path.stem) or "", path.name),
+                    reverse=True,
+                )
+                executable = executable_candidates[0]
+            if not executable:
+                fallback = entry / f"{entry.name}.exe"
+                if fallback.exists():
+                    executable = fallback
+            if not executable:
+                fallback = entry / "Nuke.exe"
+                if fallback.exists():
+                    executable = fallback
+            if not executable:
                 continue
             version = _extract_version(entry.name)
             display = "Foundry Nuke"
