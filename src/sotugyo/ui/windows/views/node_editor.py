@@ -1916,11 +1916,11 @@ class NodeEditorWindow(QMainWindow):
         if tool is not None:
             tool_path = tool.executable_path
             if tool_path.exists() and tool_path.suffix.lower() == ".exe":
-                return [tool_path.name]
+                return [tool_path.stem]
         resolved = self._coordinator.tool_service.rez_repository.resolve_executable(spec)
         if resolved is None:
             return None
-        return [resolved.name]
+        return [resolved.stem]
 
     def _update_tool_launch_control(self, node) -> None:
         if self._inspector_dock is None:
