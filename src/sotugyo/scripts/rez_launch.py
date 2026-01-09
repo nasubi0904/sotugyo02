@@ -187,6 +187,15 @@ def build_rez_env_command(
     return tuple([rez_env_exe, package_request, "--", *tool_args])
 
 
+def _sanitize_log_token(value: str) -> str:
+    """ログファイル名に使えるよう簡易サニタイズする。"""
+
+    cleaned = value.strip().replace(" ", "_")
+    for ch in ("/", "\\", ":", "*", "?", "\"", "<", ">", "|"):
+        cleaned = cleaned.replace(ch, "_")
+    return cleaned or "tool"
+
+
 def _make_log_path(
     log_dir: Optional[str],
     package_request: str,
@@ -198,8 +207,9 @@ def _make_log_path(
     ts = time.strftime("%Y%m%d_%H%M%S")
     base_dir = Path(log_dir) if log_dir else Path(os.environ.get("TEMP", ".")) / "rez_detached_logs"
     # tool 名だけ使う（長くなりすぎるのを避ける）
-    tool = tool_args[0].replace(" ", "_")
-    name = f"{package_request}__{tool}__{ts}.log"
+    tool = _sanitize_log_token(Path(tool_args[0]).name)
+    package_label = _sanitize_log_token(package_request)
+    name = f"{package_label}__{tool}__{ts}.log"
     return base_dir / name
 
 

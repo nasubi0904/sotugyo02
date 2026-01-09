@@ -96,5 +96,6 @@
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
 - 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
 - 2026-01-18: ツールノードのプロパティ画面から Rez 起動を行うため、`sotugyo.scripts.rez_launch.launch_rez_detached` の利用経路と rez_info 参照手順を整理した。
+- 2026-01-18: Rez 起動ログのファイル名に Windows 禁止文字が混入しないよう、`sotugyo.scripts.rez_launch` のログ名生成ロジックを確認・整理した。
 
 最終更新日: 2026-01-18
