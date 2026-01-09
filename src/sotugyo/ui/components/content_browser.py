@@ -282,11 +282,11 @@ class NodeContentBrowser(QWidget):
 
         header_layout.addStretch(1)
 
-        back_button = QPushButton("戻る", card)
+        back_button = QPushButton("ホーム画面へ戻る", card)
         back_button.clicked.connect(self.back_requested.emit)
         header_layout.addWidget(back_button)
 
-        card_layout.addLayout(header_layout)
+        outer_layout.addLayout(header_layout)
 
         path_layout = QHBoxLayout()
         path_layout.setContentsMargins(0, 0, 0, 0)
@@ -296,15 +296,6 @@ class NodeContentBrowser(QWidget):
         self._path_label.setObjectName("contentPathLabel")
         self._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         path_layout.addWidget(self._path_label, 1)
-
-        up_button = QPushButton("上へ", card)
-        up_button.setEnabled(False)
-        self._up_folder_button = up_button
-        path_layout.addWidget(up_button)
-
-        new_folder_button = QPushButton("新規フォルダ", card)
-        self._new_folder_button = new_folder_button
-        path_layout.addWidget(new_folder_button)
 
         card_layout.addLayout(path_layout)
 
@@ -329,6 +320,13 @@ class NodeContentBrowser(QWidget):
         header_container_layout.addWidget(summary_widget)
         spacer = QSpacerItem(0, 0, QSizePolicy.Expanding, QSizePolicy.Minimum)
         header_container_layout.addItem(spacer)
+        up_button = QPushButton("上へ", card)
+        up_button.setEnabled(False)
+        self._up_folder_button = up_button
+        header_container_layout.addWidget(up_button)
+        new_folder_button = QPushButton("新規フォルダ", card)
+        self._new_folder_button = new_folder_button
+        header_container_layout.addWidget(new_folder_button)
         header_container_layout.addWidget(icon_control)
         self._control_header = header_container
         self._control_header_layout = header_container_layout
@@ -659,9 +657,9 @@ class NodeContentBrowser(QWidget):
             return
         labels = self._current_folder.path_labels()
         if not labels:
-            self._path_label.setText("ルート")
+            self._path_label.setText("")
         else:
-            self._path_label.setText(" / ".join(["ルート", *labels]))
+            self._path_label.setText(" / ".join(labels))
         if self._up_folder_button is not None:
             self._up_folder_button.setEnabled(self._current_folder.parent is not None)
 
