@@ -29,6 +29,7 @@ class NodeInspectorPanel(QWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    tool_launch_requested = Signal()
 
     def __init__(
         self,
@@ -52,6 +53,13 @@ class NodeInspectorPanel(QWidget):
         self._property_plain_text.setReadOnly(True)
         self._property_plain_text.setPlaceholderText("選択中ノードのプロパティ一覧がここに表示されます。")
         self._property_plain_text.setMinimumHeight(140)
+        self._tool_launch_label = QLabel("ツール起動", self)
+        self._tool_launch_label.setObjectName("panelTitle")
+        self._tool_launch_button = QPushButton("ツールを起動", self)
+        self._tool_launch_button.setEnabled(False)
+        self._tool_launch_button.setVisible(False)
+        self._tool_launch_button.clicked.connect(self._emit_tool_launch_request)
+        self._tool_launch_label.setVisible(False)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -102,6 +110,8 @@ class NodeInspectorPanel(QWidget):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(10)
 
+        layout.addWidget(self._tool_launch_label)
+        layout.addWidget(self._tool_launch_button)
         layout.addWidget(self._property_plain_text)
         return widget
 
@@ -214,6 +224,13 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
 
+    def set_tool_launch_enabled(self, enabled: bool) -> None:
+        """ツール起動ボタンの状態を切り替える。"""
+
+        self._tool_launch_button.setEnabled(enabled)
+        self._tool_launch_button.setVisible(enabled)
+        self._tool_launch_label.setVisible(enabled)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -230,6 +247,11 @@ class NodeInspectorPanel(QWidget):
             return
         self.memo_font_changed.emit(self._normalize_font_size(value))
 
+    def _emit_tool_launch_request(self) -> None:
+        if not self._tool_launch_button.isEnabled():
+            return
+        self.tool_launch_requested.emit()
+
     def _normalize_font_size(self, value: int) -> int:
         minimum, maximum = self._memo_font_range
         try:
@@ -245,6 +267,7 @@ class NodeInspectorDock(QDockWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    tool_launch_requested = Signal()
 
     def __init__(
         self,
@@ -270,6 +293,7 @@ class NodeInspectorDock(QDockWidget):
         panel.rename_requested.connect(self.rename_requested)
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
+        panel.tool_launch_requested.connect(self.tool_launch_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -323,3 +347,6 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_properties(self) -> None:
         self._panel.clear_properties()
+
+    def set_tool_launch_enabled(self, enabled: bool) -> None:
+        self._panel.set_tool_launch_enabled(enabled)

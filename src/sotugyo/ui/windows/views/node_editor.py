@@ -54,6 +54,7 @@ from sotugyo.domain.tooling import (
     RezPackageSpec,
     ToolEnvironmentDefinition,
 )
+from sotugyo.scripts.rez_launch import RezLauncherError, launch_rez_detached
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -91,6 +92,7 @@ class NodeSnapSettings:
         if self.grid_size <= 0:
             return value
         return round(value / self.grid_size) * self.grid_size
+
 
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
@@ -229,6 +231,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1089,6 +1092,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.set_tool_launch_enabled(False)
             self._update_alignment_controls(None)
             return
 
@@ -1121,6 +1125,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+            inspector.set_tool_launch_enabled(isinstance(node, ToolEnvironmentNode))
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1262,6 +1267,57 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_tool_launch_requested(self) -> None:
+        node = self._current_node
+        if node is None or not isinstance(node, ToolEnvironmentNode):
+            self._show_info_dialog("ツールノードを選択してください。")
+            return
+
+        tool_args = self._resolve_tool_launch_args(node)
+        if not tool_args:
+            self._show_warning_dialog("起動に必要なツール実行ファイルが見つかりませんでした。")
+            return
+
+        package_request = self._resolve_rez_package_request(node)
+        if not package_request:
+            self._show_warning_dialog("Rez パッケージ情報が見つかりませんでした。")
+            return
+
+        try:
+            result = launch_rez_detached(
+                package_request=package_request,
+                tool_args=tool_args,
+            )
+        except RezLauncherError as exc:
+            self._show_error_dialog(f"ツール起動に失敗しました: {exc}")
+            return
+
+        self._show_info_dialog(
+            "ツールを起動しました。\n"
+            f"PID: {result.pid}\n"
+            f"ログ: {result.log_path}"
+        )
+
+    def _resolve_tool_launch_args(self, node: ToolEnvironmentNode) -> List[str]:
+        definition = self._find_tool_environment_definition(node)
+        if definition is None:
+            return []
+        tool = self._registered_tools.get(definition.tool_id)
+        if tool is None:
+            return []
+        executable = tool.executable_path
+        if not executable:
+            return []
+        return [str(executable)]
+
+    def _resolve_rez_package_request(self, node: ToolEnvironmentNode) -> str:
+        name, version = self._read_rez_package_properties(node)
+        if not name:
+            return ""
+        if version:
+            return f"{name}-{version}"
+        return name
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")

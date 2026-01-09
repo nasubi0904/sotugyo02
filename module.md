@@ -95,5 +95,6 @@
 - 2025-12-30: `src/sotugyo/ui/components/content_browser.py` の表示構造を `QTreeView` + `QStandardItemModel` に更新し、ジャンル階層表示とフィルタ時の展開挙動を整理した。
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
 - 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
+- 2026-01-18: ツールノードのプロパティ画面から Rez 起動を行うため、`sotugyo.scripts.rez_launch.launch_rez_detached` の利用経路と rez_info 参照手順を整理した。
 
-最終更新日: 2026-01-12
+最終更新日: 2026-01-18
