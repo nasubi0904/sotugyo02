@@ -121,7 +121,7 @@ class RezPackageRepository:
             f'version = "{version}"\n\n'
             "def commands():\n"
             f"    env.PATH.prepend(r\"{bin_dir}\")\n"
-            f"    env[\"{package_name.upper()}_EXE\"] = r\"{executable}\"\n"
+            f"    env[\"EXECUTE_{package_name.upper()}_EXE\"] = r\"{executable}\"\n"
         )
 
     @staticmethod
