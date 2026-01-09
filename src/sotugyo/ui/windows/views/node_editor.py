@@ -59,6 +59,7 @@ from sotugyo.domain.tooling.coordinator import (
     NodeEditorCoordinator,
     ToolEnvironmentSnapshot,
 )
+from sotugyo.scripts import RezLauncherError, launch_rez_detached
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
@@ -229,6 +230,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1121,6 +1123,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+            self._update_tool_launch_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1262,6 +1265,33 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_tool_launch_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツールノードを選択してください。")
+            return
+        target = self._resolve_local_rez_launch_target(self._current_node)
+        if target is None:
+            self._show_warning_dialog("Rez 情報が見つからないため起動できません。")
+            return
+        package_request, available = target
+        if not available:
+            self._show_warning_dialog(
+                "ローカルの Rez パッケージが見つかりません。\n"
+                f"起動対象: {package_request}\n"
+                f"KDMrez: {get_rez_package_dir()}"
+            )
+            return
+        try:
+            result = launch_rez_detached(package_request=package_request, tool_args=None)
+        except RezLauncherError as exc:
+            self._show_error_dialog(f"Rez 環境の起動に失敗しました: {exc}")
+            return
+        self._show_info_dialog(
+            "Rez 環境を起動しました。\n"
+            f"PID: {result.pid}\n"
+            f"Log: {result.log_path}"
+        )
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1653,6 +1683,23 @@ class NodeEditorWindow(QMainWindow):
             normalized_size = MemoNode.DEFAULT_FONT_SIZE
         inspector.show_memo(str(memo_text or ""), normalized_size)
 
+    def _update_tool_launch_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, ToolEnvironmentNode):
+            inspector.set_tool_launch_state(enabled=False, label="-")
+            return
+        target = self._resolve_local_rez_launch_target(node)
+        if target is None:
+            inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし")
+            return
+        package_request, available = target
+        if not available:
+            inspector.set_tool_launch_state(enabled=False, label=f"{package_request} (未検出)")
+            return
+        inspector.set_tool_launch_state(enabled=True, label=package_request)
+
     def _is_memo_node(self, node) -> bool:
         if node is None:
             return False
@@ -1866,6 +1913,20 @@ class NodeEditorWindow(QMainWindow):
                 _, raw_version = candidate.rsplit("(", 1)
                 version_from_label = raw_version.rstrip(")").strip() or None
         return name_from_label, version_from_label
+
+    def _resolve_local_rez_launch_target(
+        self, node
+    ) -> Optional[Tuple[str, bool]]:
+        name, version = self._read_rez_package_properties(node)
+        if not name:
+            return None
+        version_label = (version or "").strip()
+        if version_label and version_label.lower() != "local":
+            package_request = f"{name}-{version_label}"
+        else:
+            package_request = name
+        available = name in self._local_rez_packages
+        return package_request, available
 
     def _apply_tool_node_rez_properties(self, node, definition) -> None:
         if not isinstance(node, ToolEnvironmentNode):
