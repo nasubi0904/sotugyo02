@@ -15,6 +15,9 @@
   - Windows では「Developer Mode」や `symlink` 許可が必要になるケースがある。
   - プロジェクト固有のパッケージレポジトリ（`packages_path`）を定義し、既存システムと衝突しないようにする。
   - 公式ドキュメントは更新頻度が高いため、`stable` ブランチだけでなく `latest` も確認して差分を把握すること。
+- **運用メモ**:
+  - ツール起動は `scripts/rez_launch.py` を経由し、Rez パッケージ名とバージョンから実行ファイルを解決したうえで `rez-env` を呼び出す。
+  - `REZ_PACKAGES_PATH` には KDMrez とプロジェクト配下の `config/rez_packages` を追加し、ツールノードからの起動でも一貫した検索経路を確保する。
 
 ## PySide6 (Qt for Python)
 - **公式サイト**: <https://doc.qt.io/qtforpython/>
@@ -95,5 +98,6 @@
 - 2025-12-30: `src/sotugyo/ui/components/content_browser.py` の表示構造を `QTreeView` + `QStandardItemModel` に更新し、ジャンル階層表示とフィルタ時の展開挙動を整理した。
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
 - 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
+- 2026-01-09: ツールノードから Rez パッケージを起動する導線を追加するため、`scripts/rez_launch.py` の処理方針とインスペクタ連携を整理した。
 
-最終更新日: 2026-01-12
+最終更新日: 2026-01-09

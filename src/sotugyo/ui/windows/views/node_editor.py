@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -229,6 +231,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1089,6 +1092,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.set_launch_enabled(False)
             self._update_alignment_controls(None)
             return
 
@@ -1121,6 +1125,7 @@ class NodeEditorWindow(QMainWindow):
             )
             inspector.show_properties(properties)
             inspector.enable_rename(name)
+            inspector.set_launch_enabled(self._can_launch_tool_node(node))
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1262,6 +1267,46 @@ class NodeEditorWindow(QMainWindow):
             LOGGER.debug("メモフォントサイズの更新に失敗しました", exc_info=True)
             return
         self._set_modified(True)
+
+    def _handle_tool_launch_requested(self) -> None:
+        if self._current_node is None:
+            self._show_info_dialog("起動するツールノードを選択してください。")
+            return
+        if not isinstance(self._current_node, ToolEnvironmentNode):
+            self._show_info_dialog("ツール環境ノードを選択してください。")
+            return
+        name, version = self._read_rez_package_properties(self._current_node)
+        if not name:
+            self._show_warning_dialog("Rez パッケージ情報が見つかりませんでした。")
+            return
+        self._launch_rez_tool(name, version)
+
+    def _launch_rez_tool(self, name: str, version: Optional[str]) -> None:
+        script_path = self._rez_launch_script_path()
+        if script_path is None or not script_path.exists():
+            self._show_error_dialog("Rez 起動スクリプトが見つかりませんでした。")
+            return
+        args = [sys.executable, str(script_path), "--package", name]
+        if version:
+            args.extend(["--version", version])
+        if self._current_project_root is not None:
+            args.extend(["--project-root", str(self._current_project_root)])
+        try:
+            subprocess.Popen(args)
+        except OSError as exc:
+            self._show_error_dialog(f"ツールの起動に失敗しました: {exc}")
+
+    @staticmethod
+    def _rez_launch_script_path() -> Optional[Path]:
+        src_dir = Path(__file__).resolve().parents[4]
+        repo_root = src_dir.parent
+        return repo_root / "scripts" / "rez_launch.py"
+
+    def _can_launch_tool_node(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        name, _version = self._read_rez_package_properties(node)
+        return bool(name)
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")

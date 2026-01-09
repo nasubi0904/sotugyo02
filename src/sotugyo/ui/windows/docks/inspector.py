@@ -29,6 +29,7 @@ class NodeInspectorPanel(QWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_requested = Signal()
 
     def __init__(
         self,
@@ -69,6 +70,10 @@ class NodeInspectorPanel(QWidget):
         self._memo_font_spin.setValue(self._memo_font_default)
         self._memo_font_spin.valueChanged.connect(self._on_memo_font_changed)
 
+        self._launch_button = QPushButton("ツールを起動", self)
+        self._launch_button.clicked.connect(self._emit_launch_request)
+        self._launch_button.setEnabled(False)
+
         self._tabs = QTabWidget(self)
         self._tabs.setMinimumWidth(260)
         self._tabs.addTab(self._build_property_tab(), "プロパティ")
@@ -103,6 +108,11 @@ class NodeInspectorPanel(QWidget):
         layout.setSpacing(10)
 
         layout.addWidget(self._property_plain_text)
+
+        launch_label = QLabel("ツール起動", widget)
+        launch_label.setObjectName("panelTitle")
+        layout.addWidget(launch_label)
+        layout.addWidget(self._launch_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -214,11 +224,21 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
 
+    def set_launch_enabled(self, enabled: bool) -> None:
+        """ツール起動ボタンの有効化を切り替える。"""
+
+        self._launch_button.setEnabled(enabled)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
         text = self._rename_input.text().strip()
         self.rename_requested.emit(text)
+
+    def _emit_launch_request(self) -> None:
+        if not self._launch_button.isEnabled():
+            return
+        self.launch_requested.emit()
 
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
@@ -245,6 +265,7 @@ class NodeInspectorDock(QDockWidget):
     rename_requested = Signal(str)
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
+    launch_requested = Signal()
 
     def __init__(
         self,
@@ -270,6 +291,7 @@ class NodeInspectorDock(QDockWidget):
         panel.rename_requested.connect(self.rename_requested)
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
+        panel.launch_requested.connect(self.launch_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -323,3 +345,6 @@ class NodeInspectorDock(QDockWidget):
 
     def clear_properties(self) -> None:
         self._panel.clear_properties()
+
+    def set_launch_enabled(self, enabled: bool) -> None:
+        self._panel.set_launch_enabled(enabled)
