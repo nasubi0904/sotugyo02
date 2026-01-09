@@ -1992,19 +1992,6 @@ class NodeEditorWindow(QMainWindow):
             lines.extend(f"・{name}" for name in missing)
             warnings.append("\n".join(lines))
 
-        missing_in_project = [
-            name
-            for name in packages
-            if name in self._local_rez_packages and name not in self._project_rez_packages
-        ]
-        if missing_in_project:
-            lines = [
-                "次の Rez パッケージは KDMrez には存在しますがプロジェクトに同期されていません。",
-                "プロジェクト保存時にコピーされることを確認してください。",
-            ]
-            lines.extend(f"・{name}" for name in missing_in_project)
-            warnings.append("\n".join(lines))
-
         if self._current_project_root is not None:
             validation = self._coordinator.validate_project_rez_packages(
                 self._current_project_root
