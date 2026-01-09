@@ -151,6 +151,15 @@ QTableView {
     selection-background-color: rgba(99, 163, 255, 0.32);
     selection-color: #f8fbff;
 }
+QTreeView#contentTree {
+    background-color: rgba(11, 20, 36, 0.78);
+    border: 1px solid rgba(99, 163, 255, 0.28);
+    border-radius: 14px;
+    padding: 8px;
+}
+QTreeView#contentTree::item {
+    padding: 6px 8px;
+}
 QLineEdit:focus,
 QPlainTextEdit:focus,
 QTextEdit:focus,
@@ -556,6 +565,15 @@ QTableView {
     min-height: 38px;
     selection-background-color: rgba(59, 130, 246, 0.24);
     selection-color: #0f172a;
+}
+QTreeView#contentTree {
+    background-color: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(59, 130, 246, 0.28);
+    border-radius: 14px;
+    padding: 8px;
+}
+QTreeView#contentTree::item {
+    padding: 6px 8px;
 }
 QLineEdit:focus,
 QPlainTextEdit:focus,

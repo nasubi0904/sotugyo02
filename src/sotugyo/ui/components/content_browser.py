@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -11,10 +11,12 @@ Qt = QtCore.Qt
 Signal = QtCore.Signal
 QSize = QtCore.QSize
 QFileInfo = QtCore.QFileInfo
+QRect = QtCore.QRect
 QColor = QtGui.QColor
 QFont = QtGui.QFont
 QFontMetrics = QtGui.QFontMetrics
 QIcon = QtGui.QIcon
+QPalette = QtGui.QPalette
 QPainter = QtGui.QPainter
 QPen = QtGui.QPen
 QPixmap = QtGui.QPixmap
@@ -30,6 +32,8 @@ QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QPushButton = QtWidgets.QPushButton
 QFileIconProvider = QtWidgets.QFileIconProvider
+QStyle = QtWidgets.QStyle
+QStyledItemDelegate = QtWidgets.QStyledItemDelegate
 QSizePolicy = QtWidgets.QSizePolicy
 QSlider = QtWidgets.QSlider
 QSpinBox = QtWidgets.QSpinBox
@@ -107,6 +111,120 @@ class NodeCatalogViewModel:
         return True
 
 
+class NodeCatalogItemDelegate(QStyledItemDelegate):
+    """ノードカタログのファイルシステム風描画を担うデリゲート。"""
+
+    def __init__(
+        self,
+        icon_size_provider: Callable[[], int],
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self._icon_size_provider = icon_size_provider
+
+    def paint(
+        self,
+        painter: QPainter,
+        option: QtWidgets.QStyleOptionViewItem,
+        index: QtCore.QModelIndex,
+    ) -> None:
+        entry = index.data(Qt.UserRole + 3)
+        if not isinstance(entry, NodeCatalogEntry):
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+        rect = option.rect
+        palette = option.palette
+        state = option.state
+
+        if state & QStyle.State_Selected:
+            base = QColor(palette.color(QPalette.Highlight))
+            base.setAlpha(56)
+            painter.setBrush(base)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 10, 10)
+        elif state & QStyle.State_MouseOver:
+            base = QColor(palette.color(QPalette.Highlight))
+            base.setAlpha(28)
+            painter.setBrush(base)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(rect.adjusted(2, 2, -2, -2), 10, 10)
+
+        icon = index.data(Qt.DecorationRole)
+        icon_size = max(18, int(self._icon_size_provider()))
+        margin = 10
+        icon_rect = QRect(
+            rect.left() + margin,
+            rect.top() + (rect.height() - icon_size) // 2,
+            icon_size,
+            icon_size,
+        )
+        if isinstance(icon, QIcon):
+            icon.paint(painter, icon_rect, Qt.AlignCenter)
+
+        text_left = icon_rect.right() + margin
+        text_rect = QRect(
+            text_left,
+            rect.top() + margin // 2,
+            rect.right() - text_left - margin,
+            rect.height() - margin,
+        )
+        title_text = entry.title.strip() or entry.node_type
+        subtitle_text = entry.subtitle.strip()
+        if not subtitle_text and entry.node_type and entry.node_type != title_text:
+            subtitle_text = entry.node_type
+
+        title_font = QFont(option.font)
+        title_font.setBold(True)
+        subtitle_font = QFont(option.font)
+        subtitle_font.setPointSizeF(max(9.5, subtitle_font.pointSizeF() - 1.0))
+
+        title_metrics = QFontMetrics(title_font)
+        subtitle_metrics = QFontMetrics(subtitle_font)
+        title_text = title_metrics.elidedText(
+            title_text,
+            Qt.ElideRight,
+            text_rect.width(),
+        )
+        subtitle_text = subtitle_metrics.elidedText(
+            subtitle_text,
+            Qt.ElideRight,
+            text_rect.width(),
+        )
+
+        total_height = title_metrics.height()
+        if subtitle_text:
+            total_height += subtitle_metrics.height()
+        start_y = text_rect.center().y() - total_height // 2
+
+        painter.setPen(palette.color(QPalette.Text))
+        painter.setFont(title_font)
+        painter.drawText(
+            QRect(text_rect.left(), start_y, text_rect.width(), title_metrics.height()),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            title_text,
+        )
+
+        if subtitle_text:
+            subtitle_color = QColor(palette.color(QPalette.Text))
+            subtitle_color.setAlpha(160)
+            painter.setPen(subtitle_color)
+            painter.setFont(subtitle_font)
+            painter.drawText(
+                QRect(
+                    text_rect.left(),
+                    start_y + title_metrics.height(),
+                    text_rect.width(),
+                    subtitle_metrics.height(),
+                ),
+                Qt.AlignLeft | Qt.AlignVCenter,
+                subtitle_text,
+            )
+
+        painter.restore()
+
+
 class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ。"""
 
@@ -123,8 +241,10 @@ class NodeContentBrowser(QWidget):
         self._available_model: QStandardItemModel = QStandardItemModel(self)
         self._genre_items: Dict[str, QStandardItem] = {}
         self._entry_items: List[Tuple[NodeCatalogEntry, QStandardItem]] = []
-        self._tree_selection_model: Optional[QtCore.QItemSelectionModel] = None
-        self._tree_selection_connected: bool = False
+        self._tree_item_delegate = NodeCatalogItemDelegate(
+            self._current_icon_size_value,
+            self,
+        )
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
         self._icon_size_levels: Dict[int, int] = {
@@ -213,7 +333,6 @@ class NodeContentBrowser(QWidget):
         self._available_model.clear()
         self._available_model.setHorizontalHeaderLabels(["ノード"])
         self._available_tree.setModel(self._available_model)
-        self._connect_tree_selection_model()
         self._genre_items = {}
         self._entry_items = []
         self._icon_cache.clear()
@@ -224,6 +343,9 @@ class NodeContentBrowser(QWidget):
                 genre_item = QStandardItem(entry.genre)
                 genre_item.setEditable(False)
                 genre_item.setSelectable(True)
+                folder_icon = self._file_icon_provider.icon(QFileIconProvider.Folder)
+                if not folder_icon.isNull():
+                    genre_item.setIcon(folder_icon)
                 font = QFont()
                 font.setBold(True)
                 genre_item.setFont(font)
@@ -386,6 +508,7 @@ class NodeContentBrowser(QWidget):
         widget.setRootIsDecorated(True)
         widget.setAnimated(True)
         widget.setItemsExpandable(True)
+        widget.setMouseTracking(True)
         widget.setUniformRowHeights(False)
         widget.setIndentation(18)
         widget.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -396,6 +519,7 @@ class NodeContentBrowser(QWidget):
         widget.setIconSize(
             QSize(self._current_icon_size_value(), self._current_icon_size_value())
         )
+        widget.setItemDelegate(self._tree_item_delegate)
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._apply_icon_size()
 
@@ -485,8 +609,7 @@ class NodeContentBrowser(QWidget):
     def _connect_signals(self) -> None:
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
-        self._available_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
-        self._connect_tree_selection_model()
+        self._available_tree.activated.connect(self._on_tree_item_activated)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
         if self._genre_combo is not None:
@@ -524,19 +647,8 @@ class NodeContentBrowser(QWidget):
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
 
-    def _on_tree_item_double_clicked(self, index: QtCore.QModelIndex) -> None:
+    def _on_tree_item_activated(self, index: QtCore.QModelIndex) -> None:
         item = self._available_model.itemFromIndex(index)
-        self._emit_node_request_if_available(item)
-
-    def _on_tree_selection_changed(
-        self,
-        selected: QtCore.QItemSelection,
-        deselected: QtCore.QItemSelection,
-    ) -> None:
-        indexes = selected.indexes()
-        if not indexes:
-            return
-        item = self._available_model.itemFromIndex(indexes[0])
         self._emit_node_request_if_available(item)
 
     def _emit_node_request_if_available(self, item: Optional[QStandardItem]) -> None:
@@ -705,7 +817,7 @@ class NodeContentBrowser(QWidget):
         profile = self._current_profile
 
         if profile.compact:
-            vertical_padding = max(6, leading + 2)
+            vertical_padding = max(8, leading + 4)
             text_lines = 2
             text_height = line_spacing * text_lines
             height = max(icon_size + vertical_padding, text_height + vertical_padding)
@@ -716,7 +828,7 @@ class NodeContentBrowser(QWidget):
         title_width = font.horizontalAdvance("M" * 18)
         width = max(width, title_width + icon_size // 2)
 
-        vertical_padding = max(10, leading + 6)
+        vertical_padding = max(12, leading + 8)
         text_lines = 2
         text_height = line_spacing * text_lines
         height = max(icon_size + vertical_padding, text_height + vertical_padding)
@@ -922,19 +1034,6 @@ class NodeContentBrowser(QWidget):
         if parent.isValid() and self._available_tree.isRowHidden(parent.row(), parent.parent()):
             return False
         return True
-
-    def _connect_tree_selection_model(self) -> None:
-        if self._tree_selection_model is not None and self._tree_selection_connected:
-            self._tree_selection_model.selectionChanged.disconnect(
-                self._on_tree_selection_changed
-            )
-            self._tree_selection_connected = False
-        self._tree_selection_model = self._available_tree.selectionModel()
-        if self._tree_selection_model is not None:
-            self._tree_selection_model.selectionChanged.connect(
-                self._on_tree_selection_changed
-            )
-            self._tree_selection_connected = True
 
     def _guess_genre(self, node_type: str) -> str:
         normalized = node_type.strip()
