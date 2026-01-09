@@ -31,6 +31,8 @@ QMenu = QtWidgets.QMenu
 QMenuBar = QtWidgets.QMenuBar
 QMessageBox = QtWidgets.QMessageBox
 QSizePolicy = QtWidgets.QSizePolicy
+QHBoxLayout = QtWidgets.QHBoxLayout
+QPushButton = QtWidgets.QPushButton
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
@@ -212,6 +214,15 @@ class NodeEditorWindow(QMainWindow):
         central_layout = QVBoxLayout(central)
         central_layout.setContentsMargins(16, 16, 16, 16)
         central_layout.setSpacing(12)
+        top_controls = QWidget(central)
+        top_controls_layout = QHBoxLayout(top_controls)
+        top_controls_layout.setContentsMargins(0, 0, 0, 0)
+        top_controls_layout.setSpacing(6)
+        top_controls_layout.addStretch(1)
+        back_button = QPushButton("ホーム画面へ戻る", top_controls)
+        back_button.clicked.connect(self._return_to_start)
+        top_controls_layout.addWidget(back_button)
+        central_layout.addWidget(top_controls)
         central_layout.addWidget(self._graph_widget, 1)
 
         self.setCentralWidget(central)
@@ -237,11 +248,10 @@ class NodeEditorWindow(QMainWindow):
         content_dock = NodeContentBrowserDock(self)
         content_dock.node_type_requested.connect(self._spawn_node_by_type)
         content_dock.search_submitted.connect(self._handle_content_browser_search)
-        content_dock.back_requested.connect(self._return_to_start)
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
 
-        self.resizeDocks([content_dock], [220], Qt.Vertical)
+        self.resizeDocks([content_dock], [260], Qt.Vertical)
         self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
 
     def _create_menus(self) -> None:
