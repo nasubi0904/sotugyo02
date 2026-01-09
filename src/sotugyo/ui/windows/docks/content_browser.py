@@ -39,8 +39,8 @@ class NodeContentBrowserDock(QDockWidget):
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 0, 12, 12)
+        layout.setSpacing(0)
         layout.addWidget(browser)
         self.setWidget(container)
 
