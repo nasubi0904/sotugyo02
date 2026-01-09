@@ -249,7 +249,7 @@ class NodeEditorWindow(QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
 
-        self.resizeDocks([content_dock], [220], Qt.Vertical)
+        self.resizeDocks([content_dock], [260], Qt.Vertical)
         self.resizeDocks([inspector_dock], [320], Qt.Horizontal)
 
     def _create_menus(self) -> None:
