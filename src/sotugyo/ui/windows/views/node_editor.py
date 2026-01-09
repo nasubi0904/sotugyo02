@@ -59,6 +59,7 @@ from sotugyo.domain.tooling.coordinator import (
     NodeEditorCoordinator,
     ToolEnvironmentSnapshot,
 )
+from sotugyo.scripts.rez_launch import RezLauncherError, launch_rez_detached
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
@@ -75,7 +76,7 @@ from ..backgrounds.striped import (
 from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
-from sotugyo.infrastructure.paths.storage import get_rez_package_dir
+from sotugyo.infrastructure.paths.storage import get_app_config_dir, get_rez_package_dir
 
 
 @dataclass
@@ -229,6 +230,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.rename_requested.connect(self._handle_rename_requested)
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
+        inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1089,6 +1091,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.set_tool_launch_enabled(False)
             self._update_alignment_controls(None)
             return
 
@@ -1123,6 +1126,7 @@ class NodeEditorWindow(QMainWindow):
             inspector.enable_rename(name)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
+        self._update_tool_launch_control(node)
 
     def _describe_date_node_children(self, node) -> str:
         if not isinstance(node, DateNode):
@@ -1866,6 +1870,112 @@ class NodeEditorWindow(QMainWindow):
                 _, raw_version = candidate.rsplit("(", 1)
                 version_from_label = raw_version.rstrip(")").strip() or None
         return name_from_label, version_from_label
+
+    def _build_rez_package_request(self, name: str, version: Optional[str]) -> str:
+        if version:
+            return f"{name}-{version}"
+        return name
+
+    def _find_tool_environment_by_rez_info(
+        self, package_name: str, version: Optional[str]
+    ) -> Optional[ToolEnvironmentDefinition]:
+        for definition in self._tool_environments.values():
+            if package_name not in definition.rez_packages:
+                continue
+            if version and definition.version_label and definition.version_label != version:
+                continue
+            return definition
+        return None
+
+    def _resolve_rez_package_spec(
+        self, package_name: str, version: Optional[str]
+    ) -> Optional[RezPackageSpec]:
+        candidates = self._all_rez_packages()
+        candidate = candidates.get(package_name)
+        if candidate and (not version or not candidate.version or candidate.version == version):
+            return candidate
+        entries = self._coordinator.tool_service.rez_repository.list_package_entries()
+        for entry in entries:
+            if entry.name != package_name:
+                continue
+            if version and entry.version and entry.version != version:
+                continue
+            return entry
+        return candidate if candidate and not version else None
+
+    def _resolve_tool_launch_args(
+        self,
+        package_name: str,
+        version: Optional[str],
+        spec: RezPackageSpec,
+    ) -> Optional[List[str]]:
+        definition = self._find_tool_environment_by_rez_info(package_name, version)
+        tool = None
+        if definition is not None:
+            tool = self._registered_tools.get(definition.tool_id)
+        if tool is not None:
+            tool_path = tool.executable_path
+            if tool_path.exists() and tool_path.suffix.lower() == ".exe":
+                return [tool_path.name]
+        resolved = self._coordinator.tool_service.rez_repository.resolve_executable(spec)
+        if resolved is None:
+            return None
+        return [resolved.name]
+
+    def _update_tool_launch_control(self, node) -> None:
+        if self._inspector_dock is None:
+            return
+        enabled = self._can_launch_tool_node(node)
+        self._inspector_dock.set_tool_launch_enabled(enabled)
+
+    def _can_launch_tool_node(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        name, _ = self._read_rez_package_properties(node)
+        return bool(name)
+
+    def _handle_tool_launch_requested(self) -> None:
+        node = self._current_node
+        if node is None or not isinstance(node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツールノードを選択してください。")
+            return
+        package_name, version = self._read_rez_package_properties(node)
+        if not package_name:
+            self._show_warning_dialog("rez_info にパッケージ名が設定されていません。")
+            return
+        self._load_local_rez_packages()
+        spec = self._resolve_rez_package_spec(package_name, version)
+        if spec is None:
+            self._show_warning_dialog(
+                "指定された Rez パッケージが見つかりませんでした。\n"
+                f"KDMrez: {get_rez_package_dir()}\n"
+                f"Project: {self._project_rez_package_dir()}"
+            )
+            return
+        tool_args = self._resolve_tool_launch_args(package_name, version, spec)
+        if not tool_args:
+            self._show_warning_dialog(
+                "ツールの実行ファイルを特定できませんでした。\n"
+                "環境定義または Rez パッケージの package.py を確認してください。"
+            )
+            return
+        request = self._build_rez_package_request(package_name, version)
+        log_dir = get_app_config_dir() / "logs" / "rez_launch"
+        try:
+            result = launch_rez_detached(
+                package_request=request,
+                tool_args=tool_args,
+                log_dir=str(log_dir),
+                add_kdmrez=True,
+            )
+        except RezLauncherError as exc:
+            self._show_error_dialog(f"起動に失敗しました: {exc}")
+            return
+        self._show_info_dialog(
+            "ツールを起動しました。\n"
+            f"PID: {result.pid}\n"
+            f"ログ: {result.log_path}"
+        )
 
     def _apply_tool_node_rez_properties(self, node, definition) -> None:
         if not isinstance(node, ToolEnvironmentNode):
