@@ -115,7 +115,7 @@ def load_environment_payload(template_id: str) -> Dict[str, object]:
 def _register_rez_packages(candidates: Iterable[TemplateInstallationCandidate]) -> None:
     for candidate in candidates:
         try:
-            _REZ_REPOSITORY.register_candidate(candidate)
+            _REZ_REPOSITORY.register_candidate(candidate, include_execute_comment=True)
         except OSError:
             LOGGER.warning(
                 "Rez パッケージ登録に失敗しました: %s", candidate.executable_path, exc_info=True

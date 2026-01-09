@@ -31,7 +31,12 @@ class RezPackageRepository:
         self._last_scan = []
         self._last_entries = []
 
-    def register_candidate(self, candidate: TemplateInstallationCandidate) -> str:
+    def register_candidate(
+        self,
+        candidate: TemplateInstallationCandidate,
+        *,
+        include_execute_comment: bool = False,
+    ) -> str:
         """検出したインストールから Rez パッケージを生成する。"""
 
         package_name = self._normalize_package_name(candidate.template_id)
@@ -42,7 +47,12 @@ class RezPackageRepository:
         package_file = package_dir / "package.py"
         try:
             package_file.write_text(
-                self._render_package(candidate, package_name, version),
+                self._render_package(
+                    candidate,
+                    package_name,
+                    version,
+                    include_execute_comment=include_execute_comment,
+                ),
                 encoding="utf-8",
             )
         except OSError:
@@ -113,12 +123,18 @@ class RezPackageRepository:
         candidate: TemplateInstallationCandidate,
         package_name: str,
         version: str,
+        *,
+        include_execute_comment: bool = False,
     ) -> str:
         executable = Path(candidate.executable_path)
         bin_dir = executable.parent
+        execute_comment = (
+            f"#EXECUTE={executable.name}\n" if include_execute_comment else ""
+        )
         return (
             f'name = "{package_name}"\n'
-            f'version = "{version}"\n\n'
+            f'version = "{version}"\n'
+            f"{execute_comment}\n"
             "def commands():\n"
             f"    env.PATH.prepend(r\"{bin_dir}\")\n"
             f"    env[\"{package_name.upper()}_EXE\"] = r\"{executable}\"\n"
