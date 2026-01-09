@@ -30,6 +30,7 @@ QInputDialog = QtWidgets.QInputDialog
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListView = QtWidgets.QListView
+QMenu = QtWidgets.QMenu
 QMessageBox = QtWidgets.QMessageBox
 QPushButton = QtWidgets.QPushButton
 QSizePolicy = QtWidgets.QSizePolicy
@@ -183,6 +184,7 @@ class NodeContentBrowser(QWidget):
         self._search_keyword: str = ""
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
+        self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義", "その他")
 
         self._setup_ui()
         self._connect_signals()
@@ -359,6 +361,7 @@ class NodeContentBrowser(QWidget):
         widget.setAcceptDrops(True)
         widget.setDropIndicatorShown(True)
         widget.setSpacing(12)
+        widget.setContextMenuPolicy(Qt.CustomContextMenu)
         widget.setIconSize(QSize(self._current_icon_size_value(), self._current_icon_size_value()))
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._apply_icon_size()
@@ -419,6 +422,7 @@ class NodeContentBrowser(QWidget):
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_view.doubleClicked.connect(self._on_item_double_clicked)
         self._available_view.folder_drop_requested.connect(self._on_folder_drop_requested)
+        self._available_view.customContextMenuRequested.connect(self._open_context_menu)
         self._available_model.rowsMoved.connect(self._on_rows_moved)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
@@ -447,6 +451,16 @@ class NodeContentBrowser(QWidget):
             return
         if catalog_item.entry is not None:
             self.node_type_requested.emit(catalog_item.entry.node_type)
+
+    def _open_context_menu(self, pos: QtCore.QPoint) -> None:
+        selected_items = self._selected_catalog_items()
+        if not selected_items:
+            return
+        menu = QMenu(self)
+        delete_action = menu.addAction("削除")
+        action = menu.exec_(self._available_view.mapToGlobal(pos))
+        if action == delete_action:
+            self._confirm_delete_selected(selected_items)
 
     def _on_folder_drop_requested(
         self,
@@ -661,6 +675,61 @@ class NodeContentBrowser(QWidget):
             self._path_label.setText(" / ".join(["ルート", *labels]))
         if self._up_folder_button is not None:
             self._up_folder_button.setEnabled(self._current_folder.parent is not None)
+
+    def _selected_catalog_items(self) -> List[CatalogItem]:
+        selection = self._available_view.selectionModel()
+        if selection is None:
+            return []
+        items: List[CatalogItem] = []
+        for index in selection.selectedIndexes():
+            model_item = self._available_model.itemFromIndex(index)
+            catalog_item = model_item.data(Qt.UserRole) if model_item else None
+            if isinstance(catalog_item, CatalogItem):
+                items.append(catalog_item)
+        return items
+
+    def _confirm_delete_selected(self, items: List[CatalogItem]) -> None:
+        protected = [item for item in items if self._is_protected_folder(item)]
+        if protected:
+            QMessageBox.warning(
+                self,
+                "削除不可",
+                "既定フォルダは削除できません。",
+            )
+            return
+        folder_count = sum(1 for item in items if item.is_folder())
+        entry_count = sum(1 for item in items if item.is_entry())
+        message = self._delete_message(folder_count, entry_count)
+        result = QMessageBox.question(
+            self,
+            "削除確認",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return
+        self._delete_items(items)
+        self._refresh_view()
+
+    def _delete_message(self, folder_count: int, entry_count: int) -> str:
+        parts = []
+        if folder_count:
+            parts.append(f"フォルダ {folder_count} 件")
+        if entry_count:
+            parts.append(f"アイテム {entry_count} 件")
+        summary = "、".join(parts) if parts else "選択中の項目"
+        return f"{summary}を削除します。よろしいですか？"
+
+    def _delete_items(self, items: List[CatalogItem]) -> None:
+        for item in items:
+            if item in self._current_folder.items:
+                self._current_folder.items.remove(item)
+
+    def _is_protected_folder(self, item: CatalogItem) -> bool:
+        if not item.is_folder():
+            return False
+        return item.title in self._protected_folder_names
 
     def _move_to_parent_folder(self) -> None:
         if self._current_folder.parent is None:
