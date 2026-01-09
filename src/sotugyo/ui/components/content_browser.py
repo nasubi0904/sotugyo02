@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
 
 Qt = QtCore.Qt
 Signal = QtCore.Signal
-QSize = QtCore.QSize
 QFileInfo = QtCore.QFileInfo
+QSize = QtCore.QSize
 QColor = QtGui.QColor
 QFont = QtGui.QFont
 QFontMetrics = QtGui.QFontMetrics
@@ -23,18 +23,20 @@ QStandardItem = QtGui.QStandardItem
 QStandardItemModel = QtGui.QStandardItemModel
 QAbstractItemView = QtWidgets.QAbstractItemView
 QBoxLayout = QtWidgets.QBoxLayout
-QComboBox = QtWidgets.QComboBox
+QFileIconProvider = QtWidgets.QFileIconProvider
 QFrame = QtWidgets.QFrame
 QHBoxLayout = QtWidgets.QHBoxLayout
+QInputDialog = QtWidgets.QInputDialog
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
+QListView = QtWidgets.QListView
+QMessageBox = QtWidgets.QMessageBox
 QPushButton = QtWidgets.QPushButton
-QFileIconProvider = QtWidgets.QFileIconProvider
 QSizePolicy = QtWidgets.QSizePolicy
 QSlider = QtWidgets.QSlider
 QSpinBox = QtWidgets.QSpinBox
 QSpacerItem = QtWidgets.QSpacerItem
-QTreeView = QtWidgets.QTreeView
+QStyle = QtWidgets.QStyle
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
@@ -55,56 +57,86 @@ class NodeCatalogEntry:
         return "\n".join(part.lower() for part in parts if part)
 
 
-@dataclass(frozen=True)
-class BrowserLayoutProfile:
-    """コンテンツブラウザのレイアウト設定。"""
+@dataclass
+class CatalogItem:
+    """アイコン一覧に表示するアイテムの情報。"""
 
-    min_width: int
-    compact: bool
-    section_spacing: int
-    card_padding: Tuple[int, int, int, int]
-    section_padding: Tuple[int, int, int, int]
+    kind: str
+    title: str
+    entry: Optional[NodeCatalogEntry] = None
+    folder: Optional["CatalogFolder"] = None
+
+    def is_folder(self) -> bool:
+        return self.kind == "folder"
+
+    def is_entry(self) -> bool:
+        return self.kind == "entry"
 
 
-class NodeCatalogViewModel:
-    """コンテンツブラウザ表示用のビューモデル。"""
+@dataclass
+class CatalogFolder:
+    """コンテンツブラウザ内の仮想フォルダ。"""
 
-    def __init__(self) -> None:
-        self._entries: List[NodeCatalogEntry] = []
-        self._keyword: str = ""
-        self._genre: Optional[str] = None
+    name: str
+    parent: Optional["CatalogFolder"]
+    items: List[CatalogItem] = field(default_factory=list)
 
-    @property
-    def entries(self) -> Sequence[NodeCatalogEntry]:
-        return tuple(self._entries)
+    def path_labels(self) -> List[str]:
+        labels = []
+        current: Optional[CatalogFolder] = self
+        while current is not None and current.parent is not None:
+            labels.append(current.name)
+            current = current.parent
+        return list(reversed(labels))
 
-    def set_entries(self, entries: Iterable[NodeCatalogEntry]) -> None:
-        self._entries = list(entries)
+    def iter_items(self) -> Iterator[CatalogItem]:
+        for item in self.items:
+            yield item
+            if item.folder is not None:
+                yield from item.folder.iter_items()
 
-    def set_keyword(self, keyword: str) -> None:
-        self._keyword = keyword.strip().lower()
 
-    def set_genre(self, genre: Optional[str]) -> None:
-        self._genre = genre or None
+class CatalogIconView(QListView):
+    """フォルダへのドロップを扱うアイコンビュー。"""
 
-    def total_count(self) -> int:
-        return len(self._entries)
+    folder_drop_requested = Signal(object, list)
 
-    def genre_total(self, genre: Optional[str]) -> int:
-        if genre is None:
-            return self.total_count()
-        return sum(1 for entry in self._entries if entry.genre == genre)
+    def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401
+        """ドロップ先がフォルダの場合は移動を要求する。"""
 
-    def genres(self) -> List[str]:
-        return sorted({entry.genre for entry in self._entries if entry.genre})
+        model = self.model()
+        index = self.indexAt(self._event_pos(event))
+        if model is not None and index.isValid():
+            item = model.itemFromIndex(index)
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem) and catalog_item.is_folder():
+                selected_items = self._selected_catalog_items()
+                if selected_items:
+                    self.folder_drop_requested.emit(catalog_item.folder, selected_items)
+                    event.acceptProposedAction()
+                    return
+        super().dropEvent(event)
 
-    def matches(self, entry: NodeCatalogEntry) -> bool:
-        keyword = self._keyword
-        if keyword and keyword not in entry.searchable_text():
-            return False
-        if self._genre and entry.genre != self._genre:
-            return False
-        return True
+    def _event_pos(self, event: QtGui.QDropEvent) -> QtCore.QPoint:
+        position = getattr(event, "position", None)
+        if callable(position):
+            return position().toPoint()
+        return event.pos()
+
+    def _selected_catalog_items(self) -> List[CatalogItem]:
+        selection = self.selectionModel()
+        if selection is None:
+            return []
+        items: List[CatalogItem] = []
+        for index in selection.selectedIndexes():
+            model = self.model()
+            if model is None:
+                continue
+            item = model.itemFromIndex(index)
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem):
+                items.append(catalog_item)
+        return items
 
 
 class NodeContentBrowser(QWidget):
@@ -116,81 +148,41 @@ class NodeContentBrowser(QWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self._view_model = NodeCatalogViewModel()
         self._search_line: QLineEdit = QLineEdit(self)
-        self._genre_combo: Optional[QComboBox] = None
-        self._available_tree: QTreeView = QTreeView(self)
+        self._available_view: CatalogIconView = CatalogIconView(self)
         self._available_model: QStandardItemModel = QStandardItemModel(self)
-        self._genre_items: Dict[str, QStandardItem] = {}
-        self._entry_items: List[Tuple[NodeCatalogEntry, QStandardItem]] = []
-        self._tree_selection_model: Optional[QtCore.QItemSelectionModel] = None
-        self._tree_selection_connected: bool = False
         self._icon_size_slider: QSlider = QSlider(Qt.Horizontal, self)
         self._icon_size_spin: QSpinBox = QSpinBox(self)
         self._icon_size_levels: Dict[int, int] = {
-            1: 24,
-            2: 32,
-            3: 40,
-            4: 48,
-            5: 64,
-            6: 80,
+            1: 40,
+            2: 48,
+            3: 64,
+            4: 80,
+            5: 96,
+            6: 120,
         }
         self._icon_size_default_level: int = 3
         self._icon_size_level: int = self._icon_size_default_level
         self._icon_size: int = self._icon_size_from_level(self._icon_size_level)
-        self._compact_mode: bool = False
         self._icon_control_container: Optional[QWidget] = None
         self._outer_layout: Optional[QVBoxLayout] = None
         self._card_frame: Optional[QFrame] = None
         self._card_layout: Optional[QVBoxLayout] = None
-        self._section_frames: List[QFrame] = []
         self._control_header: Optional[QWidget] = None
         self._control_header_layout: Optional[QBoxLayout] = None
         self._control_header_spacer: Optional[QSpacerItem] = None
         self._result_summary_label: Optional[QLabel] = None
+        self._path_label: Optional[QLabel] = None
+        self._up_folder_button: Optional[QPushButton] = None
+        self._new_folder_button: Optional[QPushButton] = None
         self._icon_cache: Dict[Tuple[str, str, int], QIcon] = {}
         self._file_icon_provider: QFileIconProvider = QFileIconProvider()
-        self._layout_profiles: List[BrowserLayoutProfile] = [
-            BrowserLayoutProfile(
-                min_width=1080,
-                compact=False,
-                section_spacing=10,
-                card_padding=(16, 16, 16, 16),
-                section_padding=(10, 10, 10, 10),
-            ),
-            BrowserLayoutProfile(
-                min_width=860,
-                compact=False,
-                section_spacing=10,
-                card_padding=(16, 16, 16, 16),
-                section_padding=(10, 10, 10, 10),
-            ),
-            BrowserLayoutProfile(
-                min_width=660,
-                compact=False,
-                section_spacing=8,
-                card_padding=(14, 14, 14, 14),
-                section_padding=(8, 8, 8, 8),
-            ),
-            BrowserLayoutProfile(
-                min_width=520,
-                compact=False,
-                section_spacing=8,
-                card_padding=(12, 12, 12, 12),
-                section_padding=(8, 8, 8, 8),
-            ),
-            BrowserLayoutProfile(
-                min_width=0,
-                compact=True,
-                section_spacing=6,
-                card_padding=(12, 12, 12, 12),
-                section_padding=(6, 6, 6, 6),
-            ),
-        ]
-        self._current_profile: BrowserLayoutProfile = self._layout_profiles[-1]
+        self._folder_icon: QIcon = self.style().standardIcon(QStyle.SP_DirIcon)
+        self._root_folder: CatalogFolder = CatalogFolder("root", None)
+        self._current_folder: CatalogFolder = self._root_folder
+        self._search_keyword: str = ""
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
-        self._current_genre: Optional[str] = None
 
         self._setup_ui()
         self._connect_signals()
@@ -208,45 +200,9 @@ class NodeContentBrowser(QWidget):
     # ------------------------------------------------------------------
     def set_catalog_entries(self, entries: Iterable[NodeCatalogEntry]) -> None:
         catalog_entries = list(entries)
-        self._view_model.set_entries(catalog_entries)
-        self._total_entry_count = self._view_model.total_count()
-        self._available_model.clear()
-        self._available_model.setHorizontalHeaderLabels(["ノード"])
-        self._available_tree.setModel(self._available_model)
-        self._connect_tree_selection_model()
-        self._genre_items = {}
-        self._entry_items = []
-        self._icon_cache.clear()
-
-        for entry in catalog_entries:
-            genre_item = self._genre_items.get(entry.genre)
-            if genre_item is None:
-                genre_item = QStandardItem(entry.genre)
-                genre_item.setEditable(False)
-                genre_item.setSelectable(True)
-                font = QFont()
-                font.setBold(True)
-                genre_item.setFont(font)
-                self._available_model.appendRow(genre_item)
-                self._genre_items[entry.genre] = genre_item
-
-            item = QStandardItem(self._format_entry_text(entry))
-            item.setEditable(False)
-            item.setSelectable(True)
-            item.setToolTip(self._entry_tooltip(entry))
-            item.setData(entry.node_type, Qt.UserRole)
-            item.setData(entry.searchable_text(), Qt.UserRole + 1)
-            item.setData(entry.genre, Qt.UserRole + 2)
-            item.setData(entry, Qt.UserRole + 3)
-            item.setIcon(self._icon_for_entry(entry))
-            genre_item.appendRow(item)
-            self._entry_items.append((entry, item))
-
-        self._populate_genre_options()
-        self._apply_icon_size()
-        self._update_item_texts()
-        self._update_parent_labels()
-        self._apply_filter()
+        self._total_entry_count = len(catalog_entries)
+        self._sync_catalog_entries(catalog_entries)
+        self._refresh_view()
 
     def set_available_nodes(self, entries: Iterable[Dict[str, str]]) -> None:
         catalog_entries: List[NodeCatalogEntry] = []
@@ -291,11 +247,14 @@ class NodeContentBrowser(QWidget):
         return self._search_line.text()
 
     def first_visible_available_type(self) -> Optional[str]:
-        for entry, item in self._entry_items:
-            if self._is_item_visible(item):
-                node_type = item.data(Qt.UserRole)
-                if isinstance(node_type, str):
-                    return node_type
+        model = self._available_model
+        for row in range(model.rowCount()):
+            item = model.item(row)
+            if item is None:
+                continue
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem) and catalog_item.entry:
+                return catalog_item.entry.node_type
         return None
 
     # ------------------------------------------------------------------
@@ -330,29 +289,41 @@ class NodeContentBrowser(QWidget):
 
         card_layout.addLayout(header_layout)
 
+        path_layout = QHBoxLayout()
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(6)
+
+        path_label = QLabel("場所", card)
+        path_label.setProperty("hint", "secondary")
+        path_layout.addWidget(path_label)
+
+        self._path_label = QLabel("/", card)
+        self._path_label.setObjectName("contentPathLabel")
+        self._path_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        path_layout.addWidget(self._path_label, 1)
+
+        up_button = QPushButton("上の階層へ", card)
+        up_button.setEnabled(False)
+        self._up_folder_button = up_button
+        path_layout.addWidget(up_button)
+
+        new_folder_button = QPushButton("フォルダ作成", card)
+        self._new_folder_button = new_folder_button
+        path_layout.addWidget(new_folder_button)
+
+        card_layout.addLayout(path_layout)
+
         search_layout = QHBoxLayout()
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(6)
 
-        self._search_line.setPlaceholderText("ノードを検索")
+        self._search_line.setPlaceholderText("アイコンやノード名を検索")
         self._search_line.setClearButtonEnabled(True)
         search_layout.addWidget(self._search_line, 1)
 
-        genre_label = QLabel("ジャンル", card)
-        genre_label.setProperty("hint", "secondary")
-        search_layout.addWidget(genre_label)
-
-        genre_combo = QComboBox(card)
-        genre_combo.setObjectName("genreFilterCombo")
-        genre_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        genre_combo.setMinimumContentsLength(6)
-        genre_combo.addItem("すべて", None)
-        self._genre_combo = genre_combo
-        search_layout.addWidget(genre_combo)
-
         card_layout.addLayout(search_layout)
 
-        self._configure_tree_view(self._available_tree)
+        self._configure_icon_view(self._available_view)
 
         icon_control = self._create_icon_size_control(card)
         summary_widget = self._create_result_summary(card)
@@ -368,68 +339,29 @@ class NodeContentBrowser(QWidget):
         self._control_header_layout = header_container_layout
         self._control_header_spacer = spacer
 
-        card_layout.addWidget(
-            self._build_section(
-                "追加可能ノード",
-                self._available_tree,
-                header_widget=header_container,
-            ),
-            1,
-        )
+        card_layout.addWidget(header_container)
+        card_layout.addWidget(self._available_view, 1)
 
         outer_layout.addWidget(card, 1)
 
-    def _configure_tree_view(self, widget: QTreeView) -> None:
-        widget.setObjectName("contentTree")
+    def _configure_icon_view(self, widget: CatalogIconView) -> None:
+        widget.setObjectName("contentIconGrid")
         widget.setModel(self._available_model)
-        widget.setHeaderHidden(True)
-        widget.setRootIsDecorated(True)
-        widget.setAnimated(True)
-        widget.setItemsExpandable(True)
-        widget.setUniformRowHeights(False)
-        widget.setIndentation(18)
-        widget.setSelectionMode(QAbstractItemView.SingleSelection)
-        widget.setSelectionBehavior(QAbstractItemView.SelectRows)
-        widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        widget.setWordWrap(True)
-        widget.setTextElideMode(Qt.TextElideMode.ElideNone)
-        widget.setIconSize(
-            QSize(self._current_icon_size_value(), self._current_icon_size_value())
-        )
+        widget.setViewMode(QListView.IconMode)
+        widget.setWrapping(True)
+        widget.setResizeMode(QListView.Adjust)
+        widget.setMovement(QListView.Snap)
+        widget.setUniformItemSizes(False)
+        widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        widget.setSelectionBehavior(QAbstractItemView.SelectItems)
+        widget.setDragDropMode(QAbstractItemView.InternalMove)
+        widget.setDragEnabled(True)
+        widget.setAcceptDrops(True)
+        widget.setDropIndicatorShown(True)
+        widget.setSpacing(12)
+        widget.setIconSize(QSize(self._current_icon_size_value(), self._current_icon_size_value()))
         widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self._apply_icon_size()
-
-    def _build_section(
-        self,
-        title: str,
-        widget: QWidget,
-        header_widget: Optional[QWidget] = None,
-    ) -> QWidget:
-        frame = QFrame(self)
-        frame.setObjectName("inspectorSection")
-        frame_layout = QVBoxLayout(frame)
-        padding = getattr(self._current_profile, "section_padding", (16, 16, 16, 16))
-        frame_layout.setContentsMargins(*padding)
-        frame_layout.setSpacing(self._current_profile.section_spacing)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(0, 0, 0, 0)
-        header_layout.setSpacing(6)
-
-        label = QLabel(title, frame)
-        label.setObjectName("panelTitle")
-        header_layout.addWidget(label)
-
-        if header_widget is not None:
-            header_layout.addStretch(1)
-            header_layout.addWidget(header_widget)
-
-        frame_layout.addLayout(header_layout)
-        frame_layout.addWidget(widget, 1)
-
-        self._section_frames.append(frame)
-
-        return frame
 
     def _create_icon_size_control(self, parent: QWidget) -> QWidget:
         container = QWidget(parent)
@@ -485,66 +417,60 @@ class NodeContentBrowser(QWidget):
     def _connect_signals(self) -> None:
         self._search_line.textChanged.connect(self._apply_filter)
         self._search_line.returnPressed.connect(self._on_search_submitted)
-        self._available_tree.doubleClicked.connect(self._on_tree_item_double_clicked)
-        self._connect_tree_selection_model()
+        self._available_view.doubleClicked.connect(self._on_item_double_clicked)
+        self._available_view.folder_drop_requested.connect(self._on_folder_drop_requested)
+        self._available_model.rowsMoved.connect(self._on_rows_moved)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
         self._icon_size_spin.valueChanged[int].connect(self._on_icon_size_changed)
-        if self._genre_combo is not None:
-            self._genre_combo.currentIndexChanged.connect(self._on_genre_changed)
+        if self._up_folder_button is not None:
+            self._up_folder_button.clicked.connect(self._move_to_parent_folder)
+        if self._new_folder_button is not None:
+            self._new_folder_button.clicked.connect(self._create_new_folder)
 
     def _apply_filter(self) -> None:
-        keyword = self._search_line.text().strip().lower()
-        self._view_model.set_keyword(keyword)
-        visible_counts: Dict[str, int] = {}
-        total_counts: Dict[str, int] = {}
-        visible_count = 0
-        root_index = QtCore.QModelIndex()
-        for genre, genre_item in self._genre_items.items():
-            parent_index = genre_item.index()
-            genre_visible = 0
-            total = genre_item.rowCount()
-            total_counts[genre] = total
-            for row in range(genre_item.rowCount()):
-                child_item = genre_item.child(row)
-                entry = self._entry_from_item(child_item)
-                matches = entry is not None and self._view_model.matches(entry)
-                self._available_tree.setRowHidden(row, parent_index, not matches)
-                if matches:
-                    visible_count += 1
-                    genre_visible += 1
-            visible_counts[genre] = genre_visible
-            parent_row = genre_item.row()
-            parent_visible = genre_visible > 0
-            self._available_tree.setRowHidden(parent_row, root_index, not parent_visible)
-            self._available_tree.setExpanded(parent_index, parent_visible)
-        self._visible_entry_count = visible_count
-        self._update_parent_labels(visible_counts, total_counts)
-        self._update_summary_label(visible_count)
+        self._search_keyword = self._search_line.text().strip().lower()
+        self._refresh_view()
+        self._update_drag_drop_state()
 
     def _on_search_submitted(self) -> None:
         self.search_submitted.emit(self._search_line.text())
 
-    def _on_tree_item_double_clicked(self, index: QtCore.QModelIndex) -> None:
+    def _on_item_double_clicked(self, index: QtCore.QModelIndex) -> None:
         item = self._available_model.itemFromIndex(index)
-        self._emit_node_request_if_available(item)
+        if item is None:
+            return
+        catalog_item = item.data(Qt.UserRole)
+        if not isinstance(catalog_item, CatalogItem):
+            return
+        if catalog_item.is_folder() and catalog_item.folder is not None:
+            self._open_folder(catalog_item.folder)
+            return
+        if catalog_item.entry is not None:
+            self.node_type_requested.emit(catalog_item.entry.node_type)
 
-    def _on_tree_selection_changed(
+    def _on_folder_drop_requested(
         self,
-        selected: QtCore.QItemSelection,
-        deselected: QtCore.QItemSelection,
+        target_folder: Optional[CatalogFolder],
+        items: List[CatalogItem],
     ) -> None:
-        indexes = selected.indexes()
-        if not indexes:
+        if target_folder is None:
             return
-        item = self._available_model.itemFromIndex(indexes[0])
-        self._emit_node_request_if_available(item)
+        self._move_items_to_folder(items, target_folder)
+        self._refresh_view()
 
-    def _emit_node_request_if_available(self, item: Optional[QStandardItem]) -> None:
-        if item is None or item.hasChildren():
+    def _on_rows_moved(
+        self,
+        parent: QtCore.QModelIndex,
+        start: int,
+        end: int,
+        destination: QtCore.QModelIndex,
+        row: int,
+    ) -> None:
+        if self._search_keyword:
             return
-        node_type = item.data(Qt.UserRole)
-        if isinstance(node_type, str) and node_type:
-            self.node_type_requested.emit(node_type)
+        if parent.isValid() or destination.isValid():
+            return
+        self._sync_current_folder_order_from_model()
 
     def _on_icon_size_changed(self, value: int) -> None:
         clamped = max(self._icon_size_spin.minimum(), min(value, self._icon_size_spin.maximum()))
@@ -565,9 +491,9 @@ class NodeContentBrowser(QWidget):
     def _apply_icon_size(self) -> None:
         icon_size_value = self._current_icon_size_value()
         icon_size = QSize(icon_size_value, icon_size_value)
-        self._available_tree.setIconSize(icon_size)
+        self._available_view.setIconSize(icon_size)
+        self._available_view.setGridSize(self._grid_size(icon_size_value))
         self._refresh_icons()
-        self._refresh_item_sizes()
         tooltip = (
             f"表示サイズ: {icon_size_value}px"
             f" / {self._icon_size_level} 段階 ({len(self._icon_size_levels)}段階中)"
@@ -577,74 +503,15 @@ class NodeContentBrowser(QWidget):
         if self._result_summary_label is not None and self._visible_entry_count:
             self._update_summary_label()
 
-    def _on_genre_changed(self, index: int) -> None:
-        if self._genre_combo is None:
-            return
-        data = self._genre_combo.itemData(index)
-        self._current_genre = data if isinstance(data, str) and data else None
-        self._view_model.set_genre(self._current_genre)
-        self._apply_filter()
-
-    def _populate_genre_options(self) -> None:
-        if self._genre_combo is None:
-            return
-        previous = self._current_genre
-        genres = self._view_model.genres()
-        self._genre_combo.blockSignals(True)
-        self._genre_combo.clear()
-        self._genre_combo.addItem("すべて", None)
-        target_index = 0
-        for genre in genres:
-            self._genre_combo.addItem(genre, genre)
-            if previous and genre == previous:
-                target_index = self._genre_combo.count() - 1
-        if target_index >= self._genre_combo.count():
-            target_index = 0
-        if target_index == 0:
-            previous = None
-        self._genre_combo.setCurrentIndex(target_index)
-        self._genre_combo.blockSignals(False)
-        self._current_genre = previous
-        self._view_model.set_genre(previous)
-        tooltip_lines = ["ジャンルで一覧を絞り込みます。"]
-        if genres:
-            tooltip_lines.append("登録ジャンル: " + ", ".join(genres))
-        self._genre_combo.setToolTip("\n".join(tooltip_lines))
-
     def _update_layout_for_size(self, size: QSize) -> None:
         width = size.width() if size is not None else self.width()
-        profile = self._select_layout_profile(width)
-        if profile != self._current_profile:
-            self._apply_profile(profile)
-
-        self._apply_icon_size()
-        self._refresh_item_sizes()
-        self._update_item_texts()
         self._adjust_control_header(width)
-
-    def _select_layout_profile(self, width: int) -> BrowserLayoutProfile:
-        for profile in self._layout_profiles:
-            if width >= profile.min_width:
-                return profile
-        return self._layout_profiles[-1]
-
-    def _apply_profile(self, profile: BrowserLayoutProfile) -> None:
-        self._current_profile = profile
-        self._compact_mode = profile.compact
-        self._available_tree.setIndentation(14 if profile.compact else 18)
-        padding = profile.card_padding
-        if self._card_layout is not None:
-            self._card_layout.setContentsMargins(*padding)
-        for frame in self._section_frames:
-            layout = frame.layout()
-            if isinstance(layout, QVBoxLayout):
-                layout.setContentsMargins(*profile.section_padding)
-                layout.setSpacing(profile.section_spacing)
+        self._apply_icon_size()
 
     def _adjust_control_header(self, width: int) -> None:
         if self._control_header_layout is None:
             return
-        is_vertical = width < 720 or self._compact_mode
+        is_vertical = width < 720
         target_direction = QBoxLayout.TopToBottom if is_vertical else QBoxLayout.LeftToRight
         if self._control_header_layout.direction() != target_direction:
             self._control_header_layout.setDirection(target_direction)
@@ -673,75 +540,309 @@ class NodeContentBrowser(QWidget):
             self._control_header.updateGeometry()
         self._control_header_layout.invalidate()
 
-    def _refresh_item_sizes(self) -> None:
-        item_size = self._list_item_size_hint()
-        parent_size = self._parent_item_size_hint()
-        for genre_item in self._genre_items.values():
-            genre_item.setSizeHint(parent_size)
-            for row in range(genre_item.rowCount()):
-                child = genre_item.child(row)
-                if child is not None:
-                    child.setSizeHint(item_size)
-        self._available_tree.updateGeometry()
-        self._available_tree.doItemsLayout()
-        viewport = self._available_tree.viewport()
-        if viewport is not None:
-            viewport.update()
+    def _refresh_view(self) -> None:
+        self._available_model.clear()
+        items = self._current_display_items()
+        for catalog_item in items:
+            item = QStandardItem(self._format_item_text(catalog_item))
+            item.setEditable(False)
+            item.setData(catalog_item, Qt.UserRole)
+            item.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
+            if catalog_item.is_folder():
+                item.setIcon(self._folder_icon)
+                item.setFlags(
+                    Qt.ItemIsEnabled
+                    | Qt.ItemIsSelectable
+                    | Qt.ItemIsDragEnabled
+                    | Qt.ItemIsDropEnabled
+                )
+            else:
+                item.setIcon(self._icon_for_entry(catalog_item.entry))
+                item.setFlags(
+                    Qt.ItemIsEnabled
+                    | Qt.ItemIsSelectable
+                    | Qt.ItemIsDragEnabled
+                )
+            self._available_model.appendRow(item)
+        self._update_path_label()
+        self._update_summary_label()
+        self._update_drag_drop_state()
 
     def _refresh_icons(self) -> None:
-        for entry, item in self._entry_items:
-            item.setIcon(self._icon_for_entry(entry))
+        for row in range(self._available_model.rowCount()):
+            item = self._available_model.item(row)
+            if item is None:
+                continue
+            catalog_item = item.data(Qt.UserRole)
+            if not isinstance(catalog_item, CatalogItem):
+                continue
+            if catalog_item.is_folder():
+                item.setIcon(self._folder_icon)
+            else:
+                item.setIcon(self._icon_for_entry(catalog_item.entry))
 
-    def _list_item_size_hint(self) -> QSize:
-        font: QFontMetrics = self._available_tree.fontMetrics()
-        icon_size = self._current_icon_size_value()
-        viewport = self._available_tree.viewport()
-        viewport_width = viewport.width() if viewport is not None else 0
-        if viewport_width <= 0:
-            viewport_width = max(self.width() - 40, icon_size + 64)
+    def _update_drag_drop_state(self) -> None:
+        filtered = bool(self._search_keyword)
+        self._available_view.setDragEnabled(not filtered)
+        self._available_view.setAcceptDrops(not filtered)
+        self._available_view.setDropIndicatorShown(not filtered)
 
+    def _current_display_items(self) -> List[CatalogItem]:
+        items: List[CatalogItem] = []
+        keyword = self._search_keyword
+        for item in self._current_folder.items:
+            if item.is_folder():
+                if not keyword or self._folder_has_match(item.folder, keyword):
+                    items.append(item)
+            elif self._entry_matches(item.entry, keyword):
+                items.append(item)
+        return items
+
+    def _folder_has_match(self, folder: Optional[CatalogFolder], keyword: str) -> bool:
+        if folder is None:
+            return False
+        for item in folder.items:
+            if item.is_folder():
+                if self._folder_has_match(item.folder, keyword):
+                    return True
+            elif self._entry_matches(item.entry, keyword):
+                return True
+        return False
+
+    def _entry_matches(self, entry: Optional[NodeCatalogEntry], keyword: str) -> bool:
+        if entry is None:
+            return False
+        if not keyword:
+            return True
+        return keyword in entry.searchable_text()
+
+    def _format_item_text(self, item: CatalogItem) -> str:
+        if item.is_folder():
+            return item.title
+        entry = item.entry
+        if entry is None:
+            return item.title
+        title = entry.title.strip()
+        subtitle = entry.subtitle.strip()
+        if title and subtitle:
+            return f"{title}\n{subtitle}"
+        return title or subtitle or entry.node_type.strip()
+
+    def _update_summary_label(self) -> None:
+        if self._result_summary_label is None:
+            return
+        visible_entries = 0
+        visible_folders = 0
+        for row in range(self._available_model.rowCount()):
+            item = self._available_model.item(row)
+            if item is None:
+                continue
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem):
+                if catalog_item.is_folder():
+                    visible_folders += 1
+                else:
+                    visible_entries += 1
+        total_entries = sum(1 for item in self._current_folder.items if item.is_entry())
+        self._visible_entry_count = visible_entries
+        text = (
+            f"{visible_entries} 件 / {total_entries} 件"
+            f"（フォルダ {visible_folders}）"
+        )
+        self._result_summary_label.setText(text)
+
+    def _update_path_label(self) -> None:
+        if self._path_label is None:
+            return
+        labels = self._current_folder.path_labels()
+        if not labels:
+            self._path_label.setText("ルート")
+        else:
+            self._path_label.setText(" / ".join(["ルート", *labels]))
+        if self._up_folder_button is not None:
+            self._up_folder_button.setEnabled(self._current_folder.parent is not None)
+
+    def _move_to_parent_folder(self) -> None:
+        if self._current_folder.parent is None:
+            return
+        self._current_folder = self._current_folder.parent
+        self._refresh_view()
+
+    def _open_folder(self, folder: CatalogFolder) -> None:
+        self._current_folder = folder
+        self._refresh_view()
+
+    def _create_new_folder(self) -> None:
+        if self._new_folder_button is None:
+            return
+        name, ok = QInputDialog.getText(
+            self,
+            "新規フォルダ",
+            "フォルダ名を入力してください。",
+        )
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            QMessageBox.warning(self, "入力エラー", "フォルダ名が空です。")
+            return
+        if any(
+            item.is_folder() and item.title == name
+            for item in self._current_folder.items
+        ):
+            QMessageBox.warning(self, "入力エラー", "同じ名前のフォルダが存在します。")
+            return
+        new_folder = CatalogFolder(name=name, parent=self._current_folder)
+        new_item = CatalogItem(kind="folder", title=name, folder=new_folder)
+        self._current_folder.items.append(new_item)
+        self._refresh_view()
+
+    def _move_items_to_folder(
+        self,
+        items: List[CatalogItem],
+        target_folder: CatalogFolder,
+    ) -> None:
+        if not items:
+            return
+        moving_items = [item for item in items if item in self._current_folder.items]
+        if not moving_items:
+            return
+        for item in moving_items:
+            if item.is_folder() and item.folder is not None:
+                if item.folder is target_folder or self._is_descendant_folder(target_folder, item.folder):
+                    continue
+            if item in target_folder.items:
+                continue
+            self._current_folder.items.remove(item)
+            if item.is_folder() and item.folder is not None:
+                item.folder.parent = target_folder
+            target_folder.items.append(item)
+
+    def _is_descendant_folder(
+        self,
+        target: CatalogFolder,
+        candidate_parent: Optional[CatalogFolder],
+    ) -> bool:
+        current = target.parent
+        while current is not None:
+            if current is candidate_parent:
+                return True
+            current = current.parent
+        return False
+
+    def _sync_current_folder_order_from_model(self) -> None:
+        new_order: List[CatalogItem] = []
+        for row in range(self._available_model.rowCount()):
+            item = self._available_model.item(row)
+            if item is None:
+                continue
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem):
+                new_order.append(catalog_item)
+        if new_order:
+            self._current_folder.items = new_order
+
+    def _sync_catalog_entries(self, entries: Sequence[NodeCatalogEntry]) -> None:
+        if not self._root_folder.items:
+            self._build_default_folders()
+
+        entry_map = {entry.node_type: entry for entry in entries}
+        existing_items = self._entry_items_by_type()
+
+        for node_type, item in list(existing_items.items()):
+            if node_type not in entry_map:
+                self._remove_item_from_parent(item)
+
+        for entry in entries:
+            existing_item = existing_items.get(entry.node_type)
+            if existing_item is not None:
+                existing_item.entry = entry
+                existing_item.title = entry.title or existing_item.title
+                continue
+            folder = self._select_default_folder(entry)
+            folder_item = CatalogItem(kind="entry", title=entry.title or entry.node_type, entry=entry)
+            folder.items.append(folder_item)
+
+        if self._current_folder is None or self._current_folder.parent is None:
+            self._current_folder = self._root_folder
+
+    def _build_default_folders(self) -> None:
+        self._root_folder = CatalogFolder("root", None)
+        workflow = CatalogFolder("ワークフロー", self._root_folder)
+        environment = CatalogFolder("環境定義", self._root_folder)
+        other = CatalogFolder("その他", self._root_folder)
+        self._root_folder.items = [
+            CatalogItem(kind="folder", title=workflow.name, folder=workflow),
+            CatalogItem(kind="folder", title=environment.name, folder=environment),
+            CatalogItem(kind="folder", title=other.name, folder=other),
+        ]
+        self._current_folder = self._root_folder
+
+    def _entry_items_by_type(self) -> Dict[str, CatalogItem]:
+        items: Dict[str, CatalogItem] = {}
+        for item in self._root_folder.iter_items():
+            if item.entry is not None:
+                items[item.entry.node_type] = item
+        return items
+
+    def _remove_item_from_parent(self, target: CatalogItem) -> None:
+        for item in self._root_folder.iter_items():
+            if item.folder is not None and target in item.folder.items:
+                item.folder.items.remove(target)
+                return
+        if target in self._root_folder.items:
+            self._root_folder.items.remove(target)
+
+    def _select_default_folder(self, entry: NodeCatalogEntry) -> CatalogFolder:
+        workflow, environment, other = self._default_folders()
+        normalized = entry.node_type.lower()
+        genre = entry.genre
+        if genre == "ツール環境":
+            return environment
+        if genre in {"ワークフロー", "メモ"}:
+            return workflow
+        if "memo" in normalized or "date" in normalized:
+            return workflow
+        return other
+
+    def _default_folders(self) -> Tuple[CatalogFolder, CatalogFolder, CatalogFolder]:
+        workflow = self._find_folder("ワークフロー")
+        environment = self._find_folder("環境定義")
+        other = self._find_folder("その他")
+        if workflow is None or environment is None or other is None:
+            self._build_default_folders()
+            workflow = self._find_folder("ワークフロー")
+            environment = self._find_folder("環境定義")
+            other = self._find_folder("その他")
+        return workflow, environment, other
+
+    def _find_folder(self, name: str) -> Optional[CatalogFolder]:
+        for item in self._root_folder.items:
+            if item.is_folder() and item.folder is not None and item.folder.name == name:
+                return item.folder
+        return None
+
+    def _grid_size(self, icon_size: int) -> QSize:
+        font: QFontMetrics = self._available_view.fontMetrics()
         line_spacing = font.lineSpacing()
-        leading = font.leading()
-        profile = self._current_profile
-
-        if profile.compact:
-            vertical_padding = max(6, leading + 2)
-            text_lines = 2
-            text_height = line_spacing * text_lines
-            height = max(icon_size + vertical_padding, text_height + vertical_padding)
-            width = max(220, viewport_width)
-            return QSize(width, height)
-
-        width = max(icon_size + 72, viewport_width)
-        title_width = font.horizontalAdvance("M" * 18)
-        width = max(width, title_width + icon_size // 2)
-
-        vertical_padding = max(10, leading + 6)
-        text_lines = 2
-        text_height = line_spacing * text_lines
-        height = max(icon_size + vertical_padding, text_height + vertical_padding)
-        return QSize(width, height)
-
-    def _parent_item_size_hint(self) -> QSize:
-        font: QFontMetrics = self._available_tree.fontMetrics()
-        line_spacing = font.lineSpacing()
-        leading = font.leading()
-        height = line_spacing + max(4, leading)
-        viewport = self._available_tree.viewport()
-        viewport_width = viewport.width() if viewport is not None else 0
-        width = max(220, viewport_width)
+        text_height = line_spacing * 2
+        height = icon_size + text_height + 16
+        text_width = font.horizontalAdvance("M" * 12)
+        width = max(icon_size + 24, text_width)
         return QSize(width, height)
 
     def _icon_size_from_level(self, level: int) -> int:
         return self._icon_size_levels.get(
             level,
-            self._icon_size_levels.get(self._icon_size_default_level, 32),
+            self._icon_size_levels.get(self._icon_size_default_level, 64),
         )
 
     def _current_icon_size_value(self) -> int:
         return self._icon_size
 
-    def _icon_for_entry(self, entry: NodeCatalogEntry) -> QIcon:
+    def _icon_for_entry(self, entry: Optional[NodeCatalogEntry]) -> QIcon:
+        if entry is None:
+            return QIcon()
         icon_size = self._current_icon_size_value()
         cache_key = (entry.node_type, entry.icon_path or "", icon_size)
         cached = self._icon_cache.get(cache_key)
@@ -833,115 +934,12 @@ class NodeContentBrowser(QWidget):
                 return char
         return ""
 
-    def _format_entry_text(self, entry: NodeCatalogEntry) -> str:
-        title = entry.title.strip()
-        subtitle = entry.subtitle.strip()
-        node_type = entry.node_type.strip()
-
-        if self._compact_mode:
-            parts: List[str] = []
-            if title:
-                parts.append(title)
-            if subtitle:
-                parts.append(subtitle)
-            if not parts and node_type:
-                parts.append(node_type)
-            if not parts:
-                return ""
-            return " – ".join(parts) if len(parts) > 1 else parts[0]
-
-        lines = [text for text in (title, subtitle) if text]
-        if not lines and node_type:
-            lines.append(node_type)
-        return "\n".join(lines)
-
-    def _entry_tooltip(self, entry: NodeCatalogEntry) -> str:
-        lines: List[str] = []
-        if entry.title:
-            lines.append(entry.title)
-        if entry.subtitle:
-            lines.append(entry.subtitle)
-        lines.append(f"タイプ: {entry.node_type}")
-        if entry.genre:
-            lines.append(f"ジャンル: {entry.genre}")
-        if entry.keywords:
-            lines.append("キーワード: " + ", ".join(entry.keywords))
-        return "\n".join(lines)
-
-    def _update_item_texts(self) -> None:
-        for entry, item in self._entry_items:
-            item.setText(self._format_entry_text(entry))
-        self._available_tree.doItemsLayout()
-
-    def _update_summary_label(self, visible_count: Optional[int] = None) -> None:
-        if self._result_summary_label is None:
-            return
-        if visible_count is None:
-            visible_count = sum(
-                1
-                for entry, item in self._entry_items
-                if self._is_item_visible(item)
-            )
-        self._visible_entry_count = visible_count
-        if self._current_genre:
-            total = self._view_model.genre_total(self._current_genre)
-            text = f"{visible_count} 件 / {total} 件（ジャンル: {self._current_genre}）"
-        else:
-            text = f"{visible_count} 件 / 全 {self._total_entry_count} 件"
-        self._result_summary_label.setText(text)
-
-    def _update_parent_labels(
-        self,
-        visible_counts: Optional[Dict[str, int]] = None,
-        total_counts: Optional[Dict[str, int]] = None,
-    ) -> None:
-        if visible_counts is None or total_counts is None:
-            visible_counts = {
-                genre: genre_item.rowCount()
-                for genre, genre_item in self._genre_items.items()
-            }
-            total_counts = visible_counts
-        for genre, genre_item in self._genre_items.items():
-            visible = visible_counts.get(genre, 0)
-            total = total_counts.get(genre, 0)
-            genre_item.setText(f"{genre} ({visible} / {total})")
-
-    def _entry_from_item(self, item: Optional[QStandardItem]) -> Optional[NodeCatalogEntry]:
-        if item is None:
-            return None
-        entry = item.data(Qt.UserRole + 3)
-        return entry if isinstance(entry, NodeCatalogEntry) else None
-
-    def _is_item_visible(self, item: QStandardItem) -> bool:
-        if item is None:
-            return False
-        index = item.index()
-        parent = index.parent()
-        if self._available_tree.isRowHidden(index.row(), parent):
-            return False
-        if parent.isValid() and self._available_tree.isRowHidden(parent.row(), parent.parent()):
-            return False
-        return True
-
-    def _connect_tree_selection_model(self) -> None:
-        if self._tree_selection_model is not None and self._tree_selection_connected:
-            self._tree_selection_model.selectionChanged.disconnect(
-                self._on_tree_selection_changed
-            )
-            self._tree_selection_connected = False
-        self._tree_selection_model = self._available_tree.selectionModel()
-        if self._tree_selection_model is not None:
-            self._tree_selection_model.selectionChanged.connect(
-                self._on_tree_selection_changed
-            )
-            self._tree_selection_connected = True
-
     def _guess_genre(self, node_type: str) -> str:
         normalized = node_type.strip()
         if normalized.startswith("tool-environment:") or normalized.startswith("sotugyo.tooling"):
             return "ツール環境"
         if normalized.startswith("sotugyo.demo."):
             return "ワークフロー"
-        if normalized.startswith("sotugyo.memo."):
+        if normalized.startswith("sotugyo.memo.") or normalized.startswith("sotugyo.date."):
             return "メモ"
         return "その他"

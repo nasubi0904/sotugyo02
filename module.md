@@ -95,5 +95,6 @@
 - 2025-12-30: `src/sotugyo/ui/components/content_browser.py` の表示構造を `QTreeView` + `QStandardItemModel` に更新し、ジャンル階層表示とフィルタ時の展開挙動を整理した。
 - 2026-01-07: Rez パッケージディレクトリの package.py 単位スキャンを前提に、ツールノード生成とコンテンツブラウザ更新の関連フローを再確認した。
 - 2026-01-12: NodeGraphQt の `NodeModel.custom_properties` によるメタ情報永続化手順と、ツールノードの rez 情報保存方法を再調査した。
+- 2026-02-01: Qt の `QListView` アイコンモードにおけるドラッグ&ドロップ (`InternalMove`) とフォルダ移動時の `dropEvent` カスタム処理を整理し、コンテンツブラウザのアイコン配置管理に適用する方針を確認した。
 
-最終更新日: 2026-01-12
+最終更新日: 2026-02-01
