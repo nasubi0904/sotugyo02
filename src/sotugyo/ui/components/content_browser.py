@@ -1030,9 +1030,17 @@ class NodeContentBrowser(QWidget):
     def _entry_items_by_type(self) -> Dict[str, CatalogItem]:
         items: Dict[str, CatalogItem] = {}
         for item in self._root_folder.iter_items():
-            if item.entry is not None:
-                items[item.entry.node_type] = item
+            entry_key = self._entry_key(item)
+            if entry_key:
+                items[entry_key] = item
         return items
+
+    def _entry_key(self, item: CatalogItem) -> str:
+        if item.entry is not None:
+            return item.entry.node_type
+        if item.is_entry():
+            return item.title
+        return ""
 
     def _remove_item_from_parent(self, target: CatalogItem) -> None:
         for item in self._root_folder.iter_items():
