@@ -181,9 +181,10 @@ class NodeContentBrowser(QWidget):
         self._root_folder: CatalogFolder = CatalogFolder("root", None)
         self._current_folder: CatalogFolder = self._root_folder
         self._search_keyword: str = ""
+        self._clipboard_items: List[CatalogItem] = []
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
-        self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義", "その他")
+        self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義")
 
         self._setup_ui()
         self._connect_signals()
@@ -428,12 +429,29 @@ class NodeContentBrowser(QWidget):
 
     def _open_context_menu(self, pos: QtCore.QPoint) -> None:
         selected_items = self._selected_catalog_items()
-        if not selected_items:
-            return
+        clicked_index = self._available_view.indexAt(pos)
+        if clicked_index.isValid() and not selected_items:
+            item = self._available_model.itemFromIndex(clicked_index)
+            catalog_item = item.data(Qt.UserRole) if item else None
+            if isinstance(catalog_item, CatalogItem):
+                selected_items = [catalog_item]
         menu = QMenu(self)
+        if not clicked_index.isValid():
+            paste_action = menu.addAction("貼り付け")
+            paste_action.setEnabled(self._can_paste_to_current_folder())
+            action = menu.exec_(self._available_view.mapToGlobal(pos))
+            if action == paste_action:
+                self._paste_from_clipboard()
+            return
+        copy_action = menu.addAction("コピー")
         delete_action = menu.addAction("削除")
+        protected_items = [item for item in selected_items if self._is_protected_folder(item)]
+        if protected_items:
+            delete_action.setEnabled(False)
         action = menu.exec_(self._available_view.mapToGlobal(pos))
-        if action == delete_action:
+        if action == copy_action:
+            self._copy_selected_to_clipboard(selected_items)
+        if action == delete_action and delete_action.isEnabled():
             self._confirm_delete_selected(selected_items)
 
     def _on_folder_drop_requested(
@@ -705,6 +723,17 @@ class NodeContentBrowser(QWidget):
             return False
         return item.title in self._protected_folder_names
 
+    def _is_folder_protected(self, folder: Optional[CatalogFolder]) -> bool:
+        current = folder
+        while current is not None and current.parent is not None:
+            if current.name in self._protected_folder_names:
+                return True
+            current = current.parent
+        return False
+
+    def _is_current_folder_protected(self) -> bool:
+        return self._is_folder_protected(self._current_folder)
+
     def _move_to_parent_folder(self) -> None:
         if self._current_folder.parent is None:
             return
@@ -740,6 +769,27 @@ class NodeContentBrowser(QWidget):
         self._current_folder.items.append(new_item)
         self._refresh_view()
 
+    def _copy_selected_to_clipboard(self, items: List[CatalogItem]) -> None:
+        self._clipboard_items = list(items)
+        QMessageBox.information(self, "コピー", "選択中の項目をコピーしました。")
+
+    def _can_paste_to_current_folder(self) -> bool:
+        return bool(self._clipboard_items) and not self._is_current_folder_protected()
+
+    def _paste_from_clipboard(self) -> None:
+        if self._is_current_folder_protected():
+            QMessageBox.warning(
+                self,
+                "貼り付け不可",
+                "既定フォルダ内には貼り付けできません。",
+            )
+            return
+        if not self._clipboard_items:
+            QMessageBox.information(self, "貼り付け", "貼り付ける項目がありません。")
+            return
+        self._copy_items_to_folder(self._clipboard_items, self._current_folder)
+        self._refresh_view()
+
     def _move_items_to_folder(
         self,
         items: List[CatalogItem],
@@ -760,6 +810,48 @@ class NodeContentBrowser(QWidget):
             if item.is_folder() and item.folder is not None:
                 item.folder.parent = target_folder
             target_folder.items.append(item)
+
+    def _copy_items_to_folder(
+        self,
+        items: List[CatalogItem],
+        target_folder: CatalogFolder,
+    ) -> None:
+        for item in items:
+            if item.is_folder() and item.folder is not None:
+                copied_folder = self._clone_folder(item.folder, target_folder)
+                target_folder.items.append(
+                    CatalogItem(kind="folder", title=copied_folder.name, folder=copied_folder)
+                )
+            elif item.entry is not None:
+                target_folder.items.append(
+                    CatalogItem(kind="entry", title=item.title, entry=item.entry)
+                )
+
+    def _clone_folder(self, source: CatalogFolder, parent: CatalogFolder) -> CatalogFolder:
+        new_name = self._unique_folder_name(source.name, parent)
+        new_folder = CatalogFolder(name=new_name, parent=parent)
+        for item in source.items:
+            if item.is_folder() and item.folder is not None:
+                child_folder = self._clone_folder(item.folder, new_folder)
+                new_folder.items.append(
+                    CatalogItem(kind="folder", title=child_folder.name, folder=child_folder)
+                )
+            elif item.entry is not None:
+                new_folder.items.append(
+                    CatalogItem(kind="entry", title=item.title, entry=item.entry)
+                )
+        return new_folder
+
+    def _unique_folder_name(self, base_name: str, parent: CatalogFolder) -> str:
+        existing = {item.title for item in parent.items if item.is_folder()}
+        if base_name not in existing:
+            return base_name
+        suffix = 1
+        while True:
+            candidate = f"{base_name} コピー{suffix}"
+            if candidate not in existing:
+                return candidate
+            suffix += 1
 
     def _is_descendant_folder(
         self,
@@ -813,11 +905,9 @@ class NodeContentBrowser(QWidget):
         self._root_folder = CatalogFolder("root", None)
         workflow = CatalogFolder("ワークフロー", self._root_folder)
         environment = CatalogFolder("環境定義", self._root_folder)
-        other = CatalogFolder("その他", self._root_folder)
         self._root_folder.items = [
             CatalogItem(kind="folder", title=workflow.name, folder=workflow),
             CatalogItem(kind="folder", title=environment.name, folder=environment),
-            CatalogItem(kind="folder", title=other.name, folder=other),
         ]
         self._current_folder = self._root_folder
 
@@ -837,7 +927,7 @@ class NodeContentBrowser(QWidget):
             self._root_folder.items.remove(target)
 
     def _select_default_folder(self, entry: NodeCatalogEntry) -> CatalogFolder:
-        workflow, environment, other = self._default_folders()
+        workflow, environment = self._default_folders()
         normalized = entry.node_type.lower()
         genre = entry.genre
         if genre == "ツール環境":
@@ -846,18 +936,18 @@ class NodeContentBrowser(QWidget):
             return workflow
         if "memo" in normalized or "date" in normalized:
             return workflow
-        return other
+        return workflow
 
-    def _default_folders(self) -> Tuple[CatalogFolder, CatalogFolder, CatalogFolder]:
+    def _default_folders(self) -> Tuple[CatalogFolder, CatalogFolder]:
         workflow = self._find_folder("ワークフロー")
         environment = self._find_folder("環境定義")
-        other = self._find_folder("その他")
-        if workflow is None or environment is None or other is None:
+        if workflow is None or environment is None:
             self._build_default_folders()
             workflow = self._find_folder("ワークフロー")
             environment = self._find_folder("環境定義")
-            other = self._find_folder("その他")
-        return workflow, environment, other
+        if workflow is None or environment is None:
+            raise RuntimeError("既定フォルダの初期化に失敗しました。")
+        return workflow, environment
 
     def _find_folder(self, name: str) -> Optional[CatalogFolder]:
         for item in self._root_folder.items:
