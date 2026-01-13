@@ -177,13 +177,14 @@ class NodeContentBrowser(QWidget):
         self._new_folder_button: Optional[QPushButton] = None
         self._icon_cache: Dict[Tuple[str, str, int], QIcon] = {}
         self._file_icon_provider: QFileIconProvider = QFileIconProvider()
-        self._folder_icon: QIcon = self.style().standardIcon(QStyle.SP_DirIcon)
+        self._default_folder_icon: QIcon = self.style().standardIcon(QStyle.SP_DirIcon)
+        self._folder_icon_cache: Dict[Tuple[str, int], QIcon] = {}
         self._root_folder: CatalogFolder = CatalogFolder("root", None)
         self._current_folder: CatalogFolder = self._root_folder
         self._search_keyword: str = ""
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
-        self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義", "その他")
+        self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義")
 
         self._setup_ui()
         self._connect_signals()
@@ -431,9 +432,15 @@ class NodeContentBrowser(QWidget):
         if not selected_items:
             return
         menu = QMenu(self)
+        copy_action = menu.addAction("コピー")
         delete_action = menu.addAction("削除")
+        protected_items = [item for item in selected_items if self._is_item_protected(item)]
+        if protected_items:
+            delete_action.setEnabled(False)
         action = menu.exec_(self._available_view.mapToGlobal(pos))
-        if action == delete_action:
+        if action == copy_action:
+            self._copy_selected_to_folder(selected_items)
+        if action == delete_action and delete_action.isEnabled():
             self._confirm_delete_selected(selected_items)
 
     def _on_folder_drop_requested(
@@ -443,7 +450,17 @@ class NodeContentBrowser(QWidget):
     ) -> None:
         if target_folder is None:
             return
-        self._move_items_to_folder(items, target_folder)
+        if self._is_folder_protected(target_folder):
+            QMessageBox.warning(
+                self,
+                "移動不可",
+                "既定フォルダ内へはコピーや移動ができません。",
+            )
+            return
+        if any(self._is_item_copy_only(item) for item in items):
+            self._copy_items_to_folder(items, target_folder)
+        else:
+            self._move_items_to_folder(items, target_folder)
         self._refresh_view()
 
     def _on_rows_moved(
@@ -455,6 +472,9 @@ class NodeContentBrowser(QWidget):
         row: int,
     ) -> None:
         if self._search_keyword:
+            return
+        if self._is_current_folder_protected():
+            self._refresh_view()
             return
         if parent.isValid() or destination.isValid():
             return
@@ -537,7 +557,7 @@ class NodeContentBrowser(QWidget):
             item.setData(catalog_item, Qt.UserRole)
             item.setTextAlignment(Qt.AlignHCenter | Qt.AlignTop)
             if catalog_item.is_folder():
-                item.setIcon(self._folder_icon)
+                item.setIcon(self._folder_icon_for_item(catalog_item))
                 item.setFlags(
                     Qt.ItemIsEnabled
                     | Qt.ItemIsSelectable
@@ -565,7 +585,7 @@ class NodeContentBrowser(QWidget):
             if not isinstance(catalog_item, CatalogItem):
                 continue
             if catalog_item.is_folder():
-                item.setIcon(self._folder_icon)
+                item.setIcon(self._folder_icon_for_item(catalog_item))
             else:
                 item.setIcon(self._icon_for_entry(catalog_item.entry))
 
@@ -649,6 +669,8 @@ class NodeContentBrowser(QWidget):
             self._path_label.setText(" / ".join(labels))
         if self._up_folder_button is not None:
             self._up_folder_button.setEnabled(self._current_folder.parent is not None)
+        if self._new_folder_button is not None:
+            self._new_folder_button.setEnabled(not self._is_current_folder_protected())
 
     def _selected_catalog_items(self) -> List[CatalogItem]:
         selection = self._available_view.selectionModel()
@@ -663,12 +685,12 @@ class NodeContentBrowser(QWidget):
         return items
 
     def _confirm_delete_selected(self, items: List[CatalogItem]) -> None:
-        protected = [item for item in items if self._is_protected_folder(item)]
+        protected = [item for item in items if self._is_item_protected(item)]
         if protected:
             QMessageBox.warning(
                 self,
                 "削除不可",
-                "既定フォルダは削除できません。",
+                "既定フォルダ内の項目は削除できません。",
             )
             return
         folder_count = sum(1 for item in items if item.is_folder())
@@ -700,10 +722,29 @@ class NodeContentBrowser(QWidget):
             if item in self._current_folder.items:
                 self._current_folder.items.remove(item)
 
-    def _is_protected_folder(self, item: CatalogItem) -> bool:
-        if not item.is_folder():
-            return False
-        return item.title in self._protected_folder_names
+    def _is_item_protected(self, item: CatalogItem) -> bool:
+        if item.is_folder() and item.title in self._protected_folder_names:
+            return True
+        return self._is_item_copy_only(item)
+
+    def _is_item_copy_only(self, item: CatalogItem) -> bool:
+        parent = self._find_parent_folder(item)
+        while parent is not None:
+            if parent.name in self._protected_folder_names:
+                return True
+            parent = parent.parent
+        return False
+
+    def _is_current_folder_protected(self) -> bool:
+        return self._is_folder_protected(self._current_folder)
+
+    def _is_folder_protected(self, folder: Optional[CatalogFolder]) -> bool:
+        current = folder
+        while current is not None:
+            if current.name in self._protected_folder_names:
+                return True
+            current = current.parent
+        return False
 
     def _move_to_parent_folder(self) -> None:
         if self._current_folder.parent is None:
@@ -717,6 +758,13 @@ class NodeContentBrowser(QWidget):
 
     def _create_new_folder(self) -> None:
         if self._new_folder_button is None:
+            return
+        if self._is_current_folder_protected():
+            QMessageBox.warning(
+                self,
+                "作成不可",
+                "既定フォルダ内には新規フォルダを作成できません。",
+            )
             return
         name, ok = QInputDialog.getText(
             self,
@@ -740,6 +788,45 @@ class NodeContentBrowser(QWidget):
         self._current_folder.items.append(new_item)
         self._refresh_view()
 
+    def _copy_selected_to_folder(self, items: List[CatalogItem]) -> None:
+        target = self._select_copy_target_folder()
+        if target is None:
+            return
+        self._copy_items_to_folder(items, target)
+        self._refresh_view()
+
+    def _select_copy_target_folder(self) -> Optional[CatalogFolder]:
+        candidates = self._copy_target_folders()
+        if not candidates:
+            QMessageBox.warning(self, "コピー不可", "コピー先のフォルダが見つかりません。")
+            return None
+        labels = [self._folder_display_label(folder) for folder in candidates]
+        label, ok = QInputDialog.getItem(
+            self,
+            "コピー先フォルダ",
+            "コピー先を選択してください。",
+            labels,
+            0,
+            False,
+        )
+        if not ok:
+            return None
+        return candidates[labels.index(label)]
+
+    def _folder_display_label(self, folder: CatalogFolder) -> str:
+        labels = folder.path_labels()
+        return " / ".join(labels) if labels else folder.name
+
+    def _copy_target_folders(self) -> List[CatalogFolder]:
+        folders: List[CatalogFolder] = []
+        for item in self._root_folder.iter_items():
+            if item.folder is None:
+                continue
+            if self._is_folder_protected(item.folder):
+                continue
+            folders.append(item.folder)
+        return folders
+
     def _move_items_to_folder(
         self,
         items: List[CatalogItem],
@@ -760,6 +847,46 @@ class NodeContentBrowser(QWidget):
             if item.is_folder() and item.folder is not None:
                 item.folder.parent = target_folder
             target_folder.items.append(item)
+
+    def _copy_items_to_folder(
+        self,
+        items: List[CatalogItem],
+        target_folder: CatalogFolder,
+    ) -> None:
+        for item in items:
+            if item.is_folder() and item.folder is not None:
+                new_folder = self._clone_folder(item.folder, target_folder)
+                target_folder.items.append(CatalogItem(kind="folder", title=new_folder.name, folder=new_folder))
+            elif item.entry is not None:
+                target_folder.items.append(
+                    CatalogItem(kind="entry", title=item.title, entry=item.entry)
+                )
+
+    def _clone_folder(
+        self,
+        source: CatalogFolder,
+        parent: CatalogFolder,
+    ) -> CatalogFolder:
+        new_name = self._unique_folder_name(source.name, parent)
+        new_folder = CatalogFolder(name=new_name, parent=parent)
+        for item in source.items:
+            if item.is_folder() and item.folder is not None:
+                child_folder = self._clone_folder(item.folder, new_folder)
+                new_folder.items.append(CatalogItem(kind="folder", title=child_folder.name, folder=child_folder))
+            elif item.entry is not None:
+                new_folder.items.append(CatalogItem(kind="entry", title=item.title, entry=item.entry))
+        return new_folder
+
+    def _unique_folder_name(self, base_name: str, parent: CatalogFolder) -> str:
+        existing = {item.title for item in parent.items if item.is_folder()}
+        if base_name not in existing:
+            return base_name
+        suffix = 1
+        while True:
+            candidate = f"{base_name} コピー{suffix}"
+            if candidate not in existing:
+                return candidate
+            suffix += 1
 
     def _is_descendant_folder(
         self,
@@ -813,6 +940,12 @@ class NodeContentBrowser(QWidget):
         self._root_folder = CatalogFolder("root", None)
         workflow = CatalogFolder("ワークフロー", self._root_folder)
         environment = CatalogFolder("環境定義", self._root_folder)
+        env_tools = CatalogFolder("ツール", environment)
+        env_definitions = CatalogFolder("環境", environment)
+        environment.items = [
+            CatalogItem(kind="folder", title=env_tools.name, folder=env_tools),
+            CatalogItem(kind="folder", title=env_definitions.name, folder=env_definitions),
+        ]
         other = CatalogFolder("その他", self._root_folder)
         self._root_folder.items = [
             CatalogItem(kind="folder", title=workflow.name, folder=workflow),
@@ -836,12 +969,23 @@ class NodeContentBrowser(QWidget):
         if target in self._root_folder.items:
             self._root_folder.items.remove(target)
 
+    def _find_parent_folder(self, target: CatalogItem) -> Optional[CatalogFolder]:
+        if target in self._root_folder.items:
+            return self._root_folder
+        for item in self._root_folder.iter_items():
+            if item.folder is not None and target in item.folder.items:
+                return item.folder
+        return None
+
     def _select_default_folder(self, entry: NodeCatalogEntry) -> CatalogFolder:
         workflow, environment, other = self._default_folders()
+        env_tools, env_definitions = self._environment_subfolders()
         normalized = entry.node_type.lower()
         genre = entry.genre
         if genre == "ツール環境":
-            return environment
+            return env_tools
+        if genre == "環境定義":
+            return env_definitions
         if genre in {"ワークフロー", "メモ"}:
             return workflow
         if "memo" in normalized or "date" in normalized:
@@ -865,6 +1009,33 @@ class NodeContentBrowser(QWidget):
                 return item.folder
         return None
 
+    def _environment_subfolders(self) -> Tuple[CatalogFolder, CatalogFolder]:
+        environment = self._find_folder("環境定義")
+        if environment is None:
+            self._build_default_folders()
+            environment = self._find_folder("環境定義")
+        if environment is None:
+            raise RuntimeError("環境定義フォルダの初期化に失敗しました。")
+        tools = self._find_child_folder(environment, "ツール")
+        definitions = self._find_child_folder(environment, "環境")
+        if tools is None or definitions is None:
+            self._build_default_folders()
+            tools = self._find_child_folder(environment, "ツール")
+            definitions = self._find_child_folder(environment, "環境")
+        if tools is None or definitions is None:
+            raise RuntimeError("環境定義のサブフォルダ初期化に失敗しました。")
+        return tools, definitions
+
+    def _find_child_folder(
+        self,
+        parent: CatalogFolder,
+        name: str,
+    ) -> Optional[CatalogFolder]:
+        for item in parent.items:
+            if item.is_folder() and item.folder is not None and item.folder.name == name:
+                return item.folder
+        return None
+
     def _grid_size(self, icon_size: int) -> QSize:
         font: QFontMetrics = self._available_view.fontMetrics()
         line_spacing = font.lineSpacing()
@@ -882,6 +1053,23 @@ class NodeContentBrowser(QWidget):
 
     def _current_icon_size_value(self) -> int:
         return self._icon_size
+
+    def _folder_icon_for_item(self, item: CatalogItem) -> QIcon:
+        icon_size = self._current_icon_size_value()
+        name = item.title
+        cache_key = (name, icon_size)
+        cached = self._folder_icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if name == "ワークフロー":
+            icon = QIcon(self._create_workflow_folder_pixmap(icon_size))
+        elif name == "環境定義":
+            icon = QIcon(self._create_environment_folder_pixmap(icon_size))
+        else:
+            pixmap = self._default_folder_icon.pixmap(QSize(icon_size, icon_size))
+            icon = QIcon(pixmap)
+        self._folder_icon_cache[cache_key] = icon
+        return icon
 
     def _icon_for_entry(self, entry: Optional[NodeCatalogEntry]) -> QIcon:
         if entry is None:
@@ -902,6 +1090,60 @@ class NodeContentBrowser(QWidget):
         icon = QIcon(pixmap)
         self._icon_cache[cache_key] = icon
         return icon
+
+    def _create_workflow_folder_pixmap(self, size: int) -> QPixmap:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        pen = QPen(QColor(59, 130, 246))
+        pen.setWidth(max(2, size // 12))
+        painter.setPen(pen)
+        radius = max(4, size // 8)
+        node_positions = [
+            QtCore.QPoint(int(size * 0.25), int(size * 0.3)),
+            QtCore.QPoint(int(size * 0.25), int(size * 0.7)),
+            QtCore.QPoint(int(size * 0.75), int(size * 0.5)),
+        ]
+        painter.drawLine(node_positions[0], node_positions[2])
+        painter.drawLine(node_positions[1], node_positions[2])
+        painter.setBrush(QColor(96, 165, 250))
+        for pos in node_positions:
+            painter.drawEllipse(pos, radius, radius)
+        painter.end()
+        return pixmap
+
+    def _create_environment_folder_pixmap(self, size: int) -> QPixmap:
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        center = QtCore.QPointF(size * 0.5, size * 0.5)
+        outer_radius = size * 0.28
+        inner_radius = size * 0.16
+        pen = QPen(QColor(107, 114, 128))
+        pen.setWidth(max(2, size // 14))
+        painter.setPen(pen)
+        painter.setBrush(QColor(156, 163, 175))
+        painter.drawEllipse(center, outer_radius, outer_radius)
+        painter.setBrush(QColor(229, 231, 235))
+        painter.drawEllipse(center, inner_radius, inner_radius)
+        painter.setBrush(QColor(107, 114, 128))
+        tooth_w = size * 0.08
+        tooth_h = size * 0.14
+        for i in range(6):
+            angle = i * 60
+            painter.save()
+            painter.translate(center)
+            painter.rotate(angle)
+            painter.drawRoundedRect(
+                QtCore.QRectF(outer_radius - tooth_w * 0.2, -tooth_h * 0.5, tooth_w, tooth_h),
+                tooth_w * 0.2,
+                tooth_w * 0.2,
+            )
+            painter.restore()
+        painter.end()
+        return pixmap
 
     def _load_icon_from_path(self, path: str, size: int) -> Optional[QIcon]:
         file_info = QFileInfo(path)
