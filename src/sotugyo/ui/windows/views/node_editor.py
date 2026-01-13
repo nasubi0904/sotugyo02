@@ -65,6 +65,7 @@ from sotugyo.scripts import RezLauncherError, launch_rez_detached
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
     ProjectSettingsDialog,
+    ToolEnvironmentManagerDialog,
     ToolRegistryDialog,
     UserSettingsDialog,
 )
@@ -290,9 +291,12 @@ class NodeEditorWindow(QMainWindow):
         user_menu.addAction(user_settings_action)
 
         tools_menu = menubar.addMenu("Tools")
-        tool_registry_action = QAction("環境設定...", self)
+        tool_registry_action = QAction("ツールの確認と編集...", self)
         tool_registry_action.triggered.connect(self._open_tool_settings)
         tools_menu.addAction(tool_registry_action)
+        tool_environment_action = QAction("起動環境の構成...", self)
+        tool_environment_action.triggered.connect(self._open_tool_environment_settings)
+        tools_menu.addAction(tool_environment_action)
 
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
@@ -358,6 +362,12 @@ class NodeEditorWindow(QMainWindow):
 
     def _open_tool_settings(self) -> None:
         dialog = ToolRegistryDialog(self._coordinator.tool_service, self)
+        dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_tool_configuration()
+
+    def _open_tool_environment_settings(self) -> None:
+        dialog = ToolEnvironmentManagerDialog(self._coordinator.tool_service, self)
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
