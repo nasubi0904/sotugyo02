@@ -44,6 +44,8 @@ QStyle = QtWidgets.QStyle
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
+FILE_NODE_TYPE = "sotugyo.workflow.FileNode"
+FILE_PATH_KEY = "file_path"
 
 @dataclass(frozen=True)
 class NodeCatalogEntry:
@@ -55,10 +57,16 @@ class NodeCatalogEntry:
     genre: str
     keywords: Tuple[str, ...] = ()
     icon_path: Optional[str] = None
+    entry_id: Optional[str] = None
+    custom_properties: Optional[Dict[str, object]] = None
+    is_user_entry: bool = False
 
     def searchable_text(self) -> str:
         parts = [self.title, self.subtitle, self.node_type, *self.keywords]
         return "\n".join(part.lower() for part in parts if part)
+
+    def entry_key(self) -> str:
+        return self.entry_id or self.node_type
 
 
 @dataclass
@@ -104,10 +112,29 @@ class CatalogIconView(QListView):
     """フォルダへのドロップを扱うアイコンビュー。"""
 
     folder_drop_requested = Signal(object, list)
+    external_files_dropped = Signal(list, object)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401
+        """外部ファイルのドラッグを受け付ける。"""
+
+        if self._accept_external_files(event):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: D401
+        """外部ファイルのドラッグ中表示を更新する。"""
+
+        if self._accept_external_files(event):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401
         """ドロップ先がフォルダの場合は移動を要求する。"""
 
+        if self._handle_external_drop(event):
+            return
         model = self.model()
         index = self.indexAt(self._event_pos(event))
         if model is not None and index.isValid():
@@ -120,6 +147,38 @@ class CatalogIconView(QListView):
                     event.acceptProposedAction()
                     return
         super().dropEvent(event)
+
+    def _handle_external_drop(self, event: QtGui.QDropEvent) -> bool:
+        if not self._accept_external_files(event):
+            return False
+        urls = event.mimeData().urls() if event.mimeData().hasUrls() else []
+        paths = []
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            local_path = url.toLocalFile()
+            if local_path:
+                paths.append(local_path)
+        if not paths:
+            return False
+        index = self.indexAt(self._event_pos(event))
+        target_folder = None
+        if index.isValid():
+            item = self.model().itemFromIndex(index) if self.model() is not None else None
+            catalog_item = item.data(Qt.UserRole) if item is not None else None
+            if isinstance(catalog_item, CatalogItem) and catalog_item.is_folder():
+                target_folder = catalog_item.folder
+        self.external_files_dropped.emit(paths, target_folder)
+        event.acceptProposedAction()
+        return True
+
+    def _accept_external_files(self, event: QtGui.QDropEvent) -> bool:
+        if event.source() is not None:
+            return False
+        mime = event.mimeData()
+        if mime is None or not mime.hasUrls():
+            return False
+        return True
 
     def _event_pos(self, event: QtGui.QDropEvent) -> QtCore.QPoint:
         position = getattr(event, "position", None)
@@ -147,6 +206,7 @@ class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ。"""
 
     node_type_requested = Signal(str)
+    node_entry_requested = Signal(object)
     search_submitted = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -265,6 +325,17 @@ class NodeContentBrowser(QWidget):
             catalog_item = item.data(Qt.UserRole)
             if isinstance(catalog_item, CatalogItem) and catalog_item.entry:
                 return catalog_item.entry.node_type
+        return None
+
+    def first_visible_entry(self) -> Optional[NodeCatalogEntry]:
+        model = self._available_model
+        for row in range(model.rowCount()):
+            item = model.item(row)
+            if item is None:
+                continue
+            catalog_item = item.data(Qt.UserRole)
+            if isinstance(catalog_item, CatalogItem) and catalog_item.entry:
+                return catalog_item.entry
         return None
 
     # ------------------------------------------------------------------
@@ -405,6 +476,7 @@ class NodeContentBrowser(QWidget):
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_view.doubleClicked.connect(self._on_item_double_clicked)
         self._available_view.folder_drop_requested.connect(self._on_folder_drop_requested)
+        self._available_view.external_files_dropped.connect(self._on_external_files_dropped)
         self._available_view.customContextMenuRequested.connect(self._open_context_menu)
         self._available_model.rowsMoved.connect(self._on_rows_moved)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
@@ -433,7 +505,28 @@ class NodeContentBrowser(QWidget):
             self._open_folder(catalog_item.folder)
             return
         if catalog_item.entry is not None:
+            self.node_entry_requested.emit(catalog_item.entry)
             self.node_type_requested.emit(catalog_item.entry.node_type)
+
+    def _on_external_files_dropped(
+        self,
+        paths: List[str],
+        target_folder: Optional[CatalogFolder],
+    ) -> None:
+        if not paths:
+            return
+        folder = target_folder or self._current_folder
+        if self._is_folder_protected(folder):
+            QMessageBox.warning(
+                self,
+                "追加不可",
+                "既定フォルダ内にはファイルを登録できません。",
+            )
+            return
+        added = self._register_file_entries(paths, folder)
+        if added:
+            self._persist_layout()
+            self._refresh_view()
 
     def _open_context_menu(self, pos: QtCore.QPoint) -> None:
         selected_items = self._selected_catalog_items()
@@ -842,6 +935,40 @@ class NodeContentBrowser(QWidget):
         if items:
             self._persist_layout()
 
+    def _register_file_entries(
+        self,
+        paths: Iterable[str],
+        target_folder: CatalogFolder,
+    ) -> bool:
+        added = False
+        existing = self._entry_items_by_type()
+        for path in paths:
+            file_info = QFileInfo(path)
+            if not file_info.exists():
+                continue
+            absolute_path = file_info.absoluteFilePath()
+            entry_id = f"file:{absolute_path}"
+            if entry_id in existing:
+                continue
+            title = file_info.fileName() or absolute_path
+            entry = NodeCatalogEntry(
+                node_type=FILE_NODE_TYPE,
+                title=title,
+                subtitle=absolute_path,
+                genre="ワークフロー",
+                keywords=(file_info.suffix(),) if file_info.suffix() else (),
+                icon_path=absolute_path,
+                entry_id=entry_id,
+                custom_properties={FILE_PATH_KEY: absolute_path},
+                is_user_entry=True,
+            )
+            target_folder.items.append(
+                CatalogItem(kind="entry", title=entry.title, entry=entry)
+            )
+            existing[entry_id] = CatalogItem(kind="entry", title=entry.title, entry=entry)
+            added = True
+        return added
+
     def _clone_folder(self, source: CatalogFolder, parent: CatalogFolder) -> CatalogFolder:
         new_name = self._unique_folder_name(source.name, parent)
         new_folder = CatalogFolder(name=new_name, parent=parent)
@@ -896,15 +1023,17 @@ class NodeContentBrowser(QWidget):
         if not self._root_folder.items:
             self._build_default_folders()
 
-        entry_map = {entry.node_type: entry for entry in entries}
+        entry_map = {entry.entry_key(): entry for entry in entries}
         existing_items = self._entry_items_by_type()
 
-        for node_type, item in list(existing_items.items()):
-            if node_type not in entry_map:
+        for entry_key, item in list(existing_items.items()):
+            if item.entry is not None and item.entry.is_user_entry:
+                continue
+            if entry_key not in entry_map:
                 self._remove_item_from_parent(item)
 
         for entry in entries:
-            existing_item = existing_items.get(entry.node_type)
+            existing_item = existing_items.get(entry.entry_key())
             if existing_item is not None:
                 existing_item.entry = entry
                 existing_item.title = entry.title or existing_item.title
@@ -971,11 +1100,50 @@ class NodeContentBrowser(QWidget):
                 ]
             return CatalogItem(kind="folder", title=name, folder=folder)
         if kind == "entry":
-            node_type = payload.get("node_type")
-            if not isinstance(node_type, str) or not node_type:
+            entry = self._deserialize_entry(payload)
+            if entry is None:
                 return None
-            return CatalogItem(kind="entry", title=node_type, entry=None)
+            return CatalogItem(kind="entry", title=entry.title, entry=entry)
         return None
+
+    def _deserialize_entry(self, payload: Dict[str, object]) -> Optional[NodeCatalogEntry]:
+        node_type = payload.get("node_type")
+        if not isinstance(node_type, str) or not node_type:
+            return None
+        title = payload.get("title")
+        subtitle = payload.get("subtitle")
+        genre = payload.get("genre")
+        entry_id = payload.get("entry_id")
+        icon_path = payload.get("icon_path")
+        custom_properties = payload.get("custom_properties")
+        keywords = payload.get("keywords")
+        is_user_entry = payload.get("is_user_entry")
+
+        normalized_title = title if isinstance(title, str) and title else node_type
+        normalized_subtitle = subtitle if isinstance(subtitle, str) else ""
+        normalized_genre = genre if isinstance(genre, str) and genre else self._guess_genre(node_type)
+        normalized_entry_id = entry_id if isinstance(entry_id, str) and entry_id else None
+        normalized_icon_path = icon_path if isinstance(icon_path, str) and icon_path else None
+        normalized_custom_props = (
+            custom_properties if isinstance(custom_properties, dict) else None
+        )
+        if isinstance(keywords, list):
+            normalized_keywords = tuple(
+                str(item).strip() for item in keywords if str(item).strip()
+            )
+        else:
+            normalized_keywords = ()
+        return NodeCatalogEntry(
+            node_type=node_type,
+            title=normalized_title,
+            subtitle=normalized_subtitle,
+            genre=normalized_genre,
+            keywords=normalized_keywords,
+            icon_path=normalized_icon_path,
+            entry_id=normalized_entry_id,
+            custom_properties=normalized_custom_props,
+            is_user_entry=bool(is_user_entry),
+        )
 
     def _ensure_default_folders(self) -> None:
         names = {item.title for item in self._root_folder.items if item.is_folder()}
@@ -1012,7 +1180,24 @@ class NodeContentBrowser(QWidget):
                 "items": self._serialize_items(item.folder.items),
             }
         if item.is_entry() and item.entry is not None:
-            return {"kind": "entry", "node_type": item.entry.node_type}
+            entry = item.entry
+            payload: Dict[str, object] = {
+                "kind": "entry",
+                "node_type": entry.node_type,
+                "title": entry.title,
+                "subtitle": entry.subtitle,
+                "genre": entry.genre,
+                "keywords": list(entry.keywords),
+            }
+            if entry.icon_path:
+                payload["icon_path"] = entry.icon_path
+            if entry.entry_id:
+                payload["entry_id"] = entry.entry_id
+            if entry.custom_properties:
+                payload["custom_properties"] = entry.custom_properties
+            if entry.is_user_entry:
+                payload["is_user_entry"] = True
+            return payload
         if item.is_entry():
             return {"kind": "entry", "node_type": item.title}
         return None
@@ -1037,7 +1222,7 @@ class NodeContentBrowser(QWidget):
 
     def _entry_key(self, item: CatalogItem) -> str:
         if item.entry is not None:
-            return item.entry.node_type
+            return item.entry.entry_key()
         if item.is_entry():
             return item.title
         return ""

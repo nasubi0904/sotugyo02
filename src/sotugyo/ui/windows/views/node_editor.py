@@ -259,6 +259,7 @@ class NodeEditorWindow(QMainWindow):
 
         content_dock = NodeContentBrowserDock(self)
         content_dock.node_type_requested.connect(self._spawn_node_by_type)
+        content_dock.node_entry_requested.connect(self._spawn_node_from_entry)
         content_dock.search_submitted.connect(self._handle_content_browser_search)
         self.addDockWidget(Qt.BottomDockWidgetArea, content_dock)
         self._content_dock = content_dock
@@ -647,9 +648,9 @@ class NodeEditorWindow(QMainWindow):
         if self._search_nodes(keyword, show_dialog=False) is not None:
             return
 
-        available_type = self._content_dock.first_visible_available_type()
-        if available_type is not None:
-            self._spawn_node_by_type(available_type)
+        available_entry = self._content_dock.first_visible_entry()
+        if available_entry is not None:
+            self._spawn_node_from_entry(available_entry)
             return
 
         self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
@@ -665,6 +666,22 @@ class NodeEditorWindow(QMainWindow):
             return
         display_name = self._derive_display_name(node_type)
         self._create_node(node_type, display_name)
+
+    def _spawn_node_from_entry(self, entry: NodeCatalogEntry) -> None:
+        node_type = entry.node_type
+        if node_type.startswith("tool-environment:"):
+            self._spawn_node_by_type(node_type)
+            return
+        if node_type == FileNode.node_type_identifier():
+            node = self._create_node(node_type, entry.title or "ファイル")
+            custom_props = entry.custom_properties or {}
+            path_value = custom_props.get(FileNode.FILE_PATH_KEY)
+            if isinstance(path_value, str):
+                self._set_node_custom_property(node, FileNode.FILE_PATH_KEY, path_value)
+                self._update_file_controls(node)
+            self._set_modified(True)
+            return
+        self._spawn_node_by_type(node_type)
 
     def _derive_display_name(self, node_type: str) -> str:
         base_name = node_type.split(".")[-1] if node_type else "ノード"

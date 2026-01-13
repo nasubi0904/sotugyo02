@@ -19,6 +19,7 @@ class NodeContentBrowserDock(QDockWidget):
     """ノードカタログ表示を提供するドックウィジェット。"""
 
     node_type_requested = Signal(str)
+    node_entry_requested = Signal(object)
     search_submitted = Signal(str)
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
@@ -34,6 +35,7 @@ class NodeContentBrowserDock(QDockWidget):
         browser = NodeContentBrowser(self)
         browser.setMinimumHeight(160)
         browser.node_type_requested.connect(self.node_type_requested)
+        browser.node_entry_requested.connect(self.node_entry_requested)
         browser.search_submitted.connect(self.search_submitted)
 
         container = QWidget(self)
@@ -60,6 +62,11 @@ class NodeContentBrowserDock(QDockWidget):
         """現在表示されているエントリのうち最初のノード種別を取得する。"""
 
         return self._browser.first_visible_available_type()
+
+    def first_visible_entry(self) -> Optional[NodeCatalogEntry]:
+        """現在表示されているエントリのうち最初のエントリを取得する。"""
+
+        return self._browser.first_visible_entry()
 
     def current_search_text(self) -> str:
         """検索入力の現在値を返す。"""
