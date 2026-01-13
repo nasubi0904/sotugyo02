@@ -19,6 +19,7 @@ QHBoxLayout = QtWidgets.QHBoxLayout
 QHeaderView = QtWidgets.QHeaderView
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
+QMessageBox = QtWidgets.QMessageBox
 QPlainTextEdit = QtWidgets.QPlainTextEdit
 QPushButton = QtWidgets.QPushButton
 QSplitter = QtWidgets.QSplitter
@@ -40,8 +41,15 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._refresh_on_accept = False
         self._rez_editor: Optional[QPlainTextEdit] = None
         self._rez_line_numbers: Optional[QPlainTextEdit] = None
+        self._package_combo: Optional[QComboBox] = None
+        self._name_edit: Optional[QLineEdit] = None
+        self._desc_edit: Optional[QLineEdit] = None
+        self._author_edit: Optional[QLineEdit] = None
+        self._preview_output: Optional[QPlainTextEdit] = None
+        self._raw_json_editor: Optional[QPlainTextEdit] = None
 
         self.setWindowTitle("ツール起動環境の構成")
+        self.setModal(True)
         self.resize(1120, 760)
 
         self._build_ui()
@@ -86,37 +94,37 @@ class ToolEnvironmentManagerDialog(QDialog):
         form.setVerticalSpacing(8)
 
         package_row = QHBoxLayout()
-        package_combo = QComboBox(panel)
-        package_combo.setEditable(True)
-        package_combo.setInsertPolicy(QComboBox.NoInsert)
-        package_combo.lineEdit().setPlaceholderText("例: maya2023")
-        package_combo.addItem("maya2023")
-        package_combo.addItem("houdini20")
-        package_combo.addItem("nuke14")
-        package_combo.setToolTip("原子パッケージ名を選択または入力します。")
-        package_row.addWidget(package_combo, 1)
+        self._package_combo = QComboBox(panel)
+        self._package_combo.setEditable(True)
+        self._package_combo.setInsertPolicy(QComboBox.NoInsert)
+        self._package_combo.lineEdit().setPlaceholderText("例: maya2023")
+        self._package_combo.addItem("maya2023")
+        self._package_combo.addItem("houdini20")
+        self._package_combo.addItem("nuke14")
+        self._package_combo.setToolTip("原子パッケージ名を選択または入力します。")
+        package_row.addWidget(self._package_combo, 1)
         package_row.addWidget(QPushButton("検索", panel))
         package_row.addWidget(QPushButton("候補一覧", panel))
         form.addRow("原子パッケージ", package_row)
 
-        name_edit = QLineEdit(panel)
-        name_edit.setPlaceholderText("ノードカタログで表示する名前")
-        form.addRow("テンプレ名", name_edit)
+        self._name_edit = QLineEdit(panel)
+        self._name_edit.setPlaceholderText("ノードカタログで表示する名前")
+        form.addRow("テンプレ名", self._name_edit)
 
-        desc_edit = QLineEdit(panel)
-        desc_edit.setPlaceholderText("用途や注意事項を短く記載")
-        form.addRow("説明", desc_edit)
+        self._desc_edit = QLineEdit(panel)
+        self._desc_edit.setPlaceholderText("用途や注意事項を短く記載")
+        form.addRow("説明", self._desc_edit)
 
         meta_row = QHBoxLayout()
         schema_label = QLabel("schema_version: 1", panel)
         updated_label = QLabel("最終更新: -", panel)
-        author_edit = QLineEdit(panel)
-        author_edit.setPlaceholderText("作成者")
+        self._author_edit = QLineEdit(panel)
+        self._author_edit.setPlaceholderText("作成者")
         meta_row.addWidget(schema_label)
         meta_row.addWidget(updated_label)
         meta_row.addStretch(1)
         meta_row.addWidget(QLabel("作成者", panel))
-        meta_row.addWidget(author_edit)
+        meta_row.addWidget(self._author_edit)
         form.addRow("メタ情報", meta_row)
 
         panel_layout.addLayout(form)
@@ -331,11 +339,11 @@ class ToolEnvironmentManagerDialog(QDialog):
         layout.setContentsMargins(12, 10, 12, 12)
         layout.setSpacing(6)
 
-        preview = QPlainTextEdit(box)
-        preview.setReadOnly(True)
-        preview.setPlaceholderText("例: maya -proj <project> -file <scene>")
-        preview.setMinimumHeight(80)
-        layout.addWidget(preview)
+        self._preview_output = QPlainTextEdit(box)
+        self._preview_output.setReadOnly(True)
+        self._preview_output.setPlaceholderText("例: maya -proj <project> -file <scene>")
+        self._preview_output.setMinimumHeight(80)
+        layout.addWidget(self._preview_output)
 
         return box
 
@@ -354,12 +362,12 @@ class ToolEnvironmentManagerDialog(QDialog):
         warning.setProperty("class", "warning")
         layout.addWidget(warning)
 
-        raw_editor = QPlainTextEdit(box)
-        raw_editor.setPlaceholderText(
+        self._raw_json_editor = QPlainTextEdit(box)
+        self._raw_json_editor.setPlaceholderText(
             "{\n  \"schema_version\": 1,\n  \"connectors\": []\n}"
         )
-        raw_editor.setLineWrapMode(QPlainTextEdit.NoWrap)
-        layout.addWidget(raw_editor)
+        self._raw_json_editor.setLineWrapMode(QPlainTextEdit.NoWrap)
+        layout.addWidget(self._raw_json_editor)
 
         return box
 
@@ -374,6 +382,9 @@ class ToolEnvironmentManagerDialog(QDialog):
         destination.setPlaceholderText("保存先: ノードカタログ / テンプレ")
         layout.addWidget(destination, 1)
 
+        create_button = QPushButton("環境を作成", footer)
+        create_button.clicked.connect(self._show_environment_summary)
+        layout.addWidget(create_button)
         layout.addWidget(QPushButton("登録 / 更新", footer))
 
         buttons = QDialogButtonBox(QDialogButtonBox.Close, Qt.Horizontal, footer)
@@ -391,3 +402,31 @@ class ToolEnvironmentManagerDialog(QDialog):
         self._rez_line_numbers.blockSignals(True)
         self._rez_line_numbers.setPlainText(numbers)
         self._rez_line_numbers.blockSignals(False)
+
+    def _show_environment_summary(self) -> None:
+        package = self._package_combo.currentText().strip() if self._package_combo else ""
+        name = self._name_edit.text().strip() if self._name_edit else ""
+        description = self._desc_edit.text().strip() if self._desc_edit else ""
+        author = self._author_edit.text().strip() if self._author_edit else ""
+        rez_commands = self._rez_editor.toPlainText().strip() if self._rez_editor else ""
+        preview = self._preview_output.toPlainText().strip() if self._preview_output else ""
+        raw_json = self._raw_json_editor.toPlainText().strip() if self._raw_json_editor else ""
+
+        message = "\n".join(
+            [
+                f"原子パッケージ: {package or '-'}",
+                f"テンプレ名: {name or '-'}",
+                f"説明: {description or '-'}",
+                f"作成者: {author or '-'}",
+                "",
+                "[Rez commands]",
+                rez_commands or "-",
+                "",
+                "[起動引数プレビュー]",
+                preview or "-",
+                "",
+                "[コメント JSON]",
+                raw_json or "-",
+            ]
+        )
+        QMessageBox.information(self, "環境定義の確認", message)
