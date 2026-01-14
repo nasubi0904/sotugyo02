@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from qtpy import QtCore, QtWidgets
 
@@ -18,6 +17,7 @@ QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
 QListWidgetItem = QtWidgets.QListWidgetItem
+QPlainTextEdit = QtWidgets.QPlainTextEdit
 QPushButton = QtWidgets.QPushButton
 QComboBox = QtWidgets.QComboBox
 QVBoxLayout = QtWidgets.QVBoxLayout
@@ -179,7 +179,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         layout.setSpacing(10)
 
         description = QLabel(
-            "ツールパッケージと色空間を選び、環境変数と起動引数コネクタを定義します。",
+            "ツールパッケージを選び、環境変数と起動引数を手動で定義します。",
             self,
         )
         description.setWordWrap(True)
@@ -193,24 +193,21 @@ class ToolEnvironmentEditorDialog(QDialog):
         form.addRow("環境名", self._name_edit)
 
         self._package_combo = QComboBox(self)
-        self._package_combo.currentIndexChanged.connect(self._on_package_changed)
         form.addRow("ツールパッケージ", self._package_combo)
-
-        self._colorspace_combo = QComboBox(self)
-        form.addRow("色空間 (環境変数名)", self._colorspace_combo)
-
-        self._arg_connector = QLineEdit(self)
-        self._arg_connector.setPlaceholderText("例: --colorspace {COLORSPACE}")
-        form.addRow("起動引数コネクタ", self._arg_connector)
 
         layout.addLayout(form)
 
-        hint = QLabel(
-            "選択したツールパッケージを走査し、色空間に該当する候補を自動で列挙します。",
-            self,
-        )
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
+        env_label = QLabel("環境変数の設定", self)
+        layout.addWidget(env_label)
+        self._env_vars_edit = QPlainTextEdit(self)
+        self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
+        layout.addWidget(self._env_vars_edit)
+
+        args_label = QLabel("起動引数の設定", self)
+        layout.addWidget(args_label)
+        self._launch_args_edit = QPlainTextEdit(self)
+        self._launch_args_edit.setPlaceholderText("例:\n--project path/to/project\n--verbose")
+        layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()
         self._create_button = QPushButton("環境作成", self)
@@ -229,76 +226,27 @@ class ToolEnvironmentEditorDialog(QDialog):
         if not packages:
             self._package_combo.addItem("パッケージがありません", None)
             self._package_combo.setEnabled(False)
-            self._set_colorspace_options([])
             return
         for spec in sorted(packages, key=lambda item: (item.name, item.version or "")):
             label = f"{spec.name} ({spec.version})" if spec.version else spec.name
             self._package_combo.addItem(label, spec)
         self._package_combo.setEnabled(True)
-        self._on_package_changed(0)
 
     def _load_existing(self) -> None:
+        self._env_vars_edit.setPlainText("")
+        self._launch_args_edit.setPlainText("")
         if self._environment_path is None:
             self._name_edit.setText("")
             return
         self._name_edit.setText(self._environment_path.stem)
 
-    def _on_package_changed(self, index: int) -> None:
-        spec = self._package_combo.itemData(index)
-        if not isinstance(spec, RezPackageSpec):
-            self._set_colorspace_options([])
-            return
-        colorspaces = self._scan_color_spaces(spec.path)
-        self._set_colorspace_options(colorspaces)
-
-    def _set_colorspace_options(self, options: Iterable[str]) -> None:
-        self._colorspace_combo.clear()
-        normalized = list(options)
-        if not normalized:
-            self._colorspace_combo.addItem("色空間が見つかりません", None)
-            self._colorspace_combo.setEnabled(False)
-            return
-        for entry in normalized:
-            self._colorspace_combo.addItem(entry, entry)
-        self._colorspace_combo.setEnabled(True)
-
-    def _scan_color_spaces(self, package_dir: Path) -> list[str]:
-        if not package_dir.exists():
-            return []
-        candidates: list[str] = []
-        try:
-            paths = list(package_dir.rglob("*"))
-        except OSError:
-            return []
-        patterns = ("color", "colorspace", "ocio")
-        suffixes = {".ocio", ".csp", ".clf", ".spi1d", ".spi3d"}
-        for path in paths:
-            if not path.is_file():
-                continue
-            name = path.stem
-            lowered = name.lower()
-            if any(token in lowered for token in patterns) or path.suffix.lower() in suffixes:
-                candidates.append(name)
-        if not candidates:
-            return []
-        unique = sorted({self._normalize_colorspace_name(entry) for entry in candidates})
-        return unique[:50]
-
-    @staticmethod
-    def _normalize_colorspace_name(name: str) -> str:
-        normalized = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper()
-        if not normalized:
-            return "COLORSPACE"
-        return f"COLORSPACE_{normalized}"
-
     def _print_environment(self) -> None:
         package = self._package_combo.currentData()
-        colorspace = self._colorspace_combo.currentData()
         payload = {
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "colorspace_env": colorspace,
-            "launch_argument_connector": self._arg_connector.text().strip(),
+            "environment_variables": self._env_vars_edit.toPlainText().strip(),
+            "launch_arguments": self._launch_args_edit.toPlainText().strip(),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
