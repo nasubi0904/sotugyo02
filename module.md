@@ -84,6 +84,27 @@
 - [ ] Windows 環境固有の制約を洗い出したか。
 - [ ] Qt バージョンと依存関係の整合性を確認したか。
 
+## DCC 色空間・OCIO 調査メモ
+### 共通
+- **OpenColorIO (OCIO)**: 多くの DCC で OCIO 設定ファイル (`config.ocio`) を読み込むために `OCIO` 環境変数を利用する。公式サイトで OCIO の概要と構成方針を再確認すること。<https://opencolorio.org/>
+
+### DCC 別メモ
+- **SideFX Houdini**
+  - 環境変数: `HOUDINI_OCIO` / `OCIO` が用意されていることを確認。<https://www.sidefx.com/docs/houdini/ref/env.html>
+  - 同封場所: インストールディレクトリ配下の `houdini/config/ocio` や `houdini/ocio` を候補として扱う設計で走査する。
+- **Blender**
+  - 色管理: Blender マニュアルの Color Management セクションで OCIO ベースの構成を参照。<https://docs.blender.org/manual/en/latest/render/color_management/index.html>
+  - 同封場所: `datafiles/colormanagement` を既定候補として走査する。
+- **Autodesk Maya**
+  - 色管理は OCIO ベースで運用されるケースがあるため `resources/OCIO-configs` を同封候補として扱う。
+  - Autodesk 公式ドキュメントの URL は今後の調査で追記する。
+- **Foundry Nuke**
+  - OCIO を利用する運用が一般的なため `plugins/OCIOConfigs` を同封候補として走査する。
+  - Foundry 公式ドキュメントの URL は今後の調査で追記する。
+- **Adobe Substance 3D Painter**
+  - OCIO を利用する運用を想定し、`resources/color_management` を同封候補として走査する。
+  - Adobe 公式ドキュメントの URL は今後の調査で追記する。
+
 ## 更新履歴
 - 2025-02-14: `src/sotugyo/ui/components/content_browser.py` のレイアウト間隔調整に伴い、UI 部品の設定値を確認した。
 - 2025-12-19: `src/sotugyo/domain/projects` のパス正規化とレジストリ永続化の責務を整理し、`pathlib.Path` を前提とする設計方針を再確認した。
@@ -127,3 +148,4 @@
 
 最終更新日: 2026-03-09
 - 2026-03-09: KDMenvs の導入に伴う起動環境構成ダイアログの UI と色空間候補の抽出導線を確認した。
+- 2026-03-10: DCC ごとの色空間同封候補を整理し、OCIO/環境変数の調査メモを追加した。

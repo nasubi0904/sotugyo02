@@ -22,6 +22,7 @@ from ..repositories.rez_packages import (
     RezPackageValidationResult,
 )
 from ..templates.gateway import TemplateGateway
+from .colorspace import ColorSpaceCandidate, ColorSpaceScanService
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
 from .rez import RezPackageQueryService, RezQueryResult
@@ -36,6 +37,7 @@ class ToolEnvironmentService:
     template_gateway: TemplateGateway
     rez_repository: RezPackageRepository
     rez_query_service: RezPackageQueryService
+    colorspace_scan_service: ColorSpaceScanService
 
     def __init__(
         self,
@@ -46,6 +48,7 @@ class ToolEnvironmentService:
         template_gateway: TemplateGateway | None = None,
         rez_repository: RezPackageRepository | None = None,
         rez_query_service: RezPackageQueryService | None = None,
+        colorspace_scan_service: ColorSpaceScanService | None = None,
     ) -> None:
         repo = repository or ToolConfigRepository()
         self.registry_service = registry_service or ToolRegistryService(repo)
@@ -55,6 +58,9 @@ class ToolEnvironmentService:
         self.template_gateway = template_gateway or TemplateGateway()
         self.rez_repository = rez_repository or RezPackageRepository()
         self.rez_query_service = rez_query_service or RezPackageQueryService()
+        self.colorspace_scan_service = (
+            colorspace_scan_service or ColorSpaceScanService(repo, self.rez_repository)
+        )
 
     # ------------------------------------------------------------------
     # ツール登録
@@ -190,6 +196,9 @@ class ToolEnvironmentService:
         self, project_root: Path
     ) -> RezPackageValidationResult:
         return ProjectRezPackageRepository(project_root).validate()
+
+    def list_colorspace_candidates(self, spec: RezPackageSpec) -> list[ColorSpaceCandidate]:
+        return self.colorspace_scan_service.scan_for_rez_package(spec)
 
     def save_project_rez_package(
         self,

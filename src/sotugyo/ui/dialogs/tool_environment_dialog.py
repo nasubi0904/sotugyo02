@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -24,6 +23,7 @@ QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
 from ...domain.tooling.models import RezPackageSpec
+from ...domain.tooling.services.colorspace import ColorSpaceCandidate
 from ...domain.tooling import ToolEnvironmentService
 from ...infrastructure.paths.storage import get_tool_environment_dir
 
@@ -248,10 +248,10 @@ class ToolEnvironmentEditorDialog(QDialog):
         if not isinstance(spec, RezPackageSpec):
             self._set_colorspace_options([])
             return
-        colorspaces = self._scan_color_spaces(spec.path)
-        self._set_colorspace_options(colorspaces)
+        candidates = self._service.list_colorspace_candidates(spec)
+        self._set_colorspace_options(candidates)
 
-    def _set_colorspace_options(self, options: Iterable[str]) -> None:
+    def _set_colorspace_options(self, options: Iterable[ColorSpaceCandidate]) -> None:
         self._colorspace_combo.clear()
         normalized = list(options)
         if not normalized:
@@ -259,37 +259,15 @@ class ToolEnvironmentEditorDialog(QDialog):
             self._colorspace_combo.setEnabled(False)
             return
         for entry in normalized:
-            self._colorspace_combo.addItem(entry, entry)
+            index = self._colorspace_combo.count()
+            self._colorspace_combo.addItem(entry.label, entry.env_var)
+            if entry.config_path:
+                self._colorspace_combo.setItemData(
+                    index,
+                    str(entry.config_path),
+                    Qt.ToolTipRole,
+                )
         self._colorspace_combo.setEnabled(True)
-
-    def _scan_color_spaces(self, package_dir: Path) -> list[str]:
-        if not package_dir.exists():
-            return []
-        candidates: list[str] = []
-        try:
-            paths = list(package_dir.rglob("*"))
-        except OSError:
-            return []
-        patterns = ("color", "colorspace", "ocio")
-        suffixes = {".ocio", ".csp", ".clf", ".spi1d", ".spi3d"}
-        for path in paths:
-            if not path.is_file():
-                continue
-            name = path.stem
-            lowered = name.lower()
-            if any(token in lowered for token in patterns) or path.suffix.lower() in suffixes:
-                candidates.append(name)
-        if not candidates:
-            return []
-        unique = sorted({self._normalize_colorspace_name(entry) for entry in candidates})
-        return unique[:50]
-
-    @staticmethod
-    def _normalize_colorspace_name(name: str) -> str:
-        normalized = re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").upper()
-        if not normalized:
-            return "COLORSPACE"
-        return f"COLORSPACE_{normalized}"
 
     def _print_environment(self) -> None:
         package = self._package_combo.currentData()
