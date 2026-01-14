@@ -1,5 +1,6 @@
 """ツール関連サービスのエントリポイント。"""
 
+from .colorspace import ColorSpaceCandidate, ColorSpaceScanService
 from .environment import ToolEnvironmentRegistryService
 from .facade import ToolEnvironmentService
 from .registry import ToolRegistryService
@@ -11,6 +12,8 @@ from .rez import (
 )
 
 __all__ = [
+    "ColorSpaceCandidate",
+    "ColorSpaceScanService",
     "ToolEnvironmentRegistryService",
     "ToolEnvironmentService",
     "ToolRegistryService",
