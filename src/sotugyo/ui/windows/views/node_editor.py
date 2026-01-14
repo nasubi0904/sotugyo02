@@ -297,6 +297,9 @@ class NodeEditorWindow(QMainWindow):
         tool_environment_action = QAction("起動環境の構成...", self)
         tool_environment_action.triggered.connect(self._open_tool_environment_settings)
         tools_menu.addAction(tool_environment_action)
+        plugin_manager_action = QAction("プラグインの管理...", self)
+        plugin_manager_action.triggered.connect(self._open_plugin_manager)
+        tools_menu.addAction(plugin_manager_action)
 
         view_menu = menubar.addMenu("View")
         if self._inspector_dock is not None:
@@ -371,6 +374,9 @@ class NodeEditorWindow(QMainWindow):
         dialog.exec()
         if dialog.refresh_requested():
             self._refresh_tool_configuration()
+
+    def _open_plugin_manager(self) -> None:
+        self._show_info_dialog("プラグインの管理は準備中です。")
 
     def _setup_graph_signals(self) -> None:
         selection_signal = getattr(self._graph, "selection_changed", None)
