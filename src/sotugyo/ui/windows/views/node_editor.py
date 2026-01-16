@@ -24,6 +24,9 @@ QCloseEvent = QtGui.QCloseEvent
 QKeySequence = QtGui.QKeySequence
 QResizeEvent = QtGui.QResizeEvent
 QShortcut = QtGui.QShortcut
+QDragEnterEvent = QtGui.QDragEnterEvent
+QDragMoveEvent = QtGui.QDragMoveEvent
+QDropEvent = QtGui.QDropEvent
 QDialog = QtWidgets.QDialog
 QFileDialog = QtWidgets.QFileDialog
 QMainWindow = QtWidgets.QMainWindow
@@ -42,7 +45,7 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ...components.content_browser import NodeCatalogEntry
+from ...components.content_browser import NODE_TYPE_MIME_TYPE, NodeCatalogEntry
 from ...components.nodes import (
     DateNode,
     MemoNode,
@@ -131,6 +134,7 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._configure_graph_drag_drop()
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -640,16 +644,24 @@ class NodeEditorWindow(QMainWindow):
         self._show_info_dialog(f"「{keyword}」に一致するノードが見つかりません。")
 
     def _spawn_node_by_type(self, node_type: str) -> None:
+        self._spawn_node_by_type_at(node_type, position=None)
+
+    def _spawn_node_by_type_at(
+        self,
+        node_type: str,
+        *,
+        position: QtCore.QPointF | None,
+    ) -> None:
         if node_type.startswith("tool-environment:"):
             environment_id = node_type.split(":", 1)[1]
-            self._create_tool_environment_node(environment_id)
+            self._create_tool_environment_node(environment_id, position=position)
             return
         creator = self._node_type_creators.get(node_type)
         if creator is not None:
-            creator()
+            creator(position=position)
             return
         display_name = self._derive_display_name(node_type)
-        self._create_node(node_type, display_name)
+        self._create_node(node_type, display_name, position=position)
 
     def _derive_display_name(self, node_type: str) -> str:
         base_name = node_type.split(".")[-1] if node_type else "ノード"
@@ -714,27 +726,48 @@ class NodeEditorWindow(QMainWindow):
         for node in nodes:
             self._node_metadata.pop(node, None)
 
-    def _create_task_node(self) -> None:
+    def _create_task_node(self, *, position: QtCore.QPointF | None = None) -> None:
         self._task_count += 1
-        self._create_node("sotugyo.demo.TaskNode", f"タスク {self._task_count}")
+        self._create_node(
+            "sotugyo.demo.TaskNode",
+            f"タスク {self._task_count}",
+            position=position,
+        )
 
-    def _create_review_node(self) -> None:
+    def _create_review_node(self, *, position: QtCore.QPointF | None = None) -> None:
         self._review_count += 1
-        self._create_node("sotugyo.demo.ReviewNode", f"レビュー {self._review_count}")
+        self._create_node(
+            "sotugyo.demo.ReviewNode",
+            f"レビュー {self._review_count}",
+            position=position,
+        )
 
-    def _create_memo_node(self) -> None:
+    def _create_memo_node(self, *, position: QtCore.QPointF | None = None) -> None:
         self._memo_count += 1
-        self._create_node(MemoNode.node_type_identifier(), f"メモ {self._memo_count}")
+        self._create_node(
+            MemoNode.node_type_identifier(),
+            f"メモ {self._memo_count}",
+            position=position,
+        )
 
-    def _create_date_node(self) -> None:
+    def _create_date_node(self, *, position: QtCore.QPointF | None = None) -> None:
         self._date_count += 1
-        self._create_node(DateNode.node_type_identifier(), f"日付 {self._date_count}")
+        self._create_node(
+            DateNode.node_type_identifier(),
+            f"日付 {self._date_count}",
+            position=position,
+        )
 
     def _create_asset_node(self, asset_name: str) -> None:
         title = asset_name.strip() or "アセット"
         self._create_node("sotugyo.demo.TaskNode", f"Asset: {title}")
 
-    def _create_tool_environment_node(self, environment_id: str) -> None:
+    def _create_tool_environment_node(
+        self,
+        environment_id: str,
+        *,
+        position: QtCore.QPointF | None = None,
+    ) -> None:
         definition = self._tool_environments.get(environment_id)
         if definition is None:
             self._show_warning_dialog("選択された環境定義が見つかりませんでした。")
@@ -743,7 +776,9 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("環境が参照するツールが登録されていません。")
             return
         node = self._create_node(
-            ToolEnvironmentNode.node_type_identifier(), definition.name
+            ToolEnvironmentNode.node_type_identifier(),
+            definition.name,
+            position=position,
         )
         self._apply_tool_node_rez_properties(node, definition)
 
@@ -797,11 +832,20 @@ class NodeEditorWindow(QMainWindow):
                     return definition
         return None
 
-    def _create_node(self, node_type: str, display_name: str):
+    def _create_node(
+        self,
+        node_type: str,
+        display_name: str,
+        *,
+        position: QtCore.QPointF | None = None,
+    ):
         node = self._graph.create_node(node_type, name=display_name)
-        pos_x = (self._node_spawn_offset % 4) * 220
-        pos_y = (self._node_spawn_offset // 4) * 180
-        node.set_pos(pos_x, pos_y)
+        if position is None:
+            pos_x = (self._node_spawn_offset % 4) * 220
+            pos_y = (self._node_spawn_offset // 4) * 180
+            node.set_pos(pos_x, pos_y)
+        else:
+            node.set_pos(float(position.x()), float(position.y()))
         if isinstance(node, DateNode):
             node.apply_default_size(self._snap_settings.grid_size)
             node.set_snap_grid_size(self._snap_settings.grid_size)
@@ -1714,17 +1758,21 @@ class NodeEditorWindow(QMainWindow):
         if inspector is None:
             return
         if not isinstance(node, ToolEnvironmentNode):
-            inspector.set_tool_launch_state(enabled=False, label="-")
+            inspector.set_tool_launch_state(enabled=False, label="-", visible=False)
             return
         target = self._resolve_local_rez_launch_target(node)
         if target is None:
-            inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし")
+            inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし", visible=True)
             return
         package_request, available = target
         if not available:
-            inspector.set_tool_launch_state(enabled=False, label=f"{package_request} (未検出)")
+            inspector.set_tool_launch_state(
+                enabled=False,
+                label=f"{package_request} (未検出)",
+                visible=True,
+            )
             return
-        inspector.set_tool_launch_state(enabled=True, label=package_request)
+        inspector.set_tool_launch_state(enabled=True, label=package_request, visible=True)
 
     def _is_memo_node(self, node) -> bool:
         if node is None:
@@ -1736,6 +1784,71 @@ class NodeEditorWindow(QMainWindow):
             return
         self.hide()
         self.return_to_start_requested.emit()
+
+    def _configure_graph_drag_drop(self) -> None:
+        self._graph_widget.setAcceptDrops(True)
+        self._graph_widget.installEventFilter(self)
+        viewer = self._graph.viewer()
+        if viewer is None:
+            return
+        viewer.setAcceptDrops(True)
+        viewer.installEventFilter(self)
+        viewport = viewer.viewport()
+        if viewport is not None:
+            viewport.setAcceptDrops(True)
+            viewport.installEventFilter(self)
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        viewer = self._graph.viewer()
+        viewport = viewer.viewport() if viewer is not None else None
+        if obj in {self._graph_widget, viewer, viewport}:
+            if event.type() == QtCore.QEvent.DragEnter:
+                return self._handle_graph_drag_enter(event)
+            if event.type() == QtCore.QEvent.DragMove:
+                return self._handle_graph_drag_move(event)
+            if event.type() == QtCore.QEvent.Drop:
+                return self._handle_graph_drop(event)
+        return super().eventFilter(obj, event)
+
+    def _handle_graph_drag_enter(self, event: QDragEnterEvent) -> bool:
+        if self._extract_node_type_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+            return True
+        return False
+
+    def _handle_graph_drag_move(self, event: QDragMoveEvent) -> bool:
+        if self._extract_node_type_from_mime(event.mimeData()):
+            event.acceptProposedAction()
+            return True
+        return False
+
+    def _handle_graph_drop(self, event: QDropEvent) -> bool:
+        node_type = self._extract_node_type_from_mime(event.mimeData())
+        if not node_type:
+            return False
+        position = self._graph_drop_position(event)
+        self._spawn_node_by_type_at(node_type, position=position)
+        event.acceptProposedAction()
+        return True
+
+    def _extract_node_type_from_mime(self, mime: QtCore.QMimeData) -> str:
+        if mime is None:
+            return ""
+        if mime.hasFormat(NODE_TYPE_MIME_TYPE):
+            data = bytes(mime.data(NODE_TYPE_MIME_TYPE)).decode("utf-8")
+            return data.strip()
+        if mime.hasText():
+            return mime.text().strip()
+        return ""
+
+    def _graph_drop_position(self, event: QDropEvent) -> QtCore.QPointF:
+        viewer = self._graph.viewer()
+        if viewer is None:
+            return QtCore.QPointF(0, 0)
+        position = getattr(event, "position", None)
+        if callable(position):
+            return viewer.mapToScene(position().toPoint())
+        return viewer.mapToScene(event.pos())
 
     # ------------------------------------------------------------------
     # プロジェクトの保存・読み込み
