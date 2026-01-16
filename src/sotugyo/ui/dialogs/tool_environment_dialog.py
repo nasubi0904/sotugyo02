@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 import ctypes
 from pathlib import Path
@@ -16,6 +17,7 @@ QDialog = QtWidgets.QDialog
 QDialogButtonBox = QtWidgets.QDialogButtonBox
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
+QCheckBox = QtWidgets.QCheckBox
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
@@ -208,18 +210,29 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         plugin_layout = QHBoxLayout()
         self._plugin_list = QListWidget(self)
+        self._plugin_list.itemSelectionChanged.connect(self._update_plugin_buttons)
         plugin_layout.addWidget(self._plugin_list, 1)
 
         plugin_button_layout = QVBoxLayout()
         self._plugin_add_button = QPushButton("追加", self)
         self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
         plugin_button_layout.addWidget(self._plugin_add_button)
+        self._plugin_remove_button = QPushButton("削除", self)
+        self._plugin_remove_button.setEnabled(False)
+        self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
+        plugin_button_layout.addWidget(self._plugin_remove_button)
         plugin_button_layout.addStretch(1)
         plugin_layout.addLayout(plugin_button_layout)
         layout.addLayout(plugin_layout)
 
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
+        self._known_path_checkbox = QCheckBox(
+            "環境変数のパスを Known Folder で補完する",
+            self,
+        )
+        self._known_path_checkbox.setChecked(True)
+        layout.addWidget(self._known_path_checkbox)
         self._env_vars_edit = QPlainTextEdit(self)
         self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
         layout.addWidget(self._env_vars_edit)
@@ -269,7 +282,7 @@ class ToolEnvironmentEditorDialog(QDialog):
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "environment_variables": self._env_vars_edit.toPlainText().strip(),
+            "environment_variables": self._build_environment_variables(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
         }
@@ -298,6 +311,11 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _append_required_plugin(self, path: Path) -> None:
         if not path.exists():
             return
+        package_payload = self._try_build_package_relative(path)
+        if package_payload:
+            self._required_plugins.append(package_payload)
+            self._refresh_plugin_list()
+            return
         payload = {
             "name": path.stem,
             "path_type": "absolute",
@@ -314,14 +332,149 @@ class ToolEnvironmentEditorDialog(QDialog):
 
     def _refresh_plugin_list(self) -> None:
         self._plugin_list.clear()
-        for entry in self._required_plugins:
+        for index, entry in enumerate(self._required_plugins):
             if entry.get("path_type") == "known":
                 label = (
                     f"{entry['name']} ({entry['known_id']}:{entry['relative_path']})"
                 )
+            elif entry.get("path_type") == "package":
+                label = (
+                    f"{entry['name']} ({entry['package']}:{entry['relative_path']})"
+                )
             else:
                 label = f"{entry['name']} ({entry['path']})"
-            self._plugin_list.addItem(label)
+            item = QListWidgetItem(label, self._plugin_list)
+            item.setData(Qt.UserRole, index)
+        self._update_plugin_buttons()
+
+    def _update_plugin_buttons(self) -> None:
+        has_selection = bool(self._plugin_list.selectedItems())
+        self._plugin_remove_button.setEnabled(has_selection)
+
+    def _remove_selected_plugins(self) -> None:
+        selected_items = self._plugin_list.selectedItems()
+        if not selected_items:
+            return
+        indices = {
+            item.data(Qt.UserRole)
+            for item in selected_items
+            if isinstance(item.data(Qt.UserRole), int)
+        }
+        if not indices:
+            return
+        for index in sorted(indices, reverse=True):
+            if 0 <= index < len(self._required_plugins):
+                del self._required_plugins[index]
+        self._refresh_plugin_list()
+
+    def _build_environment_variables(self) -> str:
+        raw_text = self._env_vars_edit.toPlainText().strip()
+        if not raw_text:
+            return ""
+        if not self._known_path_checkbox.isChecked():
+            return raw_text
+        if os.name != "nt":
+            return raw_text
+        lines = raw_text.splitlines()
+        replaced_lines = [self._replace_known_paths_in_line(line) for line in lines]
+        return "\n".join(replaced_lines).strip()
+
+    def _replace_known_paths_in_line(self, line: str) -> str:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            return line
+        key, value = line.split("=", 1)
+        replaced_value = self._replace_known_paths(value)
+        return f"{key}={replaced_value}"
+
+    def _replace_known_paths(self, value: str) -> str:
+        segments = value.split(";")
+        replaced_segments = [
+            self._replace_path_segment(segment) for segment in segments
+        ]
+        return ";".join(replaced_segments)
+
+    def _replace_path_segment(self, segment: str) -> str:
+        trimmed = segment.strip()
+        if not trimmed:
+            return segment
+        candidate = Path(trimmed.strip('"'))
+        if not candidate.is_absolute():
+            return segment
+        package_payload = self._try_build_package_relative(candidate)
+        if package_payload:
+            prefix = f"{package_payload['package']}:{package_payload['relative_path']}"
+        else:
+            known_payload = self._try_build_known_path(candidate)
+            if not known_payload:
+                return segment
+            known_id = known_payload["known_id"]
+            relative = known_payload["relative_path"]
+            prefix = f"{known_id}:{relative}"
+        if trimmed.startswith('"') and trimmed.endswith('"'):
+            return f'"{prefix}"'
+        return prefix
+
+    def _try_build_package_relative(self, path: Path) -> Optional[dict[str, str]]:
+        package = self._current_package_spec()
+        if package is None:
+            return None
+        absolute = Path(os.path.abspath(path))
+        reference_paths = self._collect_package_reference_paths(package)
+        if not reference_paths:
+            return None
+        relative = self._build_relative_from_reference_paths(absolute, reference_paths)
+        if relative is None:
+            return None
+        return {
+            "name": path.stem,
+            "path_type": "package",
+            "package": package.name,
+            "relative_path": relative,
+        }
+
+    def _current_package_spec(self) -> Optional[RezPackageSpec]:
+        package = self._package_combo.currentData()
+        if isinstance(package, RezPackageSpec):
+            return package
+        return None
+
+    def _collect_package_reference_paths(self, package: RezPackageSpec) -> list[Path]:
+        package_file = package.path / "package.py"
+        if not package_file.exists():
+            return []
+        try:
+            content = package_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return []
+        matches = re.findall(r"([A-Za-z]:\\\\[^\"\n]+)", content, flags=re.IGNORECASE)
+        return self._normalize_reference_paths(matches)
+
+    def _normalize_reference_paths(self, raw_paths: list[str]) -> list[Path]:
+        seen: set[str] = set()
+        normalized: list[Path] = []
+        for raw_path in raw_paths:
+            candidate = Path(raw_path)
+            if candidate.as_posix() in seen:
+                continue
+            seen.add(candidate.as_posix())
+            normalized.append(candidate)
+        return normalized
+
+    def _build_relative_from_reference_paths(
+        self,
+        absolute: Path,
+        reference_paths: list[Path],
+    ) -> Optional[str]:
+        for reference in reference_paths:
+            if len(reference.parents) < 2:
+                continue
+            anchor = reference.parents[1]
+            if not self._is_under_base(absolute, anchor):
+                continue
+            relative = os.path.relpath(str(absolute), str(anchor))
+            return relative.replace("\\", "/")
+        return None
 
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
         if os.name != "nt":
