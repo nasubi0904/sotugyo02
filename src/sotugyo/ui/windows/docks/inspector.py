@@ -222,14 +222,22 @@ class NodeInspectorPanel(QWidget):
         """プロパティ表示をリセットする。"""
 
         self._property_plain_text.clear()
-        self.set_tool_launch_state(enabled=False, label="-")
+        self.set_tool_launch_state(enabled=False, label="-", visible=False)
 
-    def set_tool_launch_state(self, *, enabled: bool, label: str) -> None:
+    def set_tool_launch_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
         """ツール起動ボタンの状態を更新する。"""
 
         display = label.strip() if label and label.strip() else "-"
         self._tool_launch_label.setText(f"起動対象: {display}")
         self._tool_launch_button.setEnabled(enabled)
+        self._tool_launch_label.setVisible(visible)
+        self._tool_launch_button.setVisible(visible)
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
@@ -348,5 +356,15 @@ class NodeInspectorDock(QDockWidget):
     def clear_properties(self) -> None:
         self._panel.clear_properties()
 
-    def set_tool_launch_state(self, *, enabled: bool, label: str) -> None:
-        self._panel.set_tool_launch_state(enabled=enabled, label=label)
+    def set_tool_launch_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_tool_launch_state(
+            enabled=enabled,
+            label=label,
+            visible=visible,
+        )
