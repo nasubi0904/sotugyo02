@@ -11,20 +11,27 @@ from qtpy import QtCore, QtWidgets
 Qt = QtCore.Qt
 QDialog = QtWidgets.QDialog
 QDialogButtonBox = QtWidgets.QDialogButtonBox
+QCheckBox = QtWidgets.QCheckBox
+QComboBox = QtWidgets.QComboBox
+QFileDialog = QtWidgets.QFileDialog
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
+QHeaderView = QtWidgets.QHeaderView
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
 QListWidgetItem = QtWidgets.QListWidgetItem
+QMessageBox = QtWidgets.QMessageBox
 QPlainTextEdit = QtWidgets.QPlainTextEdit
 QPushButton = QtWidgets.QPushButton
-QComboBox = QtWidgets.QComboBox
+QTreeWidget = QtWidgets.QTreeWidget
+QTreeWidgetItem = QtWidgets.QTreeWidgetItem
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
 from ...domain.tooling.models import RezPackageSpec
 from ...domain.tooling import ToolEnvironmentService
+from ...infrastructure.paths.known_folders import resolve_known_folder_reference
 from ...infrastructure.paths.storage import get_tool_environment_dir
 
 
@@ -197,6 +204,29 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         layout.addLayout(form)
 
+        plugins_label = QLabel("要求プラグインの設定", self)
+        layout.addWidget(plugins_label)
+
+        self._plugin_list = QTreeWidget(self)
+        self._plugin_list.setHeaderLabels(["プラグイン名", "ファイルパス", "属性"])
+        self._plugin_list.setRootIsDecorated(False)
+        self._plugin_list.setAlternatingRowColors(True)
+        header = self._plugin_list.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        layout.addWidget(self._plugin_list)
+
+        plugin_actions = QHBoxLayout()
+        self._known_folder_check = QCheckBox("Known Folder で相対化", self)
+        self._known_folder_check.setChecked(True)
+        plugin_actions.addWidget(self._known_folder_check)
+        self._plugin_add_button = QPushButton("追加", self)
+        self._plugin_add_button.clicked.connect(self._add_required_plugins)
+        plugin_actions.addWidget(self._plugin_add_button)
+        plugin_actions.addStretch(1)
+        layout.addLayout(plugin_actions)
+
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
         self._env_vars_edit = QPlainTextEdit(self)
@@ -233,6 +263,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._package_combo.setEnabled(True)
 
     def _load_existing(self) -> None:
+        self._plugin_list.clear()
         self._env_vars_edit.setPlainText("")
         self._launch_args_edit.setPlainText("")
         if self._environment_path is None:
@@ -240,12 +271,68 @@ class ToolEnvironmentEditorDialog(QDialog):
             return
         self._name_edit.setText(self._environment_path.stem)
 
+    def _add_required_plugins(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "要求プラグインの追加",
+            "",
+            "すべてのファイル (*.*)",
+        )
+        if not paths:
+            return
+
+        extensions = {Path(path).suffix.lower() for path in paths}
+        if len(extensions) > 1:
+            QMessageBox.warning(
+                self,
+                "拡張子の不一致",
+                "複数選択する場合は同じ拡張子のファイルのみ選択してください。",
+            )
+            return
+
+        use_known_folder = self._known_folder_check.isChecked()
+        for path_str in paths:
+            path = Path(path_str)
+            data, display_path, kind_label = self._build_plugin_payload(path, use_known_folder)
+            item = QTreeWidgetItem([data["name"], display_path, kind_label])
+            item.setData(0, Qt.UserRole, data)
+            item.setToolTip(1, display_path)
+            self._plugin_list.addTopLevelItem(item)
+
+    def _build_plugin_payload(self, path: Path, use_known_folder: bool) -> tuple[dict, str, str]:
+        name = path.stem or path.name
+        payload: dict[str, object] = {
+            "kind": "absolute",
+            "value": str(path),
+        }
+        kind_label = "absolute"
+        if use_known_folder:
+            known_ref = resolve_known_folder_reference(path)
+            if known_ref is not None:
+                payload = {
+                    "kind": "known",
+                    "folder_id": known_ref.folder_id,
+                    "relative_path": known_ref.relative_path,
+                }
+                kind_label = "known"
+        return {"name": name, "path": payload}, str(path), kind_label
+
+    def _collect_required_plugins(self) -> list[dict]:
+        items: list[dict] = []
+        for index in range(self._plugin_list.topLevelItemCount()):
+            item = self._plugin_list.topLevelItem(index)
+            data = item.data(0, Qt.UserRole)
+            if isinstance(data, dict):
+                items.append(data)
+        return items
+
     def _print_environment(self) -> None:
         package = self._package_combo.currentData()
         payload = {
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
+            "required_plugins": self._collect_required_plugins(),
             "environment_variables": self._env_vars_edit.toPlainText().strip(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
         }
