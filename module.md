@@ -41,6 +41,15 @@
   - `QtWidgets.QApplication.instance()` などのユーティリティは PySide6 でも動作するが、QtPy での挙動差を確認する。
   - 新しい Qt モジュール追加時は QtPy が対応済みか確認し、必要なら `QtPy` のバージョンアップを検討する。
 
+## Windows Known Folder API
+- **公式ドキュメント**: <https://learn.microsoft.com/ja-jp/windows/win32/shell/knownfolderid>
+- **API リファレンス**: <https://learn.microsoft.com/ja-jp/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath>
+- **概要**: Windows が定義する既知フォルダ（Desktop、Documents など）を GUID で参照する API。ユーザー環境に依存する実パスを OS が解決するため、別 PC でも同じ識別子でパスを構築できる。
+- **利用時の注意**:
+  - `SHGetKnownFolderPath` は COM メモリを返すため、取得後は `CoTaskMemFree` で解放する。
+  - Known Folder の GUID は固定だが、返されるパスはユーザー環境により異なるため、相対パスと組み合わせて保持する。
+  - Windows 以外では利用できないため、OS 判定の上でフォールバックを用意する。
+
 ## NodeGraphQt
 - **公式ドキュメント**: <https://jchanvfx.github.io/NodeGraphQt/api/index.html>
 - **GitHub**: <https://github.com/jchanvfx/NodeGraphQt>
@@ -131,3 +140,5 @@
 - 2026-03-10: 起動環境構成ダイアログから色空間走査処理を撤去し、不要なパッケージ走査が発生しない構成を確認した。
 最終更新日: 2026-03-11
 - 2026-03-11: 起動環境編集ダイアログの入力セクションを環境変数と起動引数の手入力に置き換える方針を反映した。
+最終更新日: 2026-03-12
+- 2026-03-12: Windows Known Folder API の参照方法と `SHGetKnownFolderPath` のメモリ解放要件を追記した。
