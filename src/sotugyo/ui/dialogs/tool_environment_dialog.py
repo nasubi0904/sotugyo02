@@ -16,6 +16,7 @@ QDialog = QtWidgets.QDialog
 QDialogButtonBox = QtWidgets.QDialogButtonBox
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
+QCheckBox = QtWidgets.QCheckBox
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
@@ -225,6 +226,12 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
+        self._known_path_checkbox = QCheckBox(
+            "環境変数のパスを Known Folder で補完する",
+            self,
+        )
+        self._known_path_checkbox.setChecked(True)
+        layout.addWidget(self._known_path_checkbox)
         self._env_vars_edit = QPlainTextEdit(self)
         self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
         layout.addWidget(self._env_vars_edit)
@@ -274,7 +281,7 @@ class ToolEnvironmentEditorDialog(QDialog):
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "environment_variables": self._env_vars_edit.toPlainText().strip(),
+            "environment_variables": self._build_environment_variables(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
         }
@@ -349,6 +356,50 @@ class ToolEnvironmentEditorDialog(QDialog):
             if 0 <= index < len(self._required_plugins):
                 del self._required_plugins[index]
         self._refresh_plugin_list()
+
+    def _build_environment_variables(self) -> str:
+        raw_text = self._env_vars_edit.toPlainText().strip()
+        if not raw_text:
+            return ""
+        if not self._known_path_checkbox.isChecked():
+            return raw_text
+        if os.name != "nt":
+            return raw_text
+        lines = raw_text.splitlines()
+        replaced_lines = [self._replace_known_paths_in_line(line) for line in lines]
+        return "\n".join(replaced_lines).strip()
+
+    def _replace_known_paths_in_line(self, line: str) -> str:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            return line
+        key, value = line.split("=", 1)
+        replaced_value = self._replace_known_paths(value)
+        return f"{key}={replaced_value}"
+
+    def _replace_known_paths(self, value: str) -> str:
+        segments = value.split(";")
+        replaced_segments = [
+            self._replace_known_path_segment(segment) for segment in segments
+        ]
+        return ";".join(replaced_segments)
+
+    def _replace_known_path_segment(self, segment: str) -> str:
+        trimmed = segment.strip()
+        if not trimmed:
+            return segment
+        candidate = Path(trimmed.strip('"'))
+        if not candidate.is_absolute():
+            return segment
+        known_payload = self._try_build_known_path(candidate)
+        if not known_payload:
+            return segment
+        known_id = known_payload["known_id"]
+        relative = known_payload["relative_path"]
+        prefix = f"{known_id}:{relative}"
+        if trimmed.startswith('"') and trimmed.endswith('"'):
+            return f'"{prefix}"'
+        return prefix
 
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
         if os.name != "nt":
