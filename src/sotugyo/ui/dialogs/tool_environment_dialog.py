@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import uuid
 import ctypes
 from pathlib import Path
@@ -418,27 +419,61 @@ class ToolEnvironmentEditorDialog(QDialog):
         package = self._current_package_spec()
         if package is None:
             return None
-        package_root = package.path
-        package_anchor = package_root.parent
-        if len(package_root.parents) > 1:
-            package_anchor = package_root.parents[1]
         absolute = Path(os.path.abspath(path))
-        if not self._is_under_base(absolute, package_anchor):
+        reference_paths = self._collect_package_reference_paths(package)
+        if not reference_paths:
             return None
-        if not self._is_under_base(absolute, package_root):
+        relative = self._build_relative_from_reference_paths(absolute, reference_paths)
+        if relative is None:
             return None
-        relative = os.path.relpath(str(absolute), str(package_root))
         return {
             "name": path.stem,
             "path_type": "package",
             "package": package.name,
-            "relative_path": relative.replace("\\", "/"),
+            "relative_path": relative,
         }
 
     def _current_package_spec(self) -> Optional[RezPackageSpec]:
         package = self._package_combo.currentData()
         if isinstance(package, RezPackageSpec):
             return package
+        return None
+
+    def _collect_package_reference_paths(self, package: RezPackageSpec) -> list[Path]:
+        package_file = package.path / "package.py"
+        if not package_file.exists():
+            return []
+        try:
+            content = package_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return []
+        matches = re.findall(r"([A-Za-z]:\\\\[^\"\n]+)", content, flags=re.IGNORECASE)
+        return self._normalize_reference_paths(matches)
+
+    def _normalize_reference_paths(self, raw_paths: list[str]) -> list[Path]:
+        seen: set[str] = set()
+        normalized: list[Path] = []
+        for raw_path in raw_paths:
+            candidate = Path(raw_path)
+            if candidate.as_posix() in seen:
+                continue
+            seen.add(candidate.as_posix())
+            normalized.append(candidate)
+        return normalized
+
+    def _build_relative_from_reference_paths(
+        self,
+        absolute: Path,
+        reference_paths: list[Path],
+    ) -> Optional[str]:
+        for reference in reference_paths:
+            if len(reference.parents) < 2:
+                continue
+            anchor = reference.parents[1]
+            if not self._is_under_base(absolute, anchor):
+                continue
+            relative = os.path.relpath(str(absolute), str(anchor))
+            return relative.replace("\\", "/")
         return None
 
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
