@@ -104,6 +104,7 @@ class CatalogIconView(QListView):
     """フォルダへのドロップを扱うアイコンビュー。"""
 
     folder_drop_requested = Signal(object, list)
+    node_drag_started = Signal(str)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401
         """ドロップ先がフォルダの場合は移動を要求する。"""
@@ -120,6 +121,48 @@ class CatalogIconView(QListView):
                     event.acceptProposedAction()
                     return
         super().dropEvent(event)
+
+    def startDrag(self, supported_actions: QtCore.Qt.DropActions) -> None:  # noqa: D401
+        """ドラッグ開始時にノード情報を MIME として持たせる。"""
+
+        items = self._selected_catalog_items()
+        if not items:
+            return
+        entry_item = next(
+            (item for item in items if item.is_entry() and item.entry is not None),
+            None,
+        )
+        model = self.model()
+        if model is not None:
+            selection = self.selectionModel()
+            indexes = selection.selectedIndexes() if selection is not None else []
+            mime_data = model.mimeData(indexes)
+        else:
+            mime_data = QtCore.QMimeData()
+        if entry_item is None or entry_item.entry is None:
+            drag = QtGui.QDrag(self)
+            drag.setMimeData(mime_data)
+            drag.exec_(supported_actions)
+            return
+        mime_data.setData(
+            NodeContentBrowser.MIME_NODE_TYPE,
+            entry_item.entry.node_type.encode("utf-8"),
+        )
+        drag = QtGui.QDrag(self)
+        drag.setMimeData(mime_data)
+        if entry_item.entry is not None:
+            drag.setHotSpot(QtCore.QPoint(8, 8))
+            drag.setPixmap(self._drag_pixmap(entry_item.entry))
+        drag.exec_(supported_actions)
+
+    def _drag_pixmap(self, entry: "NodeCatalogEntry") -> QPixmap:
+        icon = self.style().standardIcon(QStyle.SP_FileIcon)
+        size = self.iconSize()
+        pixmap = icon.pixmap(size)
+        if pixmap.isNull():
+            pixmap = QPixmap(size)
+            pixmap.fill(Qt.transparent)
+        return pixmap
 
     def _event_pos(self, event: QtGui.QDropEvent) -> QtCore.QPoint:
         position = getattr(event, "position", None)
@@ -146,6 +189,7 @@ class CatalogIconView(QListView):
 class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ。"""
 
+    MIME_NODE_TYPE = "application/x-sotugyo-node-type"
     node_type_requested = Signal(str)
     search_submitted = Signal(str)
 
@@ -192,6 +236,8 @@ class NodeContentBrowser(QWidget):
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
         self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義")
+        self._last_double_click_node: Optional[str] = None
+        self._last_double_click_timestamp_ms: int = 0
 
         self._load_layout()
         self._setup_ui()
@@ -433,7 +479,20 @@ class NodeContentBrowser(QWidget):
             self._open_folder(catalog_item.folder)
             return
         if catalog_item.entry is not None:
+            if self._is_duplicate_double_click(catalog_item.entry.node_type):
+                return
             self.node_type_requested.emit(catalog_item.entry.node_type)
+
+    def _is_duplicate_double_click(self, node_type: str) -> bool:
+        now_ms = QtCore.QDateTime.currentMSecsSinceEpoch()
+        if (
+            self._last_double_click_node == node_type
+            and now_ms - self._last_double_click_timestamp_ms < 300
+        ):
+            return True
+        self._last_double_click_node = node_type
+        self._last_double_click_timestamp_ms = now_ms
+        return False
 
     def _open_context_menu(self, pos: QtCore.QPoint) -> None:
         selected_items = self._selected_catalog_items()

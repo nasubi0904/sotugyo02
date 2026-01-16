@@ -87,6 +87,7 @@ class NodeInspectorPanel(QWidget):
 
         self.disable_rename()
         self.clear_memo()
+        self.set_tool_launch_visible(False)
 
     def _build_detail_tab(self) -> QWidget:
         widget = QFrame(self)
@@ -223,6 +224,13 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
         self.set_tool_launch_state(enabled=False, label="-")
+        self.set_tool_launch_visible(False)
+
+    def set_tool_launch_visible(self, visible: bool) -> None:
+        """ツール起動 UI の表示有無を切り替える。"""
+
+        self._tool_launch_label.setVisible(visible)
+        self._tool_launch_button.setVisible(visible)
 
     def set_tool_launch_state(self, *, enabled: bool, label: str) -> None:
         """ツール起動ボタンの状態を更新する。"""
@@ -350,3 +358,6 @@ class NodeInspectorDock(QDockWidget):
 
     def set_tool_launch_state(self, *, enabled: bool, label: str) -> None:
         self._panel.set_tool_launch_state(enabled=enabled, label=label)
+
+    def set_tool_launch_visible(self, visible: bool) -> None:
+        self._panel.set_tool_launch_visible(visible)
