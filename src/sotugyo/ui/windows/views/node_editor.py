@@ -134,8 +134,7 @@ class NodeEditorWindow(QMainWindow):
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self._graph_widget.setAcceptDrops(True)
-        self._graph_widget.installEventFilter(self)
+        self._configure_graph_drag_drop()
 
         self._node_spawn_offset = 0
         self._task_count = 0
@@ -1786,8 +1785,23 @@ class NodeEditorWindow(QMainWindow):
         self.hide()
         self.return_to_start_requested.emit()
 
+    def _configure_graph_drag_drop(self) -> None:
+        self._graph_widget.setAcceptDrops(True)
+        self._graph_widget.installEventFilter(self)
+        viewer = self._graph.viewer()
+        if viewer is None:
+            return
+        viewer.setAcceptDrops(True)
+        viewer.installEventFilter(self)
+        viewport = viewer.viewport()
+        if viewport is not None:
+            viewport.setAcceptDrops(True)
+            viewport.installEventFilter(self)
+
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if obj is self._graph_widget:
+        viewer = self._graph.viewer()
+        viewport = viewer.viewport() if viewer is not None else None
+        if obj in {self._graph_widget, viewer, viewport}:
             if event.type() == QtCore.QEvent.DragEnter:
                 return self._handle_graph_drag_enter(event)
             if event.type() == QtCore.QEvent.DragMove:
