@@ -310,6 +310,11 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _append_required_plugin(self, path: Path) -> None:
         if not path.exists():
             return
+        package_payload = self._try_build_package_relative(path)
+        if package_payload:
+            self._required_plugins.append(package_payload)
+            self._refresh_plugin_list()
+            return
         payload = {
             "name": path.stem,
             "path_type": "absolute",
@@ -330,6 +335,10 @@ class ToolEnvironmentEditorDialog(QDialog):
             if entry.get("path_type") == "known":
                 label = (
                     f"{entry['name']} ({entry['known_id']}:{entry['relative_path']})"
+                )
+            elif entry.get("path_type") == "package":
+                label = (
+                    f"{entry['name']} ({entry['package']}:{entry['relative_path']})"
                 )
             else:
                 label = f"{entry['name']} ({entry['path']})"
@@ -380,26 +389,57 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _replace_known_paths(self, value: str) -> str:
         segments = value.split(";")
         replaced_segments = [
-            self._replace_known_path_segment(segment) for segment in segments
+            self._replace_path_segment(segment) for segment in segments
         ]
         return ";".join(replaced_segments)
 
-    def _replace_known_path_segment(self, segment: str) -> str:
+    def _replace_path_segment(self, segment: str) -> str:
         trimmed = segment.strip()
         if not trimmed:
             return segment
         candidate = Path(trimmed.strip('"'))
         if not candidate.is_absolute():
             return segment
-        known_payload = self._try_build_known_path(candidate)
-        if not known_payload:
-            return segment
-        known_id = known_payload["known_id"]
-        relative = known_payload["relative_path"]
-        prefix = f"{known_id}:{relative}"
+        package_payload = self._try_build_package_relative(candidate)
+        if package_payload:
+            prefix = f"{package_payload['package']}:{package_payload['relative_path']}"
+        else:
+            known_payload = self._try_build_known_path(candidate)
+            if not known_payload:
+                return segment
+            known_id = known_payload["known_id"]
+            relative = known_payload["relative_path"]
+            prefix = f"{known_id}:{relative}"
         if trimmed.startswith('"') and trimmed.endswith('"'):
             return f'"{prefix}"'
         return prefix
+
+    def _try_build_package_relative(self, path: Path) -> Optional[dict[str, str]]:
+        package = self._current_package_spec()
+        if package is None:
+            return None
+        package_root = package.path
+        package_anchor = package_root.parent
+        if len(package_root.parents) > 1:
+            package_anchor = package_root.parents[1]
+        absolute = Path(os.path.abspath(path))
+        if not self._is_under_base(absolute, package_anchor):
+            return None
+        if not self._is_under_base(absolute, package_root):
+            return None
+        relative = os.path.relpath(str(absolute), str(package_root))
+        return {
+            "name": path.stem,
+            "path_type": "package",
+            "package": package.name,
+            "relative_path": relative.replace("\\", "/"),
+        }
+
+    def _current_package_spec(self) -> Optional[RezPackageSpec]:
+        package = self._package_combo.currentData()
+        if isinstance(package, RezPackageSpec):
+            return package
+        return None
 
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
         if os.name != "nt":
