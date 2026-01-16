@@ -208,12 +208,17 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         plugin_layout = QHBoxLayout()
         self._plugin_list = QListWidget(self)
+        self._plugin_list.itemSelectionChanged.connect(self._update_plugin_buttons)
         plugin_layout.addWidget(self._plugin_list, 1)
 
         plugin_button_layout = QVBoxLayout()
         self._plugin_add_button = QPushButton("追加", self)
         self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
         plugin_button_layout.addWidget(self._plugin_add_button)
+        self._plugin_remove_button = QPushButton("削除", self)
+        self._plugin_remove_button.setEnabled(False)
+        self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
+        plugin_button_layout.addWidget(self._plugin_remove_button)
         plugin_button_layout.addStretch(1)
         plugin_layout.addLayout(plugin_button_layout)
         layout.addLayout(plugin_layout)
@@ -314,14 +319,36 @@ class ToolEnvironmentEditorDialog(QDialog):
 
     def _refresh_plugin_list(self) -> None:
         self._plugin_list.clear()
-        for entry in self._required_plugins:
+        for index, entry in enumerate(self._required_plugins):
             if entry.get("path_type") == "known":
                 label = (
                     f"{entry['name']} ({entry['known_id']}:{entry['relative_path']})"
                 )
             else:
                 label = f"{entry['name']} ({entry['path']})"
-            self._plugin_list.addItem(label)
+            item = QListWidgetItem(label, self._plugin_list)
+            item.setData(Qt.UserRole, index)
+        self._update_plugin_buttons()
+
+    def _update_plugin_buttons(self) -> None:
+        has_selection = bool(self._plugin_list.selectedItems())
+        self._plugin_remove_button.setEnabled(has_selection)
+
+    def _remove_selected_plugins(self) -> None:
+        selected_items = self._plugin_list.selectedItems()
+        if not selected_items:
+            return
+        indices = {
+            item.data(Qt.UserRole)
+            for item in selected_items
+            if isinstance(item.data(Qt.UserRole), int)
+        }
+        if not indices:
+            return
+        for index in sorted(indices, reverse=True):
+            if 0 <= index < len(self._required_plugins):
+                del self._required_plugins[index]
+        self._refresh_plugin_list()
 
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
         if os.name != "nt":
