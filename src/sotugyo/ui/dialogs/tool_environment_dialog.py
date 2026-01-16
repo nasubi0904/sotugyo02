@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import ctypes
 import json
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -13,10 +15,13 @@ QDialog = QtWidgets.QDialog
 QDialogButtonBox = QtWidgets.QDialogButtonBox
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
+QCheckBox = QtWidgets.QCheckBox
+QFileDialog = QtWidgets.QFileDialog
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
 QListWidgetItem = QtWidgets.QListWidgetItem
+QMessageBox = QtWidgets.QMessageBox
 QPlainTextEdit = QtWidgets.QPlainTextEdit
 QPushButton = QtWidgets.QPushButton
 QComboBox = QtWidgets.QComboBox
@@ -26,6 +31,16 @@ QWidget = QtWidgets.QWidget
 from ...domain.tooling.models import RezPackageSpec
 from ...domain.tooling import ToolEnvironmentService
 from ...infrastructure.paths.storage import get_tool_environment_dir
+
+_KNOWN_FOLDER_IDS = {
+    "FOLDERID_RoamingAppData": "{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}",
+    "FOLDERID_LocalAppData": "{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}",
+    "FOLDERID_ProgramData": "{62AB5D82-FDC1-4DC3-A9DD-070D1D495D97}",
+    "FOLDERID_ProgramFiles": "{905E63B6-C1BF-494E-B29C-65B732D3D21A}",
+    "FOLDERID_ProgramFilesX86": "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}",
+    "FOLDERID_Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
+    "FOLDERID_Desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+}
 
 
 class ToolEnvironmentManagerDialog(QDialog):
@@ -165,6 +180,8 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._required_plugins: list[dict[str, dict[str, str] | str]] = []
+        self._known_folder_cache: Optional[dict[str, Path]] = None
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -196,6 +213,23 @@ class ToolEnvironmentEditorDialog(QDialog):
         form.addRow("ツールパッケージ", self._package_combo)
 
         layout.addLayout(form)
+
+        plugin_label = QLabel("要求プラグインの設定", self)
+        layout.addWidget(plugin_label)
+
+        self._plugin_list = QListWidget(self)
+        layout.addWidget(self._plugin_list)
+
+        plugin_action_layout = QHBoxLayout()
+        self._known_folder_check = QCheckBox("Known Folder で相対化（推奨）", self)
+        self._known_folder_check.setChecked(True)
+        plugin_action_layout.addWidget(self._known_folder_check)
+
+        self._add_plugin_button = QPushButton("追加", self)
+        self._add_plugin_button.clicked.connect(self._open_plugin_dialog)
+        plugin_action_layout.addWidget(self._add_plugin_button)
+        plugin_action_layout.addStretch(1)
+        layout.addLayout(plugin_action_layout)
 
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
@@ -235,10 +269,79 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _load_existing(self) -> None:
         self._env_vars_edit.setPlainText("")
         self._launch_args_edit.setPlainText("")
+        self._required_plugins.clear()
+        self._plugin_list.clear()
         if self._environment_path is None:
             self._name_edit.setText("")
             return
         self._name_edit.setText(self._environment_path.stem)
+
+    def _open_plugin_dialog(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "要求プラグインの追加",
+            "",
+            "プラグインファイル (*);;すべてのファイル (*)",
+        )
+        if not paths:
+            return
+        extensions = {Path(path).suffix.lower() for path in paths}
+        if len(extensions) > 1:
+            QMessageBox.warning(
+                self,
+                "拡張子の不一致",
+                "複数選択する場合は拡張子を統一してください。",
+            )
+            return
+        use_known_folder = self._known_folder_check.isChecked()
+        for path in paths:
+            entry = self._build_plugin_entry(Path(path), use_known_folder)
+            self._required_plugins.append(entry)
+            self._add_plugin_item(entry)
+
+    def _build_plugin_entry(self, path: Path, use_known_folder: bool) -> dict[str, dict[str, str] | str]:
+        name = path.stem
+        known_payload = self._resolve_known_folder_payload(path) if use_known_folder else None
+        if known_payload is None:
+            return {
+                "name": name,
+                "path": {"type": "absolute", "value": str(path)},
+            }
+        return {"name": name, "path": known_payload}
+
+    def _resolve_known_folder_payload(self, path: Path) -> Optional[dict[str, str]]:
+        candidates = self._known_folder_paths()
+        if not candidates:
+            return None
+        resolved_path = path.resolve()
+        for identifier, base in candidates.items():
+            try:
+                relative_path = resolved_path.relative_to(base.resolve())
+            except ValueError:
+                continue
+            return {
+                "type": "known",
+                "identifier": identifier,
+                "relative_path": relative_path.as_posix(),
+            }
+        return None
+
+    def _known_folder_paths(self) -> dict[str, Path]:
+        if self._known_folder_cache is None:
+            self._known_folder_cache = _load_known_folder_paths()
+        return self._known_folder_cache
+
+    def _add_plugin_item(self, entry: dict[str, dict[str, str] | str]) -> None:
+        path_info = entry["path"]
+        if isinstance(path_info, dict) and path_info.get("type") == "known":
+            path_label = f"{path_info['identifier']}:{path_info['relative_path']}"
+        elif isinstance(path_info, dict):
+            path_label = path_info.get("value", "")
+        else:
+            path_label = str(path_info)
+        text = f"{entry['name']} ({path_label})"
+        item = QListWidgetItem(text, self._plugin_list)
+        item.setData(Qt.UserRole, entry)
 
     def _print_environment(self) -> None:
         package = self._package_combo.currentData()
@@ -246,7 +349,47 @@ class ToolEnvironmentEditorDialog(QDialog):
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
+            "required_plugins": self._required_plugins,
             "environment_variables": self._env_vars_edit.toPlainText().strip(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+
+def _load_known_folder_paths() -> dict[str, Path]:
+    if not sys.platform.startswith("win"):
+        return {}
+    shell32 = ctypes.windll.shell32
+    ole32 = ctypes.windll.ole32
+
+    class _Guid(ctypes.Structure):
+        _fields_ = [
+            ("Data1", ctypes.c_ulong),
+            ("Data2", ctypes.c_ushort),
+            ("Data3", ctypes.c_ushort),
+            ("Data4", ctypes.c_ubyte * 8),
+        ]
+
+    def _guid_from_string(value: str) -> _Guid:
+        hex_value = value.strip("{}")
+        bytes_value = bytes.fromhex(hex_value.replace("-", ""))
+        data1 = int.from_bytes(bytes_value[0:4], "little")
+        data2 = int.from_bytes(bytes_value[4:6], "little")
+        data3 = int.from_bytes(bytes_value[6:8], "little")
+        data4 = (ctypes.c_ubyte * 8).from_buffer_copy(bytes_value[8:])
+        return _Guid(data1, data2, data3, data4)
+
+    paths: dict[str, Path] = {}
+    for name, guid in _KNOWN_FOLDER_IDS.items():
+        folder_id = _guid_from_string(guid)
+        path_ptr = ctypes.c_wchar_p()
+        result = shell32.SHGetKnownFolderPath(ctypes.byref(folder_id), 0, 0, ctypes.byref(path_ptr))
+        if result != 0:
+            continue
+        try:
+            if not path_ptr.value:
+                continue
+            paths[name] = Path(path_ptr.value)
+        finally:
+            ole32.CoTaskMemFree(path_ptr)
+    return paths
