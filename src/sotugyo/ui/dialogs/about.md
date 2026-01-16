@@ -6,6 +6,7 @@
 - `user_settings_dialog.py` でユーザーアカウントの管理ダイアログを提供します。
 - `tool_registry_dialog.py` でマシン単位のツール登録を行います。
 - `tool_environment_dialog.py` でツール環境ノードの定義を編集します。
+- `plugin_manager_dialog.py` でツールパッケージごとのプラグイン管理 UI を提供します。
 
 ## 編集時の指針
 - 既存のフォーム構成やバリデーションロジックを変更する際は、関連するウィンドウ（特に `ui/windows/views/start.py`）からの呼び出しフローを確認する。

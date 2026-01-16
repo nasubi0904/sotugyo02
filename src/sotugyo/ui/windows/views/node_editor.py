@@ -64,6 +64,7 @@ from sotugyo.domain.tooling.coordinator import (
 from sotugyo.scripts import RezLauncherError, launch_rez_detached
 from sotugyo.domain.users.settings import UserAccount, UserSettingsManager
 from ...dialogs import (
+    PluginManagerDialog,
     ProjectSettingsDialog,
     ToolEnvironmentManagerDialog,
     ToolRegistryDialog,
@@ -376,7 +377,8 @@ class NodeEditorWindow(QMainWindow):
             self._refresh_tool_configuration()
 
     def _open_plugin_manager(self) -> None:
-        self._show_info_dialog("プラグインの管理は準備中です。")
+        dialog = PluginManagerDialog(self._coordinator.tool_service, self)
+        dialog.exec()
 
     def _setup_graph_signals(self) -> None:
         selection_signal = getattr(self._graph, "selection_changed", None)
