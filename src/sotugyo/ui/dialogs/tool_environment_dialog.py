@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
+import uuid
+import ctypes
 from pathlib import Path
 from typing import Optional
 
@@ -22,6 +25,8 @@ QPushButton = QtWidgets.QPushButton
 QComboBox = QtWidgets.QComboBox
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
+QFileDialog = QtWidgets.QFileDialog
+QMessageBox = QtWidgets.QMessageBox
 
 from ...domain.tooling.models import RezPackageSpec
 from ...domain.tooling import ToolEnvironmentService
@@ -165,6 +170,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._required_plugins: list[dict[str, str]] = []
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -196,6 +202,21 @@ class ToolEnvironmentEditorDialog(QDialog):
         form.addRow("ツールパッケージ", self._package_combo)
 
         layout.addLayout(form)
+
+        plugin_label = QLabel("要求プラグインの設定", self)
+        layout.addWidget(plugin_label)
+
+        plugin_layout = QHBoxLayout()
+        self._plugin_list = QListWidget(self)
+        plugin_layout.addWidget(self._plugin_list, 1)
+
+        plugin_button_layout = QVBoxLayout()
+        self._plugin_add_button = QPushButton("追加", self)
+        self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
+        plugin_button_layout.addWidget(self._plugin_add_button)
+        plugin_button_layout.addStretch(1)
+        plugin_layout.addLayout(plugin_button_layout)
+        layout.addLayout(plugin_layout)
 
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
@@ -235,6 +256,8 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _load_existing(self) -> None:
         self._env_vars_edit.setPlainText("")
         self._launch_args_edit.setPlainText("")
+        self._required_plugins = []
+        self._refresh_plugin_list()
         if self._environment_path is None:
             self._name_edit.setText("")
             return
@@ -248,5 +271,136 @@ class ToolEnvironmentEditorDialog(QDialog):
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
             "environment_variables": self._env_vars_edit.toPlainText().strip(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
+            "required_plugins": list(self._required_plugins),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _open_plugin_dialog(self) -> None:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "要求プラグインを追加",
+            str(Path.home()),
+            "プラグインファイル (*.*)",
+        )
+        if not paths:
+            return
+        extensions = {Path(path).suffix.lower() for path in paths}
+        if len(paths) > 1 and len(extensions) > 1:
+            QMessageBox.warning(
+                self,
+                "拡張子の不一致",
+                "複数選択する場合は同じ拡張子のファイルを選択してください。",
+            )
+            return
+        for path in paths:
+            self._append_required_plugin(Path(path))
+
+    def _append_required_plugin(self, path: Path) -> None:
+        if not path.exists():
+            return
+        payload = {
+            "name": path.stem,
+            "path_type": "absolute",
+            "path": str(path),
+        }
+        known_payload = self._try_build_known_path(path)
+        if known_payload:
+            payload = {
+                "name": path.stem,
+                **known_payload,
+            }
+        self._required_plugins.append(payload)
+        self._refresh_plugin_list()
+
+    def _refresh_plugin_list(self) -> None:
+        self._plugin_list.clear()
+        for entry in self._required_plugins:
+            if entry.get("path_type") == "known":
+                label = (
+                    f"{entry['name']} ({entry['known_id']}:{entry['relative_path']})"
+                )
+            else:
+                label = f"{entry['name']} ({entry['path']})"
+            self._plugin_list.addItem(label)
+
+    def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
+        if os.name != "nt":
+            return None
+        absolute = Path(os.path.abspath(path))
+        for known_id, base in self._collect_known_folders():
+            if self._is_under_base(absolute, base):
+                relative = os.path.relpath(str(absolute), str(base))
+                return {
+                    "path_type": "known",
+                    "known_id": known_id,
+                    "relative_path": relative.replace("\\", "/"),
+                }
+        return None
+
+    def _collect_known_folders(self) -> list[tuple[str, Path]]:
+        known_folder_ids = {
+            "FOLDERID_Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
+            "FOLDERID_Downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
+            "FOLDERID_Desktop": "{B4BFCC3A-DB2C-424C-B029-7FE99A87C641}",
+            "FOLDERID_RoamingAppData": "{3EB685DB-65F9-4CF6-A03A-E3EF65729F3D}",
+            "FOLDERID_LocalAppData": "{F1B32785-6FBA-4FCF-9D55-7B8E7F157091}",
+            "FOLDERID_ProgramFiles": "{905E63B6-C1BF-494E-B29C-65B732D3D21A}",
+            "FOLDERID_ProgramFilesX64": "{6D809377-6AF0-444B-8957-A3773F02200E}",
+            "FOLDERID_ProgramFilesX86": "{7C5A40EF-A0FB-4BFC-874A-C0F2E0B9FA8E}",
+        }
+        known_folders: list[tuple[str, Path]] = []
+        for name, guid_text in known_folder_ids.items():
+            resolved = self._resolve_known_folder(guid_text)
+            if resolved is None:
+                continue
+            known_folders.append((name, resolved))
+        return known_folders
+
+    def _resolve_known_folder(self, guid_text: str) -> Optional[Path]:
+        folder_id = self._guid_from_string(guid_text)
+        if folder_id is None:
+            return None
+        path_ptr = ctypes.c_wchar_p()
+        result = ctypes.windll.shell32.SHGetKnownFolderPath(
+            ctypes.byref(folder_id), 0, None, ctypes.byref(path_ptr)
+        )
+        if result != 0 or not path_ptr.value:
+            return None
+        try:
+            return Path(path_ptr.value)
+        finally:
+            ctypes.windll.ole32.CoTaskMemFree(path_ptr)
+
+    def _guid_from_string(self, guid_text: str) -> Optional["_Guid"]:
+        try:
+            guid = uuid.UUID(guid_text)
+        except ValueError:
+            return None
+        return _Guid.from_uuid(guid)
+
+    @staticmethod
+    def _is_under_base(path: Path, base: Path) -> bool:
+        try:
+            common = os.path.commonpath([str(path), str(base)])
+        except ValueError:
+            return False
+        return os.path.normcase(common) == os.path.normcase(str(base))
+
+
+class _Guid(ctypes.Structure):
+    _fields_ = [
+        ("Data1", ctypes.c_ulong),
+        ("Data2", ctypes.c_ushort),
+        ("Data3", ctypes.c_ushort),
+        ("Data4", ctypes.c_ubyte * 8),
+    ]
+
+    @classmethod
+    def from_uuid(cls, value: uuid.UUID) -> "_Guid":
+        data4 = (ctypes.c_ubyte * 8).from_buffer_copy(value.bytes[8:])
+        return cls(
+            value.time_low,
+            value.time_mid,
+            value.time_hi_version,
+            data4,
+        )
