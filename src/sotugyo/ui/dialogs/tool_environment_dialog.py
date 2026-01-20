@@ -432,15 +432,10 @@ class ToolEnvironmentEditorDialog(QDialog):
                 "ツール実体パスが取得できないため、相対化できませんでした。",
             )
             return
-        failures: list[str] = []
         for index in indices:
             entry = self._required_plugins[index]
             absolute = self._resolve_plugin_absolute_path(entry)
             if absolute is None:
-                failures.append(entry.get("name", "不明"))
-                continue
-            if not self._is_under_base(absolute, base_dir):
-                failures.append(entry.get("name", "不明"))
                 continue
             relative = os.path.relpath(str(absolute), str(base_dir)).replace("\\", "/")
             entry.clear()
@@ -452,13 +447,6 @@ class ToolEnvironmentEditorDialog(QDialog):
                 }
             )
         self._refresh_plugin_list()
-        if failures:
-            QMessageBox.information(
-                self,
-                "相対化の結果",
-                "次の項目はツール配下に存在しないため相対化できませんでした:\n"
-                + "\n".join(failures),
-            )
 
     def _convert_selected_plugins_to_absolute(self) -> None:
         indices = self._selected_plugin_indices()
