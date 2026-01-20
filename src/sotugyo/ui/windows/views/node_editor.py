@@ -2129,10 +2129,14 @@ class NodeEditorWindow(QMainWindow):
             node_uuid, _, _ = self._ensure_node_metadata(node)
             destination_dir = self._project_file_node_dir(node_uuid)
             destination_dir.mkdir(parents=True, exist_ok=True)
-            destination = destination_dir / source.name
             try:
-                if source != destination:
-                    shutil.copy2(source, destination)
+                destination = destination_dir / source.name
+                if source.is_dir():
+                    if source != destination:
+                        shutil.copytree(source, destination, dirs_exist_ok=True)
+                else:
+                    if source != destination:
+                        shutil.copy2(source, destination)
             except OSError as exc:
                 self._show_warning_dialog(
                     "ファイルノードのコピーに失敗しました。\n"
