@@ -221,6 +221,18 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._plugin_remove_button.setEnabled(False)
         self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
         plugin_button_layout.addWidget(self._plugin_remove_button)
+        self._plugin_relative_button = QPushButton("ツールから相対化", self)
+        self._plugin_relative_button.setEnabled(False)
+        self._plugin_relative_button.clicked.connect(
+            self._convert_selected_plugins_to_tool_relative
+        )
+        plugin_button_layout.addWidget(self._plugin_relative_button)
+        self._plugin_absolute_button = QPushButton("絶対パス化", self)
+        self._plugin_absolute_button.setEnabled(False)
+        self._plugin_absolute_button.clicked.connect(
+            self._convert_selected_plugins_to_absolute
+        )
+        plugin_button_layout.addWidget(self._plugin_absolute_button)
         plugin_button_layout.addStretch(1)
         plugin_layout.addLayout(plugin_button_layout)
         layout.addLayout(plugin_layout)
@@ -313,10 +325,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         package = self._current_package_spec()
         if package is None:
             return str(Path.home())
-        executable = self._resolve_execute_path_from_package(package)
-        if executable and executable.exists():
-            return str(executable)
-        executable = self._service.rez_repository.resolve_executable(package)
+        executable = self._resolve_tool_executable(package)
         if executable and executable.exists():
             return str(executable)
         if package.path.exists():
@@ -342,8 +351,22 @@ class ToolEnvironmentEditorDialog(QDialog):
                 return candidate
         return None
 
+    def _resolve_tool_executable(self, package: RezPackageSpec) -> Optional[Path]:
+        executable = self._resolve_execute_path_from_package(package)
+        if executable and executable.exists():
+            return executable
+        executable = self._service.rez_repository.resolve_executable(package)
+        if executable and executable.exists():
+            return executable
+        return None
+
     def _append_required_plugin(self, path: Path) -> None:
         if not path.exists():
+            return
+        tool_payload = self._try_build_tool_relative(path)
+        if tool_payload:
+            self._required_plugins.append(tool_payload)
+            self._refresh_plugin_list()
             return
         package_payload = self._try_build_package_relative(path)
         if package_payload:
@@ -375,6 +398,8 @@ class ToolEnvironmentEditorDialog(QDialog):
                 label = (
                     f"{entry['name']} ({entry['package']}:{entry['relative_path']})"
                 )
+            elif entry.get("path_type") == "tool":
+                label = f"{entry['name']} (tool:{entry['relative_path']})"
             else:
                 label = f"{entry['name']} ({entry['path']})"
             item = QListWidgetItem(label, self._plugin_list)
@@ -384,6 +409,8 @@ class ToolEnvironmentEditorDialog(QDialog):
     def _update_plugin_buttons(self) -> None:
         has_selection = bool(self._plugin_list.selectedItems())
         self._plugin_remove_button.setEnabled(has_selection)
+        self._plugin_relative_button.setEnabled(has_selection)
+        self._plugin_absolute_button.setEnabled(has_selection)
 
     def _remove_selected_plugins(self) -> None:
         selected_items = self._plugin_list.selectedItems()
@@ -400,6 +427,103 @@ class ToolEnvironmentEditorDialog(QDialog):
             if 0 <= index < len(self._required_plugins):
                 del self._required_plugins[index]
         self._refresh_plugin_list()
+
+    def _convert_selected_plugins_to_tool_relative(self) -> None:
+        base_dir = self._resolve_tool_base_dir()
+        if base_dir is None:
+            QMessageBox.warning(
+                self,
+                "相対化できません",
+                "ツール実体パスが解決できないため相対化できません。",
+            )
+            return
+        indices = self._selected_plugin_indices()
+        if not indices:
+            return
+        errors: list[str] = []
+        for index in indices:
+            entry = self._required_plugins[index]
+            absolute = self._resolve_required_plugin_absolute(entry)
+            if absolute is None:
+                errors.append(entry.get("name", "未設定"))
+                continue
+            payload = self._try_build_tool_relative(absolute, name=entry.get("name"))
+            if payload is None:
+                errors.append(entry.get("name", absolute.name))
+                continue
+            self._required_plugins[index] = payload
+        self._refresh_plugin_list()
+        if errors:
+            QMessageBox.warning(
+                self,
+                "相対化できない項目",
+                "ツール実体パス配下にないため相対化できませんでした:\n"
+                + "\n".join(errors),
+            )
+
+    def _convert_selected_plugins_to_absolute(self) -> None:
+        indices = self._selected_plugin_indices()
+        if not indices:
+            return
+        errors: list[str] = []
+        for index in indices:
+            entry = self._required_plugins[index]
+            absolute = self._resolve_required_plugin_absolute(entry)
+            if absolute is None:
+                errors.append(entry.get("name", "未設定"))
+                continue
+            self._required_plugins[index] = {
+                "name": entry.get("name", absolute.stem),
+                "path_type": "absolute",
+                "path": str(absolute),
+            }
+        self._refresh_plugin_list()
+        if errors:
+            QMessageBox.warning(
+                self,
+                "絶対パス化できない項目",
+                "絶対パスへ変換できない項目があります:\n" + "\n".join(errors),
+            )
+
+    def _selected_plugin_indices(self) -> list[int]:
+        selected_items = self._plugin_list.selectedItems()
+        if not selected_items:
+            return []
+        indices = [
+            item.data(Qt.UserRole)
+            for item in selected_items
+            if isinstance(item.data(Qt.UserRole), int)
+        ]
+        return sorted(set(indices))
+
+    def _resolve_required_plugin_absolute(self, entry: dict[str, str]) -> Optional[Path]:
+        path_type = entry.get("path_type")
+        if path_type == "absolute":
+            raw_path = entry.get("path", "")
+            return Path(raw_path) if raw_path else None
+        if path_type == "tool":
+            base_dir = self._resolve_tool_base_dir()
+            if base_dir is None:
+                return None
+            relative = entry.get("relative_path", "")
+            if not relative:
+                return None
+            return base_dir / Path(relative)
+        if path_type == "package":
+            relative = entry.get("relative_path", "")
+            if not relative:
+                return None
+            return self._resolve_package_relative_absolute(relative)
+        if path_type == "known":
+            known_id = entry.get("known_id", "")
+            relative = entry.get("relative_path", "")
+            if not known_id or not relative:
+                return None
+            base_dir = self._resolve_known_folder_base(known_id)
+            if base_dir is None:
+                return None
+            return base_dir / Path(relative)
+        return None
 
     def _build_environment_variables(self) -> str:
         raw_text = self._env_vars_edit.toPlainText().strip()
@@ -467,6 +591,34 @@ class ToolEnvironmentEditorDialog(QDialog):
             "relative_path": relative,
         }
 
+    def _try_build_tool_relative(
+        self,
+        path: Path,
+        *,
+        name: Optional[str] = None,
+    ) -> Optional[dict[str, str]]:
+        base_dir = self._resolve_tool_base_dir()
+        if base_dir is None:
+            return None
+        absolute = Path(os.path.abspath(path))
+        if not self._is_under_base(absolute, base_dir):
+            return None
+        relative = os.path.relpath(str(absolute), str(base_dir))
+        return {
+            "name": name or path.stem,
+            "path_type": "tool",
+            "relative_path": relative.replace("\\", "/"),
+        }
+
+    def _resolve_tool_base_dir(self) -> Optional[Path]:
+        package = self._current_package_spec()
+        if package is None:
+            return None
+        executable = self._resolve_tool_executable(package)
+        if executable is None or not executable.exists():
+            return None
+        return executable.parent
+
     def _current_package_spec(self) -> Optional[RezPackageSpec]:
         package = self._package_combo.currentData()
         if isinstance(package, RezPackageSpec):
@@ -510,6 +662,23 @@ class ToolEnvironmentEditorDialog(QDialog):
             return relative.replace("\\", "/")
         return None
 
+    def _resolve_package_relative_absolute(self, relative_path: str) -> Optional[Path]:
+        package = self._current_package_spec()
+        if package is None:
+            return None
+        reference_paths = self._collect_package_reference_paths(package)
+        fallback: Optional[Path] = None
+        for reference in reference_paths:
+            if len(reference.parents) < 2:
+                continue
+            anchor = reference.parents[1]
+            candidate = anchor / Path(relative_path)
+            if fallback is None:
+                fallback = candidate
+            if candidate.exists():
+                return candidate
+        return fallback
+
     def _try_build_known_path(self, path: Path) -> Optional[dict[str, str]]:
         if os.name != "nt":
             return None
@@ -542,6 +711,12 @@ class ToolEnvironmentEditorDialog(QDialog):
                 continue
             known_folders.append((name, resolved))
         return known_folders
+
+    def _resolve_known_folder_base(self, known_id: str) -> Optional[Path]:
+        for name, base in self._collect_known_folders():
+            if name == known_id:
+                return base
+        return None
 
     def _resolve_known_folder(self, guid_text: str) -> Optional[Path]:
         folder_id = self._guid_from_string(guid_text)
