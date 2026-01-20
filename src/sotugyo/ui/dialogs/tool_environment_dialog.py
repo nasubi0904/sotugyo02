@@ -289,10 +289,11 @@ class ToolEnvironmentEditorDialog(QDialog):
         print(json.dumps(payload, ensure_ascii=False, indent=2))
 
     def _open_plugin_dialog(self) -> None:
+        start_path = self._resolve_plugin_dialog_start_path()
         paths, _ = QFileDialog.getOpenFileNames(
             self,
             "要求プラグインを追加",
-            str(Path.home()),
+            start_path,
             "プラグインファイル (*.*)",
         )
         if not paths:
@@ -307,6 +308,39 @@ class ToolEnvironmentEditorDialog(QDialog):
             return
         for path in paths:
             self._append_required_plugin(Path(path))
+
+    def _resolve_plugin_dialog_start_path(self) -> str:
+        package = self._current_package_spec()
+        if package is None:
+            return str(Path.home())
+        executable = self._resolve_execute_path_from_package(package)
+        if executable and executable.exists():
+            return str(executable)
+        executable = self._service.rez_repository.resolve_executable(package)
+        if executable and executable.exists():
+            return str(executable)
+        if package.path.exists():
+            return str(package.path)
+        return str(Path.home())
+
+    def _resolve_execute_path_from_package(self, package: RezPackageSpec) -> Optional[Path]:
+        package_file = package.path / "package.py"
+        if not package_file.exists():
+            return None
+        try:
+            content = package_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            return None
+        matches = re.findall(
+            r"EXECUTE_[A-Z0-9_]+_EXE[\"']\]\s*=\s*r?[\"']([^\"'\n]+)",
+            content,
+            flags=re.IGNORECASE,
+        )
+        for match in matches:
+            candidate = Path(match)
+            if candidate.exists():
+                return candidate
+        return None
 
     def _append_required_plugin(self, path: Path) -> None:
         if not path.exists():
