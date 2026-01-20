@@ -259,6 +259,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
         inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
+        inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1208,6 +1209,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.disable_rename()
                 inspector.clear_memo()
                 inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
+                inspector.set_file_path_state(enabled=False, path="", visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1242,6 +1244,7 @@ class NodeEditorWindow(QMainWindow):
             inspector.enable_rename(name)
             self._update_tool_launch_controls(node)
             self._update_file_reveal_controls(node)
+            self._update_file_path_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1424,6 +1427,21 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("ファイルが見つかりません。")
             return
         self._reveal_file_in_explorer(target)
+
+    def _handle_file_path_changed(self, path: str) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return
+        normalized = path.strip()
+        if not normalized:
+            self._show_warning_dialog("ファイルパスを入力してください。")
+            return
+        self._set_node_custom_property(self._current_node, "file_path", normalized)
+        new_name = Path(normalized).name
+        if new_name and hasattr(self._current_node, "set_name"):
+            self._current_node.set_name(new_name)
+        self._set_modified(True)
+        self._update_selected_node_info()
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1856,6 +1874,20 @@ class NodeEditorWindow(QMainWindow):
                 label="未設定",
                 visible=True,
             )
+
+    def _update_file_path_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_path_state(enabled=False, path="", visible=False)
+            return
+        file_path = self._file_node_path(node)
+        inspector.set_file_path_state(
+            enabled=True,
+            path=file_path,
+            visible=True,
+        )
 
     def _is_memo_node(self, node) -> bool:
         if node is None:

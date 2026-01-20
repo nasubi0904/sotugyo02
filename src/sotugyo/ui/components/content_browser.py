@@ -591,7 +591,18 @@ class NodeContentBrowser(QWidget):
                 "既定フォルダ内にはファイルノードを登録できません。",
             )
             return
-        added = self._register_file_entries(paths, folder)
+        if len(paths) > 1:
+            drop_folder = self._create_drop_folder(folder)
+            added = self._register_file_entries(paths, drop_folder)
+            if not added:
+                if drop_folder.parent is not None:
+                    drop_folder.parent.items = [
+                        item
+                        for item in drop_folder.parent.items
+                        if item.folder is not drop_folder
+                    ]
+        else:
+            added = self._register_file_entries(paths, folder)
         if added:
             self._persist_custom_file_entries()
             self._persist_layout()
@@ -852,8 +863,7 @@ class NodeContentBrowser(QWidget):
         for item in items:
             if item in self._current_folder.items:
                 self._current_folder.items.remove(item)
-                if item.entry and item.entry.node_type.startswith(FILE_NODE_TYPE_PREFIX):
-                    removed_file_types.append(item.entry.node_type)
+                removed_file_types.extend(self._collect_file_entry_types(item))
         if removed_file_types:
             remaining = self._entry_items_by_type()
             removed_any = False
@@ -991,6 +1001,25 @@ class NodeContentBrowser(QWidget):
             target_folder.items.append(new_item)
             added += 1
         return added
+
+    def _collect_file_entry_types(self, item: CatalogItem) -> List[str]:
+        if item.entry and item.entry.node_type.startswith(FILE_NODE_TYPE_PREFIX):
+            return [item.entry.node_type]
+        if item.folder is None:
+            return []
+        return [
+            entry.node_type
+            for entry in (catalog_item.entry for catalog_item in item.folder.iter_items())
+            if isinstance(entry, NodeCatalogEntry)
+            and entry.node_type.startswith(FILE_NODE_TYPE_PREFIX)
+        ]
+
+    def _create_drop_folder(self, parent: CatalogFolder) -> CatalogFolder:
+        base_name = "外部ファイル"
+        name = self._unique_folder_name(base_name, parent)
+        new_folder = CatalogFolder(name=name, parent=parent)
+        parent.items.append(CatalogItem(kind="folder", title=name, folder=new_folder))
+        return new_folder
 
     def _copy_items_to_folder(
         self,
