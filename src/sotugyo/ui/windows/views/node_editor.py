@@ -2134,7 +2134,13 @@ class NodeEditorWindow(QMainWindow):
                 destination = destination_dir / source.name
                 if source.is_dir():
                     if source != destination:
-                        self._copy_directory_contents(source, destination)
+                        missing = self._copy_directory_contents(source, destination)
+                        if missing:
+                            self._show_warning_dialog(
+                                "ファイルノードのコピー中に存在しないファイルが見つかりました。\n"
+                                f"ノード: {self._safe_node_name(node)}\n"
+                                f"件数: {len(missing)}"
+                            )
                 else:
                     if source != destination:
                         shutil.copy2(source, destination)
@@ -2149,8 +2155,9 @@ class NodeEditorWindow(QMainWindow):
             if relative_path:
                 self._set_node_custom_property(node, "file_path", relative_path)
 
-    def _copy_directory_contents(self, source: Path, destination: Path) -> None:
+    def _copy_directory_contents(self, source: Path, destination: Path) -> List[str]:
         destination.mkdir(parents=True, exist_ok=True)
+        missing_files: List[str] = []
         for root, dirs, files in os.walk(source):
             root_path = Path(root)
             relative_root = root_path.relative_to(source)
@@ -2162,7 +2169,11 @@ class NodeEditorWindow(QMainWindow):
                 source_file = root_path / filename
                 target_file = target_root / filename
                 target_file.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source_file, target_file)
+                try:
+                    shutil.copy2(source_file, target_file)
+                except FileNotFoundError:
+                    missing_files.append(str(source_file))
+        return missing_files
 
     def _project_file_node_dir(self, node_uuid: str) -> Path:
         base = self._current_project_root / "file_nodes"
