@@ -8,6 +8,7 @@ _CONTENT_EXPORTS = {"NodeContentBrowser", "NodeCatalogEntry"}
 _NODE_EXPORTS = {
     "BaseDemoNode",
     "DateNode",
+    "FileNode",
     "MemoNode",
     "ReviewNode",
     "TaskNode",

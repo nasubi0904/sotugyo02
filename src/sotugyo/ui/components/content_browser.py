@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
@@ -46,6 +47,17 @@ QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
 
 NODE_TYPE_MIME_TYPE = "application/x-sotugyo-node-type"
+FILE_NODE_TYPE_PREFIX = "file-node:"
+
+
+def file_node_type_for_path(path: str) -> str:
+    return f"{FILE_NODE_TYPE_PREFIX}{path}"
+
+
+def file_node_path_from_node_type(node_type: str) -> str:
+    if node_type.startswith(FILE_NODE_TYPE_PREFIX):
+        return node_type[len(FILE_NODE_TYPE_PREFIX) :]
+    return ""
 
 
 @dataclass(frozen=True)
@@ -107,6 +119,23 @@ class CatalogIconView(QListView):
     """フォルダへのドロップを扱うアイコンビュー。"""
 
     folder_drop_requested = Signal(object, list)
+    external_files_dropped = Signal(list, object)
+
+    def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:  # noqa: D401
+        """外部ファイルのドラッグを許可する。"""
+
+        if self._has_local_files(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event: QtGui.QDragMoveEvent) -> None:  # noqa: D401
+        """外部ファイルのドラッグを許可する。"""
+
+        if self._has_local_files(event.mimeData()):
+            event.acceptProposedAction()
+            return
+        super().dragMoveEvent(event)
 
     def startDrag(self, supported_actions: QtCore.Qt.DropActions) -> None:
         selection = self.selectedIndexes()
@@ -126,6 +155,19 @@ class CatalogIconView(QListView):
         """ドロップ先がフォルダの場合は移動を要求する。"""
 
         model = self.model()
+        if self._has_local_files(event.mimeData()):
+            paths = self._local_file_paths(event.mimeData())
+            if paths:
+                index = self.indexAt(self._event_pos(event))
+                target_folder = None
+                if model is not None and index.isValid():
+                    item = model.itemFromIndex(index)
+                    catalog_item = item.data(Qt.UserRole) if item else None
+                    if isinstance(catalog_item, CatalogItem) and catalog_item.is_folder():
+                        target_folder = catalog_item.folder
+                self.external_files_dropped.emit(paths, target_folder)
+                event.acceptProposedAction()
+                return
         index = self.indexAt(self._event_pos(event))
         if model is not None and index.isValid():
             item = model.itemFromIndex(index)
@@ -174,6 +216,18 @@ class CatalogIconView(QListView):
                 return catalog_item.entry.node_type
         return ""
 
+    @staticmethod
+    def _has_local_files(mime: Optional[QtCore.QMimeData]) -> bool:
+        if mime is None or not mime.hasUrls():
+            return False
+        return any(url.isLocalFile() for url in mime.urls())
+
+    @staticmethod
+    def _local_file_paths(mime: Optional[QtCore.QMimeData]) -> List[str]:
+        if mime is None or not mime.hasUrls():
+            return []
+        return [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+
 
 class NodeContentBrowser(QWidget):
     """ノード追加と検索をまとめたコンテンツブラウザ。"""
@@ -217,6 +271,7 @@ class NodeContentBrowser(QWidget):
             "Sotugyo", "ContentBrowser"
         )
         self._layout_storage_key: str = "catalog_layout"
+        self._file_entry_storage_key: str = "custom_file_entries"
         self._root_folder: CatalogFolder = CatalogFolder("root", None)
         self._current_folder: CatalogFolder = self._root_folder
         self._search_keyword: str = ""
@@ -226,7 +281,9 @@ class NodeContentBrowser(QWidget):
         self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義")
         self._last_node_request_type: Optional[str] = None
         self._last_node_request_time: float = 0.0
+        self._custom_file_entries: Dict[str, NodeCatalogEntry] = {}
 
+        self._load_custom_file_entries()
         self._load_layout()
         self._setup_ui()
         self._connect_signals()
@@ -243,7 +300,7 @@ class NodeContentBrowser(QWidget):
     # カタログ操作
     # ------------------------------------------------------------------
     def set_catalog_entries(self, entries: Iterable[NodeCatalogEntry]) -> None:
-        catalog_entries = list(entries)
+        catalog_entries = self._merge_catalog_entries(entries)
         self._total_entry_count = len(catalog_entries)
         self._sync_catalog_entries(catalog_entries)
         self._refresh_view()
@@ -439,6 +496,7 @@ class NodeContentBrowser(QWidget):
         self._search_line.returnPressed.connect(self._on_search_submitted)
         self._available_view.doubleClicked.connect(self._on_item_double_clicked)
         self._available_view.folder_drop_requested.connect(self._on_folder_drop_requested)
+        self._available_view.external_files_dropped.connect(self._on_external_files_dropped)
         self._available_view.customContextMenuRequested.connect(self._open_context_menu)
         self._available_model.rowsMoved.connect(self._on_rows_moved)
         self._icon_size_slider.valueChanged.connect(self._on_icon_size_changed)
@@ -515,6 +573,29 @@ class NodeContentBrowser(QWidget):
         self._move_items_to_folder(items, target_folder)
         self._persist_layout()
         self._refresh_view()
+
+    def _on_external_files_dropped(
+        self,
+        paths: List[str],
+        target_folder: Optional[CatalogFolder],
+    ) -> None:
+        if not paths:
+            return
+        folder = target_folder or self._current_folder
+        if folder is None:
+            return
+        if self._is_folder_protected(folder):
+            QMessageBox.warning(
+                self,
+                "登録不可",
+                "既定フォルダ内にはファイルノードを登録できません。",
+            )
+            return
+        added = self._register_file_entries(paths, folder)
+        if added:
+            self._persist_custom_file_entries()
+            self._persist_layout()
+            self._refresh_view()
 
     def _on_rows_moved(
         self,
@@ -767,11 +848,25 @@ class NodeContentBrowser(QWidget):
         return f"{summary}を削除します。よろしいですか？"
 
     def _delete_items(self, items: List[CatalogItem]) -> None:
+        removed_file_types: List[str] = []
         for item in items:
             if item in self._current_folder.items:
                 self._current_folder.items.remove(item)
+                if item.entry and item.entry.node_type.startswith(FILE_NODE_TYPE_PREFIX):
+                    removed_file_types.append(item.entry.node_type)
+        if removed_file_types:
+            remaining = self._entry_items_by_type()
+            removed_any = False
+            for node_type in removed_file_types:
+                if node_type in remaining:
+                    continue
+                if node_type in self._custom_file_entries:
+                    self._custom_file_entries.pop(node_type, None)
+                    removed_any = True
         if items:
             self._persist_layout()
+            if removed_file_types and removed_any:
+                self._persist_custom_file_entries()
 
     def _is_protected_folder(self, item: CatalogItem) -> bool:
         if not item.is_folder():
@@ -866,6 +961,36 @@ class NodeContentBrowser(QWidget):
             if item.is_folder() and item.folder is not None:
                 item.folder.parent = target_folder
             target_folder.items.append(item)
+
+    def _register_file_entries(
+        self,
+        paths: List[str],
+        target_folder: CatalogFolder,
+    ) -> int:
+        existing_items = self._entry_items_by_type()
+        added = 0
+        for path in paths:
+            entry = self._create_file_entry(path)
+            if entry is None:
+                continue
+            self._custom_file_entries[entry.node_type] = entry
+            existing_item = existing_items.get(entry.node_type)
+            if existing_item is not None:
+                existing_item.entry = entry
+                existing_item.title = entry.title or existing_item.title
+                if existing_item not in target_folder.items:
+                    self._remove_item_from_parent(existing_item)
+                    target_folder.items.append(existing_item)
+                    added += 1
+                continue
+            new_item = CatalogItem(
+                kind="entry",
+                title=entry.title or entry.node_type,
+                entry=entry,
+            )
+            target_folder.items.append(new_item)
+            added += 1
+        return added
 
     def _copy_items_to_folder(
         self,
@@ -989,6 +1114,48 @@ class NodeContentBrowser(QWidget):
         self._ensure_default_folders()
         self._current_folder = self._root_folder
 
+    def _load_custom_file_entries(self) -> None:
+        raw = self._settings_store.value(self._file_entry_storage_key, "")
+        if not isinstance(raw, str) or not raw.strip():
+            return
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            payload = []
+        if not isinstance(payload, list):
+            return
+        for entry in payload:
+            if not isinstance(entry, dict):
+                continue
+            path_value = entry.get("path")
+            if not isinstance(path_value, str) or not path_value:
+                continue
+            file_entry = self._create_file_entry(path_value)
+            if file_entry is not None:
+                self._custom_file_entries[file_entry.node_type] = file_entry
+
+    def _persist_custom_file_entries(self) -> None:
+        payload = [
+            {"path": entry.icon_path}
+            for entry in self._custom_file_entries.values()
+            if entry.icon_path
+        ]
+        self._settings_store.set_value(
+            self._file_entry_storage_key, json.dumps(payload, ensure_ascii=False)
+        )
+        self._settings_store.sync()
+
+    def _merge_catalog_entries(
+        self,
+        entries: Iterable[NodeCatalogEntry],
+    ) -> List[NodeCatalogEntry]:
+        merged: Dict[str, NodeCatalogEntry] = {
+            entry.node_type: entry for entry in entries
+        }
+        for node_type, entry in self._custom_file_entries.items():
+            merged[node_type] = entry
+        return list(merged.values())
+
     def _deserialize_item(
         self,
         payload: object,
@@ -1059,6 +1226,25 @@ class NodeContentBrowser(QWidget):
         if item.is_entry():
             return {"kind": "entry", "node_type": item.title}
         return None
+
+    def _create_file_entry(self, path: str) -> Optional[NodeCatalogEntry]:
+        resolved = Path(path)
+        if not resolved.exists() or not resolved.is_file():
+            return None
+        file_path = str(resolved)
+        title = resolved.name
+        subtitle = str(resolved.parent)
+        keywords = tuple(
+            part for part in (resolved.suffix.lstrip("."), "file", "ファイル") if part
+        )
+        return NodeCatalogEntry(
+            node_type=file_node_type_for_path(file_path),
+            title=title,
+            subtitle=subtitle,
+            genre="ワークフロー",
+            keywords=keywords,
+            icon_path=file_path,
+        )
 
     def _build_default_folders(self) -> None:
         self._root_folder = CatalogFolder("root", None)

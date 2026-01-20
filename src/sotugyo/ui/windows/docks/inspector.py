@@ -30,6 +30,7 @@ class NodeInspectorPanel(QWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    file_reveal_requested = Signal()
 
     def __init__(
         self,
@@ -58,6 +59,11 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_button = QPushButton("ツールを起動", self)
         self._tool_launch_button.setEnabled(False)
         self._tool_launch_button.clicked.connect(self._emit_tool_launch_request)
+        self._file_reveal_label = QLabel("ファイル: -", self)
+        self._file_reveal_label.setWordWrap(True)
+        self._file_reveal_button = QPushButton("エクスプローラーで表示", self)
+        self._file_reveal_button.setEnabled(False)
+        self._file_reveal_button.clicked.connect(self._emit_file_reveal_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -112,6 +118,9 @@ class NodeInspectorPanel(QWidget):
         layout.addSpacing(8)
         layout.addWidget(self._tool_launch_label)
         layout.addWidget(self._tool_launch_button)
+        layout.addSpacing(6)
+        layout.addWidget(self._file_reveal_label)
+        layout.addWidget(self._file_reveal_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -223,6 +232,7 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
+        self.set_file_reveal_state(enabled=False, label="-", visible=False)
 
     def set_tool_launch_state(
         self,
@@ -239,6 +249,21 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_label.setVisible(visible)
         self._tool_launch_button.setVisible(visible)
 
+    def set_file_reveal_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ファイル表示ボタンの状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._file_reveal_label.setText(f"ファイル: {display}")
+        self._file_reveal_button.setEnabled(enabled)
+        self._file_reveal_label.setVisible(visible)
+        self._file_reveal_button.setVisible(visible)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -249,6 +274,11 @@ class NodeInspectorPanel(QWidget):
         if not self._tool_launch_button.isEnabled():
             return
         self.tool_launch_requested.emit()
+
+    def _emit_file_reveal_request(self) -> None:
+        if not self._file_reveal_button.isEnabled():
+            return
+        self.file_reveal_requested.emit()
 
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
@@ -276,6 +306,7 @@ class NodeInspectorDock(QDockWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    file_reveal_requested = Signal()
 
     def __init__(
         self,
@@ -302,6 +333,7 @@ class NodeInspectorDock(QDockWidget):
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
         panel.tool_launch_requested.connect(self.tool_launch_requested)
+        panel.file_reveal_requested.connect(self.file_reveal_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -364,6 +396,19 @@ class NodeInspectorDock(QDockWidget):
         visible: bool,
     ) -> None:
         self._panel.set_tool_launch_state(
+            enabled=enabled,
+            label=label,
+            visible=visible,
+        )
+
+    def set_file_reveal_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_file_reveal_state(
             enabled=enabled,
             label=label,
             visible=visible,
