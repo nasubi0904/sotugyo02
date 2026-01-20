@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -2133,7 +2134,7 @@ class NodeEditorWindow(QMainWindow):
                 destination = destination_dir / source.name
                 if source.is_dir():
                     if source != destination:
-                        shutil.copytree(source, destination, dirs_exist_ok=True)
+                        self._copy_directory_contents(source, destination)
                 else:
                     if source != destination:
                         shutil.copy2(source, destination)
@@ -2147,6 +2148,21 @@ class NodeEditorWindow(QMainWindow):
             relative_path = self._project_relative_path(destination)
             if relative_path:
                 self._set_node_custom_property(node, "file_path", relative_path)
+
+    def _copy_directory_contents(self, source: Path, destination: Path) -> None:
+        destination.mkdir(parents=True, exist_ok=True)
+        for root, dirs, files in os.walk(source):
+            root_path = Path(root)
+            relative_root = root_path.relative_to(source)
+            target_root = destination / relative_root
+            target_root.mkdir(parents=True, exist_ok=True)
+            for directory in dirs:
+                (target_root / directory).mkdir(parents=True, exist_ok=True)
+            for filename in files:
+                source_file = root_path / filename
+                target_file = target_root / filename
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source_file, target_file)
 
     def _project_file_node_dir(self, node_uuid: str) -> Path:
         base = self._current_project_root / "file_nodes"
