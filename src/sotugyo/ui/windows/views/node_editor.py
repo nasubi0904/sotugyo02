@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import shutil
+import subprocess
+import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,9 +47,15 @@ from NodeGraphQt import NodeGraph, Port
 
 LOGGER = logging.getLogger(__name__)
 
-from ...components.content_browser import NODE_TYPE_MIME_TYPE, NodeCatalogEntry
+from ...components.content_browser import (
+    FILE_NODE_TYPE_PREFIX,
+    NODE_TYPE_MIME_TYPE,
+    NodeCatalogEntry,
+    file_node_path_from_node_type,
+)
 from ...components.nodes import (
     DateNode,
+    FileNode,
     MemoNode,
     ReviewNode,
     TaskNode,
@@ -130,6 +138,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.register_node(MemoNode)
         self._graph.register_node(ToolEnvironmentNode)
         self._graph.register_node(DateNode)
+        self._graph.register_node(FileNode)
         self._nodes_moved_handler = getattr(self._graph, "_on_nodes_moved", None)
 
         self._graph_widget = self._graph.widget
@@ -141,6 +150,7 @@ class NodeEditorWindow(QMainWindow):
         self._review_count = 0
         self._memo_count = 0
         self._date_count = 0
+        self._file_count = 0
         self._current_node = None
         self._known_nodes: List = []
         self._node_metadata: Dict[object, Dict[str, str]] = {}
@@ -168,6 +178,7 @@ class NodeEditorWindow(QMainWindow):
             "sotugyo.demo.ReviewNode": self._create_review_node,
             MemoNode.node_type_identifier(): self._create_memo_node,
             DateNode.node_type_identifier(): self._create_date_node,
+            FileNode.node_type_identifier(): self._create_file_node,
         }
         self._inspector_dock: Optional[NodeInspectorDock] = None
         self._content_dock: Optional[NodeContentBrowserDock] = None
@@ -247,6 +258,8 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
         inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
+        inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
+        inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -579,6 +592,13 @@ class NodeEditorWindow(QMainWindow):
                 genre="メモ",
                 keywords=("note", "メモ", "記録"),
             ),
+            NodeCatalogRecord(
+                node_type=FileNode.node_type_identifier(),
+                title=FileNode.NODE_NAME,
+                subtitle="外部ファイルを参照するワークフローノード",
+                genre="ワークフロー",
+                keywords=("file", "ファイル", "参照"),
+            ),
         ]
         return records
 
@@ -593,6 +613,9 @@ class NodeEditorWindow(QMainWindow):
 
         add_memo_action = menu.addAction("メモノードを追加")
         add_memo_action.triggered.connect(self._create_memo_node)
+
+        add_file_action = menu.addAction("ファイルノードを追加")
+        add_file_action.triggered.connect(self._create_file_node)
 
         add_date_action = menu.addAction("日付ノードを追加")
         add_date_action.triggered.connect(self._create_date_node)
@@ -652,6 +675,10 @@ class NodeEditorWindow(QMainWindow):
         *,
         position: QtCore.QPointF | None,
     ) -> None:
+        if node_type.startswith(FILE_NODE_TYPE_PREFIX):
+            path = file_node_path_from_node_type(node_type).strip()
+            self._create_file_node(position=position, file_path=path or None)
+            return
         if node_type.startswith("tool-environment:"):
             environment_id = node_type.split(":", 1)[1]
             self._create_tool_environment_node(environment_id, position=position)
@@ -749,6 +776,26 @@ class NodeEditorWindow(QMainWindow):
             f"メモ {self._memo_count}",
             position=position,
         )
+
+    def _create_file_node(
+        self,
+        *,
+        position: QtCore.QPointF | None = None,
+        file_path: str | None = None,
+    ) -> None:
+        if file_path:
+            display_name = Path(file_path).name or "ファイル"
+        else:
+            self._file_count += 1
+            display_name = f"ファイル {self._file_count}"
+        node = self._create_node(
+            FileNode.node_type_identifier(),
+            display_name,
+            position=position,
+        )
+        if file_path:
+            self._set_node_custom_property(node, "file_path", file_path)
+            self._update_selected_node_info()
 
     def _create_date_node(self, *, position: QtCore.QPointF | None = None) -> None:
         self._date_count += 1
@@ -868,12 +915,54 @@ class NodeEditorWindow(QMainWindow):
         if not nodes:
             self._show_info_dialog("削除するノードを選択してください。")
             return
+        if not self._confirm_delete_file_nodes(nodes):
+            return
         self._graph.delete_nodes(nodes)
         self._known_nodes = [node for node in self._known_nodes if node not in nodes]
         self._remove_node_metadata(nodes)
         self._on_selection_changed()
         self._set_modified(True)
         self._refresh_node_catalog()
+
+    def _confirm_delete_file_nodes(self, nodes: Iterable) -> bool:
+        if self._current_project_root is None:
+            return True
+        targets = []
+        for node in nodes:
+            if not isinstance(node, FileNode):
+                continue
+            file_path = self._file_node_path(node)
+            if not self._is_project_relative_file_path(file_path):
+                continue
+            file_on_disk = (self._current_project_root / file_path).resolve()
+            if file_on_disk.exists():
+                targets.append((node, file_on_disk))
+        if not targets:
+            return True
+        message = (
+            "次のファイルノードに紐づくプロジェクト内ファイルを削除します。\n"
+            "よろしいですか？\n\n"
+            + "\n".join(
+                f"・{self._safe_node_name(node)}: {path}"
+                for node, path in targets
+            )
+        )
+        result = QMessageBox.question(
+            self,
+            "ファイル削除の確認",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result != QMessageBox.StandardButton.Yes:
+            return False
+        for _, path in targets:
+            try:
+                if path.is_file():
+                    path.unlink()
+            except OSError as exc:
+                self._show_warning_dialog(f"ファイル削除に失敗しました: {exc}")
+        return True
 
     # ------------------------------------------------------------------
     # 接続処理
@@ -1161,6 +1250,8 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_node_details()
                 inspector.disable_rename()
                 inspector.clear_memo()
+                inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
+                inspector.set_file_path_state(enabled=False, path="", visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1194,6 +1285,8 @@ class NodeEditorWindow(QMainWindow):
             inspector.show_properties(properties)
             inspector.enable_rename(name)
             self._update_tool_launch_controls(node)
+            self._update_file_reveal_controls(node)
+            self._update_file_path_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1362,6 +1455,35 @@ class NodeEditorWindow(QMainWindow):
             f"PID: {result.pid}\n"
             f"Log: {result.log_path}"
         )
+
+    def _handle_file_reveal_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("対象のファイルノードを選択してください。")
+            return
+        file_path = self._file_node_path(self._current_node)
+        if not file_path:
+            self._show_warning_dialog("ファイルパスが設定されていません。")
+            return
+        target = Path(file_path)
+        if not target.exists():
+            self._show_warning_dialog("ファイルが見つかりません。")
+            return
+        self._reveal_file_in_explorer(target)
+
+    def _handle_file_path_changed(self, path: str) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return
+        normalized = path.strip()
+        if not normalized:
+            self._show_warning_dialog("ファイルパスを入力してください。")
+            return
+        self._set_node_custom_property(self._current_node, "file_path", normalized)
+        new_name = Path(normalized).name
+        if new_name and hasattr(self._current_node, "set_name"):
+            self._current_node.set_name(new_name)
+        self._set_modified(True)
+        self._update_selected_node_info()
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -1774,10 +1896,63 @@ class NodeEditorWindow(QMainWindow):
             return
         inspector.set_tool_launch_state(enabled=True, label=package_request, visible=True)
 
+    def _update_file_reveal_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
+            return
+        file_path = self._file_node_path(node)
+        if file_path:
+            inspector.set_file_reveal_state(
+                enabled=True,
+                label=file_path,
+                visible=True,
+            )
+        else:
+            inspector.set_file_reveal_state(
+                enabled=False,
+                label="未設定",
+                visible=True,
+            )
+
+    def _update_file_path_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_path_state(enabled=False, path="", visible=False)
+            return
+        file_path = self._file_node_path(node)
+        inspector.set_file_path_state(
+            enabled=True,
+            path=file_path,
+            visible=True,
+        )
+
     def _is_memo_node(self, node) -> bool:
         if node is None:
             return False
         return self._node_type_identifier(node) == MemoNode.node_type_identifier()
+
+    def _file_node_path(self, node) -> str:
+        if not isinstance(node, FileNode):
+            return ""
+        file_path = self._node_custom_property_value(node, "file_path")
+        if isinstance(file_path, str):
+            return file_path
+        return ""
+
+    def _reveal_file_in_explorer(self, path: Path) -> None:
+        if sys.platform.startswith("win"):
+            subprocess.run(
+                ["explorer", "/select,", str(path)],
+                check=False,
+            )
+            return
+        url = QtCore.QUrl.fromLocalFile(str(path.parent))
+        QtGui.QDesktopServices.openUrl(url)
 
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):
@@ -1863,6 +2038,7 @@ class NodeEditorWindow(QMainWindow):
         if self._current_project_root is not None:
             self._project_service.ensure_structure(self._current_project_root)
             self._sync_rez_packages_to_project()
+            self._sync_file_nodes_to_project()
         try:
             self._write_project_to_path(graph_path)
             self._set_modified(False)
@@ -1927,6 +2103,74 @@ class NodeEditorWindow(QMainWindow):
         if self._current_project_root is None:
             return None
         return self._current_project_root / "config" / "node_graph.json"
+
+    def _sync_file_nodes_to_project(self) -> None:
+        if self._current_project_root is None:
+            return
+        file_nodes = [
+            node for node in self._collect_all_nodes() if isinstance(node, FileNode)
+        ]
+        if not file_nodes:
+            return
+        for node in file_nodes:
+            file_path = self._file_node_path(node)
+            if not file_path:
+                continue
+            source = Path(file_path)
+            if not source.is_absolute():
+                continue
+            if not source.exists():
+                self._show_warning_dialog(
+                    "ファイルノードの参照先が見つかりません。\n"
+                    f"ノード: {self._safe_node_name(node)}\n"
+                    f"パス: {file_path}"
+                )
+                continue
+            node_uuid, _, _ = self._ensure_node_metadata(node)
+            destination_dir = self._project_file_node_dir(node_uuid)
+            destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = destination_dir / source.name
+            try:
+                if source != destination:
+                    shutil.copy2(source, destination)
+            except OSError as exc:
+                self._show_warning_dialog(
+                    "ファイルノードのコピーに失敗しました。\n"
+                    f"ノード: {self._safe_node_name(node)}\n"
+                    f"理由: {exc}"
+                )
+                continue
+            relative_path = self._project_relative_path(destination)
+            if relative_path:
+                self._set_node_custom_property(node, "file_path", relative_path)
+
+    def _project_file_node_dir(self, node_uuid: str) -> Path:
+        base = self._current_project_root / "file_nodes"
+        safe_uuid = node_uuid.replace("/", "_")
+        return base / safe_uuid
+
+    def _project_relative_path(self, path: Path) -> str:
+        if self._current_project_root is None:
+            return ""
+        try:
+            return str(path.relative_to(self._current_project_root))
+        except ValueError:
+            return ""
+
+    def _is_project_relative_file_path(self, file_path: str) -> bool:
+        if not file_path:
+            return False
+        path = Path(file_path)
+        if path.is_absolute():
+            return False
+        if self._current_project_root is None:
+            return False
+        target = (self._current_project_root / path).resolve()
+        try:
+            target.relative_to(self._current_project_root.resolve())
+        except ValueError:
+            return False
+        return True
 
     def _reset_graph(self) -> None:
         existing_nodes = self._collect_all_nodes()
@@ -2433,6 +2677,9 @@ class NodeEditorWindow(QMainWindow):
         )
         self._memo_count = sum(
             1 for node in self._known_nodes if self._node_type_identifier(node) == MemoNode.node_type_identifier()
+        )
+        self._file_count = sum(
+            1 for node in self._known_nodes if self._node_type_identifier(node) == FileNode.node_type_identifier()
         )
         clear_selection = getattr(self._graph, "clear_selection", None)
         if callable(clear_selection):
