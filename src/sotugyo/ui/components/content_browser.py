@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
@@ -43,6 +44,8 @@ QSpacerItem = QtWidgets.QSpacerItem
 QStyle = QtWidgets.QStyle
 QVBoxLayout = QtWidgets.QVBoxLayout
 QWidget = QtWidgets.QWidget
+
+NODE_TYPE_MIME_TYPE = "application/x-sotugyo-node-type"
 
 
 @dataclass(frozen=True)
@@ -105,6 +108,20 @@ class CatalogIconView(QListView):
 
     folder_drop_requested = Signal(object, list)
 
+    def startDrag(self, supported_actions: QtCore.Qt.DropActions) -> None:
+        selection = self.selectedIndexes()
+        if not selection:
+            return
+        model = self.model()
+        mime_data = model.mimeData(selection) if model is not None else QtCore.QMimeData()
+        node_type = self._extract_node_type_from_selection(selection)
+        if node_type:
+            mime_data.setData(NODE_TYPE_MIME_TYPE, node_type.encode("utf-8"))
+            mime_data.setText(node_type)
+        drag = QtGui.QDrag(self)
+        drag.setMimeData(mime_data)
+        drag.exec_(Qt.CopyAction | Qt.MoveAction, Qt.MoveAction)
+
     def dropEvent(self, event: QtGui.QDropEvent) -> None:  # noqa: D401
         """ドロップ先がフォルダの場合は移動を要求する。"""
 
@@ -141,6 +158,21 @@ class CatalogIconView(QListView):
             if isinstance(catalog_item, CatalogItem):
                 items.append(catalog_item)
         return items
+
+    def _extract_node_type_from_selection(
+        self, selection: List[QtCore.QModelIndex]
+    ) -> str:
+        if not selection:
+            return ""
+        model = self.model()
+        if model is None:
+            return ""
+        for index in selection:
+            item = model.itemFromIndex(index)
+            catalog_item = item.data(Qt.UserRole) if item else None
+            if isinstance(catalog_item, CatalogItem) and catalog_item.entry:
+                return catalog_item.entry.node_type
+        return ""
 
 
 class NodeContentBrowser(QWidget):
@@ -192,6 +224,8 @@ class NodeContentBrowser(QWidget):
         self._total_entry_count: int = 0
         self._visible_entry_count: int = 0
         self._protected_folder_names: Tuple[str, ...] = ("ワークフロー", "環境定義")
+        self._last_node_request_type: Optional[str] = None
+        self._last_node_request_time: float = 0.0
 
         self._load_layout()
         self._setup_ui()
@@ -433,7 +467,16 @@ class NodeContentBrowser(QWidget):
             self._open_folder(catalog_item.folder)
             return
         if catalog_item.entry is not None:
-            self.node_type_requested.emit(catalog_item.entry.node_type)
+            node_type = catalog_item.entry.node_type
+            now = time.monotonic()
+            if (
+                self._last_node_request_type == node_type
+                and now - self._last_node_request_time < 0.35
+            ):
+                return
+            self._last_node_request_type = node_type
+            self._last_node_request_time = now
+            self.node_type_requested.emit(node_type)
 
     def _open_context_menu(self, pos: QtCore.QPoint) -> None:
         selected_items = self._selected_catalog_items()
