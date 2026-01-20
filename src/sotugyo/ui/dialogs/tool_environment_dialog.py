@@ -205,7 +205,7 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         layout.addLayout(form)
 
-        plugin_label = QLabel("Required Files (Plugin,module,etc...)", self)
+        plugin_label = QLabel("要求ファイルの設定 (Plugin,module,etc...)", self)
         layout.addWidget(plugin_label)
 
         plugin_layout = QHBoxLayout()
