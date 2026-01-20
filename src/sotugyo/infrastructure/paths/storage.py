@@ -5,7 +5,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-__all__ = ["get_app_config_dir", "get_machine_config_dir", "get_rez_package_dir"]
+__all__ = [
+    "get_app_config_dir",
+    "get_machine_config_dir",
+    "get_rez_package_dir",
+    "get_tool_environment_dir",
+]
 
 APP_DIR_NAME = "SotugyoTool"
 
@@ -58,3 +63,11 @@ def get_rez_package_dir() -> Path:
     if xdg_data:
         return Path(xdg_data) / "kdmrez"
     return Path.home() / ".local" / "share" / "kdmrez"
+
+
+def get_tool_environment_dir() -> Path:
+    """ツール環境定義の保存先ディレクトリを返す。"""
+
+    rez_dir = get_rez_package_dir()
+    env_dir_name = "KDMenvs" if rez_dir.name == "KDMrez" else "kdmenvs"
+    return rez_dir.parent / env_dir_name
