@@ -437,7 +437,28 @@ class ToolEnvironmentEditorDialog(QDialog):
             absolute = self._resolve_plugin_absolute_path(entry)
             if absolute is None:
                 continue
-            relative = os.path.relpath(str(absolute), str(base_dir)).replace("\\", "/")
+            known_payload = self._try_build_known_path(absolute)
+            if known_payload:
+                entry.clear()
+                entry.update(
+                    {
+                        "name": absolute.stem,
+                        **known_payload,
+                    }
+                )
+                continue
+            try:
+                relative = os.path.relpath(str(absolute), str(base_dir)).replace("\\", "/")
+            except ValueError:
+                entry.clear()
+                entry.update(
+                    {
+                        "name": absolute.stem,
+                        "path_type": "absolute",
+                        "path": str(absolute),
+                    }
+                )
+                continue
             entry.clear()
             entry.update(
                 {
