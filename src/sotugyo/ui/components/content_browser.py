@@ -591,18 +591,37 @@ class NodeContentBrowser(QWidget):
                 "既定フォルダ内にはファイルノードを登録できません。",
             )
             return
-        if len(paths) > 1:
-            drop_folder = self._create_drop_folder(folder)
-            added = self._register_file_entries(paths, drop_folder)
-            if not added:
-                if drop_folder.parent is not None:
+        file_paths: List[str] = []
+        dir_paths: List[Path] = []
+        for path in paths:
+            resolved = Path(path)
+            if resolved.is_dir():
+                dir_paths.append(resolved)
+            else:
+                file_paths.append(path)
+        added = 0
+        for directory in dir_paths:
+            dir_folder = self._create_drop_folder(folder, name=directory.name)
+            collected = self._collect_directory_files(directory)
+            added += self._register_file_entries(collected, dir_folder)
+            if not dir_folder.items and dir_folder.parent is not None:
+                dir_folder.parent.items = [
+                    item
+                    for item in dir_folder.parent.items
+                    if item.folder is not dir_folder
+                ]
+        if file_paths:
+            if len(file_paths) > 1:
+                drop_folder = self._create_drop_folder(folder)
+                added += self._register_file_entries(file_paths, drop_folder)
+                if not drop_folder.items and drop_folder.parent is not None:
                     drop_folder.parent.items = [
                         item
                         for item in drop_folder.parent.items
                         if item.folder is not drop_folder
                     ]
-        else:
-            added = self._register_file_entries(paths, folder)
+            else:
+                added += self._register_file_entries(file_paths, folder)
         if added:
             self._persist_custom_file_entries()
             self._persist_layout()
@@ -1014,12 +1033,26 @@ class NodeContentBrowser(QWidget):
             and entry.node_type.startswith(FILE_NODE_TYPE_PREFIX)
         ]
 
-    def _create_drop_folder(self, parent: CatalogFolder) -> CatalogFolder:
-        base_name = "外部ファイル"
+    def _create_drop_folder(
+        self,
+        parent: CatalogFolder,
+        *,
+        name: str | None = None,
+    ) -> CatalogFolder:
+        base_name = name or "外部ファイル"
         name = self._unique_folder_name(base_name, parent)
         new_folder = CatalogFolder(name=name, parent=parent)
         parent.items.append(CatalogItem(kind="folder", title=name, folder=new_folder))
         return new_folder
+
+    def _collect_directory_files(self, directory: Path) -> List[str]:
+        if not directory.is_dir():
+            return []
+        return [
+            str(path)
+            for path in directory.rglob("*")
+            if path.is_file()
+        ]
 
     def _copy_items_to_folder(
         self,
