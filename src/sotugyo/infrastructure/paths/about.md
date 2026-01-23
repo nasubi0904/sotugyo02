@@ -3,6 +3,7 @@
 このディレクトリはアプリケーションが利用するファイルシステム上の保存先パスを解決するユーティリティをまとめています。
 
 - `storage.py` で `get_app_config_dir()` と `get_machine_config_dir()` を定義し、OS ごとに適切な設定保存ディレクトリを返します。
+- `project_paths.py` でプロジェクト配下の相対パスを正規化・解決するユーティリティを提供します。
 
 ## 編集時の指針
 - OS 判定ロジックを追加・変更する際は既存の環境変数チェック順序を考慮し、後方互換性を保つ。
@@ -30,7 +31,12 @@
 4. `project_root / relative_path` で結合した後、`resolve()` で正規化し、最終的に `project_root` 配下であることを検証する。
 5. 検証に失敗した場合は安全側に倒し、参照を無効化する（警告ログを推奨）。
 
-### 3) 利用指針（今後の新機能実装向け）
+### 3) 既存システムとの統合方針
+- 新規実装は `project_paths.py` の `normalize_project_relative_path()` / `resolve_project_relative_path()` / `encode_project_relative_path()` を利用し、**UI 層・ドメイン層で解釈ルールを二重実装しない**。
+- 既存の相対パス文字列（`assets/...`）は `normalize_project_relative_path()` で正規化しつつ読み取り可能とし、保存時に `project://` 形式へ統一する。
+- 既存の絶対パスは `"base": "absolute"` を明示するか、そのまま absolute として保持し、`project://` と混在させない。
+
+### 4) 利用指針（今後の新機能実装向け）
 - **環境定義・テンプレート・ノード設定** のパスは、必ず上記ルールを満たす形式で保存する。
 - UI でパスを編集する場合も、保存時に `project://` 形式へ統一して書き戻す。
-- 絶対パスが必要な場合は `"base": "absolute"` を明示し、`project://` と混在させない。
+- `project_paths.py` のユーティリティを経由し、`Path` 変換・解決時に `..` やドライブ文字列が混入しないようガードする。

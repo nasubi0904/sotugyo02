@@ -91,6 +91,13 @@ from ..backgrounds.striped import (
 from ..docks.content_browser import NodeContentBrowserDock
 from ..docks.inspector import NodeInspectorDock
 from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
+from sotugyo.infrastructure.paths.project_paths import (
+    PROJECT_PATH_SCHEME,
+    encode_project_relative_path,
+    is_project_relative_path,
+    normalize_project_relative_path,
+    resolve_project_relative_path,
+)
 from sotugyo.infrastructure.paths.storage import get_rez_package_dir
 
 
@@ -785,7 +792,7 @@ class NodeEditorWindow(QMainWindow):
         file_path: str | None = None,
     ) -> None:
         if file_path:
-            display_name = Path(file_path).name or "ファイル"
+            display_name = self._file_display_name(file_path)
         else:
             self._file_count += 1
             display_name = f"ファイル {self._file_count}"
@@ -935,7 +942,9 @@ class NodeEditorWindow(QMainWindow):
             file_path = self._file_node_path(node)
             if not self._is_project_relative_file_path(file_path):
                 continue
-            file_on_disk = (self._current_project_root / file_path).resolve()
+            file_on_disk = self._resolve_project_file_path(file_path)
+            if file_on_disk is None:
+                continue
             if file_on_disk.exists():
                 targets.append((node, file_on_disk))
         if not targets:
@@ -1465,7 +1474,7 @@ class NodeEditorWindow(QMainWindow):
         if not file_path:
             self._show_warning_dialog("ファイルパスが設定されていません。")
             return
-        target = Path(file_path)
+        target = self._resolve_project_file_path(file_path) or Path(file_path)
         if not target.exists():
             self._show_warning_dialog("ファイルが見つかりません。")
             return
@@ -1479,8 +1488,29 @@ class NodeEditorWindow(QMainWindow):
         if not normalized:
             self._show_warning_dialog("ファイルパスを入力してください。")
             return
+        if self._current_project_root is not None:
+            if normalized.startswith(PROJECT_PATH_SCHEME):
+                relative = normalize_project_relative_path(normalized)
+                if not relative:
+                    self._show_warning_dialog("プロジェクト相対パスの形式が不正です。")
+                    return
+                normalized = f"{PROJECT_PATH_SCHEME}{relative}"
+            else:
+                candidate = Path(normalized)
+                if candidate.is_absolute():
+                    project_path = encode_project_relative_path(
+                        self._current_project_root, candidate
+                    )
+                    if project_path:
+                        normalized = project_path
+                else:
+                    relative = normalize_project_relative_path(normalized)
+                    if not relative:
+                        self._show_warning_dialog("プロジェクト相対パスの形式が不正です。")
+                        return
+                    normalized = f"{PROJECT_PATH_SCHEME}{relative}"
         self._set_node_custom_property(self._current_node, "file_path", normalized)
-        new_name = Path(normalized).name
+        new_name = self._file_display_name(normalized)
         if new_name and hasattr(self._current_node, "set_name"):
             self._current_node.set_name(new_name)
         self._set_modified(True)
@@ -2117,6 +2147,8 @@ class NodeEditorWindow(QMainWindow):
             file_path = self._file_node_path(node)
             if not file_path:
                 continue
+            if self._is_project_relative_file_path(file_path):
+                continue
             source = Path(file_path)
             if not source.is_absolute():
                 continue
@@ -2202,25 +2234,23 @@ class NodeEditorWindow(QMainWindow):
     def _project_relative_path(self, path: Path) -> str:
         if self._current_project_root is None:
             return ""
-        try:
-            return str(path.relative_to(self._current_project_root))
-        except ValueError:
-            return ""
+        return encode_project_relative_path(self._current_project_root, path)
 
     def _is_project_relative_file_path(self, file_path: str) -> bool:
-        if not file_path:
-            return False
-        path = Path(file_path)
-        if path.is_absolute():
-            return False
         if self._current_project_root is None:
             return False
-        target = (self._current_project_root / path).resolve()
-        try:
-            target.relative_to(self._current_project_root.resolve())
-        except ValueError:
-            return False
-        return True
+        return is_project_relative_path(self._current_project_root, file_path)
+
+    def _resolve_project_file_path(self, file_path: str) -> Optional[Path]:
+        if self._current_project_root is None:
+            return None
+        return resolve_project_relative_path(self._current_project_root, file_path)
+
+    def _file_display_name(self, file_path: str) -> str:
+        normalized = normalize_project_relative_path(file_path)
+        if normalized:
+            return Path(normalized).name or "ファイル"
+        return Path(file_path).name or "ファイル"
 
     def _reset_graph(self) -> None:
         existing_nodes = self._collect_all_nodes()
