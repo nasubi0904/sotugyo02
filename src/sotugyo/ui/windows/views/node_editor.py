@@ -94,9 +94,13 @@ from ..toolbars.timeline_alignment import TimelineAlignmentToolBar
 from sotugyo.infrastructure.paths.project_paths import (
     PROJECT_PATH_SCHEME,
     encode_project_relative_path,
+    encode_structured_absolute_path,
+    encode_structured_project_path,
     is_project_relative_path,
     normalize_project_relative_path,
+    parse_project_path,
     resolve_project_relative_path,
+    safe_basename,
 )
 from sotugyo.infrastructure.paths.storage import get_rez_package_dir
 
@@ -939,7 +943,7 @@ class NodeEditorWindow(QMainWindow):
         for node in nodes:
             if not isinstance(node, FileNode):
                 continue
-            file_path = self._file_node_path(node)
+            file_path = self._file_node_value(node)
             if not self._is_project_relative_file_path(file_path):
                 continue
             file_on_disk = self._resolve_project_file_path(file_path)
@@ -1470,11 +1474,14 @@ class NodeEditorWindow(QMainWindow):
         if self._current_node is None or not isinstance(self._current_node, FileNode):
             self._show_info_dialog("対象のファイルノードを選択してください。")
             return
-        file_path = self._file_node_path(self._current_node)
+        file_path = self._file_node_value(self._current_node)
         if not file_path:
             self._show_warning_dialog("ファイルパスが設定されていません。")
             return
-        target = self._resolve_project_file_path(file_path) or Path(file_path)
+        target = self._resolve_project_file_path(file_path)
+        if target is None:
+            self._show_warning_dialog("ファイルパスの解決に失敗しました。")
+            return
         if not target.exists():
             self._show_warning_dialog("ファイルが見つかりません。")
             return
@@ -1489,20 +1496,19 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("ファイルパスを入力してください。")
             return
         if self._current_project_root is not None:
-            if normalized.startswith(PROJECT_PATH_SCHEME):
-                relative = normalize_project_relative_path(normalized)
-                if not relative:
-                    self._show_warning_dialog("プロジェクト相対パスの形式が不正です。")
-                    return
-                normalized = f"{PROJECT_PATH_SCHEME}{relative}"
+            parsed = parse_project_path(normalized)
+            if parsed is not None and parsed.is_project():
+                normalized = f"{PROJECT_PATH_SCHEME}{parsed.path}"
             else:
                 candidate = Path(normalized)
                 if candidate.is_absolute():
-                    project_path = encode_project_relative_path(
+                    structured_project = encode_structured_project_path(
                         self._current_project_root, candidate
                     )
-                    if project_path:
-                        normalized = project_path
+                    if structured_project:
+                        normalized = structured_project
+                    else:
+                        normalized = encode_structured_absolute_path(candidate)
                 else:
                     relative = normalize_project_relative_path(normalized)
                     if not relative:
@@ -1934,11 +1940,11 @@ class NodeEditorWindow(QMainWindow):
         if not isinstance(node, FileNode):
             inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
             return
-        file_path = self._file_node_path(node)
-        if file_path:
+        file_value = self._file_node_value(node)
+        if file_value:
             inspector.set_file_reveal_state(
                 enabled=True,
-                label=file_path,
+                label=self._file_label_text(file_value),
                 visible=True,
             )
         else:
@@ -1955,7 +1961,7 @@ class NodeEditorWindow(QMainWindow):
         if not isinstance(node, FileNode):
             inspector.set_file_path_state(enabled=False, path="", visible=False)
             return
-        file_path = self._file_node_path(node)
+        file_path = self._file_label_text(self._file_node_value(node))
         inspector.set_file_path_state(
             enabled=True,
             path=file_path,
@@ -1967,12 +1973,16 @@ class NodeEditorWindow(QMainWindow):
             return False
         return self._node_type_identifier(node) == MemoNode.node_type_identifier()
 
-    def _file_node_path(self, node) -> str:
-        if not isinstance(node, FileNode):
+    def _file_label_text(self, value: object) -> str:
+        if value is None:
             return ""
-        file_path = self._node_custom_property_value(node, "file_path")
-        if isinstance(file_path, str):
-            return file_path
+        if isinstance(value, dict):
+            spec = parse_project_path(value)
+            if spec is None:
+                return ""
+            return f"{spec.base}:{spec.path}"
+        if isinstance(value, str):
+            return value
         return ""
 
     def _reveal_file_in_explorer(self, path: Path) -> None:
@@ -2144,19 +2154,30 @@ class NodeEditorWindow(QMainWindow):
         if not file_nodes:
             return
         for node in file_nodes:
-            file_path = self._file_node_path(node)
-            if not file_path:
+            raw_value = self._file_node_value(node)
+            if raw_value is None:
                 continue
-            if self._is_project_relative_file_path(file_path):
+            if self._is_project_relative_file_path(raw_value):
                 continue
-            source = Path(file_path)
+            if isinstance(raw_value, dict):
+                spec = parse_project_path(raw_value)
+                if spec is None:
+                    continue
+                if spec.is_absolute():
+                    source = Path(spec.path)
+                else:
+                    continue
+            elif isinstance(raw_value, str):
+                source = Path(raw_value)
+            else:
+                continue
             if not source.is_absolute():
                 continue
             if not source.exists():
                 self._show_warning_dialog(
                     "ファイルノードの参照先が見つかりません。\n"
                     f"ノード: {self._safe_node_name(node)}\n"
-                    f"パス: {file_path}"
+                    f"パス: {raw_value}"
                 )
                 continue
             node_uuid, _, _ = self._ensure_node_metadata(node)
@@ -2231,26 +2252,62 @@ class NodeEditorWindow(QMainWindow):
         safe_uuid = node_uuid.replace("/", "_")
         return base / safe_uuid
 
-    def _project_relative_path(self, path: Path) -> str:
+    def _project_relative_path(self, path: Path) -> str | Dict[str, str]:
         if self._current_project_root is None:
             return ""
-        return encode_project_relative_path(self._current_project_root, path)
+        structured = encode_structured_project_path(self._current_project_root, path)
+        if structured:
+            return structured
+        return encode_structured_absolute_path(path)
 
-    def _is_project_relative_file_path(self, file_path: str) -> bool:
+    def _is_project_relative_file_path(self, file_path: object) -> bool:
         if self._current_project_root is None:
             return False
-        return is_project_relative_path(self._current_project_root, file_path)
+        spec = parse_project_path(file_path) if isinstance(file_path, dict) else None
+        if spec is not None:
+            return spec.is_project()
+        if isinstance(file_path, str):
+            return is_project_relative_path(self._current_project_root, file_path)
+        return False
 
-    def _resolve_project_file_path(self, file_path: str) -> Optional[Path]:
+    def _resolve_project_file_path(self, file_path: object) -> Optional[Path]:
         if self._current_project_root is None:
             return None
-        return resolve_project_relative_path(self._current_project_root, file_path)
+        if isinstance(file_path, dict):
+            spec = parse_project_path(file_path)
+            if spec is None:
+                return None
+            if spec.is_project():
+                return resolve_project_relative_path(self._current_project_root, spec.path)
+            if spec.is_absolute():
+                return Path(spec.path)
+            return None
+        if isinstance(file_path, str):
+            if file_path.startswith(PROJECT_PATH_SCHEME):
+                return resolve_project_relative_path(self._current_project_root, file_path)
+            candidate = Path(file_path)
+            if candidate.is_absolute():
+                return candidate
+            return resolve_project_relative_path(self._current_project_root, file_path)
+        return None
 
-    def _file_display_name(self, file_path: str) -> str:
-        normalized = normalize_project_relative_path(file_path)
-        if normalized:
-            return Path(normalized).name or "ファイル"
-        return Path(file_path).name or "ファイル"
+    def _file_display_name(self, file_path: object) -> str:
+        if isinstance(file_path, dict):
+            spec = parse_project_path(file_path)
+            if spec is None:
+                return "ファイル"
+            return safe_basename(spec.path) or "ファイル"
+        if isinstance(file_path, str):
+            normalized = normalize_project_relative_path(file_path)
+            if normalized:
+                return safe_basename(normalized) or "ファイル"
+            return safe_basename(file_path) or "ファイル"
+        return "ファイル"
+
+    def _file_node_value(self, node) -> object | None:
+        if node is None:
+            return None
+        return self._node_custom_property_value(node, "file_path")
 
     def _reset_graph(self) -> None:
         existing_nodes = self._collect_all_nodes()

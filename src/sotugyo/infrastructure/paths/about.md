@@ -22,6 +22,7 @@
   - 例: `project://assets/source/character/hero.fbx`
 - **構造化フォーマット（JSON等で扱う場合）**:
   - 例: `{ "base": "project", "path": "assets/source/character/hero.fbx" }`
+  - 絶対パスの例: `{ "base": "absolute", "path": "C:/projects/tool.exe" }`
 - **互換対応**: 既存の相対パス文字列（`assets/...`）は旧形式として読み取り可能にする。
 
 ### 2) 復元・解決時の安全な手順
