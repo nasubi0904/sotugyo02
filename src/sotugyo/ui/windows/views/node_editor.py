@@ -974,10 +974,14 @@ class NodeEditorWindow(QMainWindow):
         for _, path in targets:
             try:
                 normalized_path = self._normalize_windows_path(path)
-                if path.is_dir():
+                if not os.path.exists(normalized_path):
+                    continue
+                if os.path.isdir(normalized_path):
                     shutil.rmtree(normalized_path)
-                elif path.is_file():
+                else:
                     os.unlink(normalized_path)
+            except FileNotFoundError:
+                continue
             except OSError as exc:
                 self._show_warning_dialog(f"ファイル削除に失敗しました: {exc}")
         return True
@@ -2206,7 +2210,10 @@ class NodeEditorWindow(QMainWindow):
             if entry.name in active_ids:
                 continue
             try:
-                shutil.rmtree(entry)
+                normalized_entry = self._normalize_windows_path(entry)
+                shutil.rmtree(normalized_entry)
+            except FileNotFoundError:
+                continue
             except OSError as exc:
                 self._show_warning_dialog(
                     "不要なファイルノード用フォルダの削除に失敗しました。\n"
