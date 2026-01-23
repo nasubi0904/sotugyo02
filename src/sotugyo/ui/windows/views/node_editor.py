@@ -2106,6 +2106,7 @@ class NodeEditorWindow(QMainWindow):
             self._sync_rez_packages_to_project()
             if not self._sync_file_nodes_to_project():
                 return
+            self._cleanup_orphan_file_node_dirs()
         try:
             self._write_project_to_path(graph_path)
             self._set_modified(False)
@@ -2177,12 +2178,38 @@ class NodeEditorWindow(QMainWindow):
         file_nodes = [
             node for node in self._collect_all_nodes() if isinstance(node, FileNode)
         ]
-        if not file_nodes:
-            return True
         for node in file_nodes:
             if not self._sync_file_node_to_project(node):
                 return False
         return True
+
+    def _cleanup_orphan_file_node_dirs(self) -> None:
+        if self._current_project_root is None:
+            return
+        base_dir = self._current_project_root / "file_nodes"
+        if not base_dir.exists():
+            return
+        active_ids: Set[str] = set()
+        for node in self._collect_all_nodes():
+            if not isinstance(node, FileNode):
+                continue
+            node_uuid, _, metadata_changed = self._ensure_node_metadata(node)
+            if metadata_changed:
+                self._set_modified(True)
+            active_ids.add(node_uuid.replace("/", "_"))
+        for entry in base_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name in active_ids:
+                continue
+            try:
+                shutil.rmtree(entry)
+            except OSError as exc:
+                self._show_warning_dialog(
+                    "不要なファイルノード用フォルダの削除に失敗しました。\n"
+                    f"フォルダ: {entry}\n"
+                    f"理由: {exc}"
+                )
 
     def _sync_file_node_to_project(self, node) -> bool:
         if self._current_project_root is None:
