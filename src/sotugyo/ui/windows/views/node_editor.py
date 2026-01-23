@@ -272,6 +272,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
+        inspector_dock.file_path_convert_requested.connect(self._handle_file_path_convert_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1522,6 +1523,43 @@ class NodeEditorWindow(QMainWindow):
         self._set_modified(True)
         self._update_selected_node_info()
 
+    def _handle_file_path_convert_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return
+        if self._current_project_root is None:
+            self._show_warning_dialog("プロジェクトが選択されていません。")
+            return
+        raw_value = self._file_node_value(self._current_node)
+        if not raw_value:
+            self._show_warning_dialog("ファイルパスが設定されていません。")
+            return
+        if self._is_project_relative_file_path(raw_value):
+            self._show_info_dialog("プロジェクト相対パスとして登録済みです。")
+            return
+        resolved = self._resolve_project_file_path(raw_value)
+        if resolved is None:
+            self._show_warning_dialog("ファイルパスの解決に失敗しました。")
+            return
+        if not resolved.exists():
+            self._show_warning_dialog("ファイルが見つかりません。")
+            return
+        candidate = self._project_relative_candidate(self._current_node, resolved)
+        if candidate is None:
+            self._show_warning_dialog("プロジェクト配下に存在しないため変換できません。")
+            return
+        relative_path = self._project_relative_path(candidate)
+        if not relative_path:
+            self._show_warning_dialog("プロジェクト相対パスの生成に失敗しました。")
+            return
+        self._set_node_custom_property(self._current_node, "file_path", relative_path)
+        new_name = self._file_display_name(relative_path)
+        if new_name and hasattr(self._current_node, "set_name"):
+            self._current_node.set_name(new_name)
+        self._set_modified(True)
+        self._update_selected_node_info()
+        self._show_info_dialog("ファイルパスをプロジェクト相対へ変換しました。")
+
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
@@ -2159,19 +2197,8 @@ class NodeEditorWindow(QMainWindow):
                 continue
             if self._is_project_relative_file_path(raw_value):
                 continue
-            if isinstance(raw_value, dict):
-                spec = parse_project_path(raw_value)
-                if spec is None:
-                    continue
-                if spec.is_absolute():
-                    source = Path(spec.path)
-                else:
-                    continue
-            elif isinstance(raw_value, str):
-                source = Path(raw_value)
-            else:
-                continue
-            if not source.is_absolute():
+            source = self._resolve_absolute_file_node_source(raw_value)
+            if source is None or not source.is_absolute():
                 continue
             if not source.exists():
                 self._show_warning_dialog(
@@ -2183,23 +2210,35 @@ class NodeEditorWindow(QMainWindow):
             node_uuid, _, _ = self._ensure_node_metadata(node)
             destination_dir = self._project_file_node_dir(node_uuid)
             destination_dir.mkdir(parents=True, exist_ok=True)
+            destination = destination_dir / source.name
+            if destination.exists() and destination.is_dir() != source.is_dir():
+                self._show_warning_dialog(
+                    "ファイルノードの同期先が種別と一致しません。\n"
+                    f"ノード: {self._safe_node_name(node)}\n"
+                    f"参照先: {source}\n"
+                    f"同期先: {destination}"
+                )
+                continue
             try:
-                destination = destination_dir / source.name
-                if source.is_dir():
-                    if source != destination:
-                        missing = self._copy_directory_contents(source, destination)
-                        if missing:
-                            self._show_warning_dialog(
-                                "ファイルノードのコピー中に存在しないファイルが見つかりました。\n"
-                                f"ノード: {self._safe_node_name(node)}\n"
-                                f"件数: {len(missing)}"
+                copy_needed = self._should_copy_file_node_source(
+                    node, source, destination
+                )
+                if copy_needed:
+                    if source.is_dir():
+                        if source != destination:
+                            missing = self._copy_directory_contents(source, destination)
+                            if missing:
+                                self._show_warning_dialog(
+                                    "ファイルノードのコピー中に存在しないファイルが見つかりました。\n"
+                                    f"ノード: {self._safe_node_name(node)}\n"
+                                    f"件数: {len(missing)}"
+                                )
+                    else:
+                        if source != destination:
+                            shutil.copy2(
+                                self._normalize_windows_path(source),
+                                self._normalize_windows_path(destination),
                             )
-                else:
-                    if source != destination:
-                        shutil.copy2(
-                            self._normalize_windows_path(source),
-                            self._normalize_windows_path(destination),
-                        )
             except OSError as exc:
                 self._show_warning_dialog(
                     "ファイルノードのコピーに失敗しました。\n"
@@ -2207,9 +2246,10 @@ class NodeEditorWindow(QMainWindow):
                     f"理由: {exc}"
                 )
                 continue
-            relative_path = self._project_relative_path(destination)
-            if relative_path:
-                self._set_node_custom_property(node, "file_path", relative_path)
+            if destination.exists():
+                relative_path = self._project_relative_path(destination)
+                if relative_path:
+                    self._set_node_custom_property(node, "file_path", relative_path)
 
     def _copy_directory_contents(self, source: Path, destination: Path) -> List[str]:
         destination.mkdir(parents=True, exist_ok=True)
@@ -2233,6 +2273,75 @@ class NodeEditorWindow(QMainWindow):
                 except FileNotFoundError:
                     missing_files.append(str(source_file))
         return missing_files
+
+    def _should_copy_file_node_source(
+        self,
+        node,
+        source: Path,
+        destination: Path,
+    ) -> bool:
+        if not destination.exists():
+            return True
+        source_stamp = self._path_modified_timestamp(source)
+        destination_stamp = self._path_modified_timestamp(destination)
+        if source_stamp is None or destination_stamp is None:
+            return True
+        if self._timestamps_match(source_stamp, destination_stamp):
+            return False
+        if destination_stamp < source_stamp:
+            return True
+        return self._confirm_overwrite_newer_project_file(node, source, destination)
+
+    def _path_modified_timestamp(self, path: Path) -> Optional[int]:
+        try:
+            if path.is_dir():
+                return self._directory_modified_timestamp(path)
+            return path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _directory_modified_timestamp(self, path: Path) -> Optional[int]:
+        try:
+            latest = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        for root, _, files in os.walk(path):
+            root_path = Path(root)
+            try:
+                latest = max(latest, root_path.stat().st_mtime_ns)
+            except OSError:
+                continue
+            for filename in files:
+                candidate = root_path / filename
+                try:
+                    latest = max(latest, candidate.stat().st_mtime_ns)
+                except OSError:
+                    continue
+        return latest
+
+    def _timestamps_match(self, source_stamp: int, destination_stamp: int) -> bool:
+        return abs(source_stamp - destination_stamp) <= 1_000_000_000
+
+    def _confirm_overwrite_newer_project_file(
+        self,
+        node,
+        source: Path,
+        destination: Path,
+    ) -> bool:
+        message = (
+            "プロジェクト側のファイルが新しいため上書きするか選択してください。\n"
+            f"ノード: {self._safe_node_name(node)}\n"
+            f"参照先: {source}\n"
+            f"プロジェクト: {destination}"
+        )
+        result = QMessageBox.question(
+            self,
+            "ファイル上書きの確認",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return result == QMessageBox.StandardButton.Yes
 
     def _normalize_windows_path(self, path: Path) -> str:
         path_str = str(path)
@@ -2260,6 +2369,19 @@ class NodeEditorWindow(QMainWindow):
             return structured
         return encode_structured_absolute_path(path)
 
+    def _project_relative_candidate(self, node, path: Path) -> Optional[Path]:
+        if self._current_project_root is None:
+            return None
+        try:
+            path.relative_to(self._current_project_root)
+            return path
+        except ValueError:
+            node_uuid, _, _ = self._ensure_node_metadata(node)
+            candidate = self._project_file_node_dir(node_uuid) / path.name
+            if candidate.exists():
+                return candidate
+        return None
+
     def _is_project_relative_file_path(self, file_path: object) -> bool:
         if self._current_project_root is None:
             return False
@@ -2269,6 +2391,20 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(file_path, str):
             return is_project_relative_path(self._current_project_root, file_path)
         return False
+
+    def _resolve_absolute_file_node_source(self, raw_value: object) -> Optional[Path]:
+        if isinstance(raw_value, dict):
+            spec = parse_project_path(raw_value)
+            if spec is None:
+                return None
+            if spec.is_absolute():
+                return Path(spec.path)
+            return None
+        if isinstance(raw_value, str):
+            candidate = Path(raw_value)
+            if candidate.is_absolute():
+                return candidate
+        return None
 
     def _resolve_project_file_path(self, file_path: object) -> Optional[Path]:
         if self._current_project_root is None:

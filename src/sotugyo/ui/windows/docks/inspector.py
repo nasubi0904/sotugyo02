@@ -32,6 +32,7 @@ class NodeInspectorPanel(QWidget):
     tool_launch_requested = Signal()
     file_reveal_requested = Signal()
     file_path_changed = Signal(str)
+    file_path_convert_requested = Signal()
 
     def __init__(
         self,
@@ -71,6 +72,9 @@ class NodeInspectorPanel(QWidget):
         self._file_path_button.setEnabled(False)
         self._file_path_button.clicked.connect(self._emit_file_path_changed)
         self._file_path_input.returnPressed.connect(self._emit_file_path_changed)
+        self._file_path_convert_button = QPushButton("パスを検証/変換", self)
+        self._file_path_convert_button.setEnabled(False)
+        self._file_path_convert_button.clicked.connect(self._emit_file_path_convert_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -130,6 +134,7 @@ class NodeInspectorPanel(QWidget):
         layout.addWidget(self._file_reveal_button)
         layout.addWidget(self._file_path_input)
         layout.addWidget(self._file_path_button)
+        layout.addWidget(self._file_path_convert_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -288,8 +293,10 @@ class NodeInspectorPanel(QWidget):
         self._file_path_input.blockSignals(False)
         self._file_path_input.setEnabled(enabled)
         self._file_path_button.setEnabled(enabled)
+        self._file_path_convert_button.setEnabled(enabled)
         self._file_path_input.setVisible(visible)
         self._file_path_button.setVisible(visible)
+        self._file_path_convert_button.setVisible(visible)
 
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
@@ -312,6 +319,11 @@ class NodeInspectorPanel(QWidget):
             return
         text = self._file_path_input.text().strip()
         self.file_path_changed.emit(text)
+
+    def _emit_file_path_convert_request(self) -> None:
+        if not self._file_path_convert_button.isEnabled():
+            return
+        self.file_path_convert_requested.emit()
 
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
@@ -341,6 +353,7 @@ class NodeInspectorDock(QDockWidget):
     tool_launch_requested = Signal()
     file_reveal_requested = Signal()
     file_path_changed = Signal(str)
+    file_path_convert_requested = Signal()
 
     def __init__(
         self,
@@ -369,6 +382,7 @@ class NodeInspectorDock(QDockWidget):
         panel.tool_launch_requested.connect(self.tool_launch_requested)
         panel.file_reveal_requested.connect(self.file_reveal_requested)
         panel.file_path_changed.connect(self.file_path_changed)
+        panel.file_path_convert_requested.connect(self.file_path_convert_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
