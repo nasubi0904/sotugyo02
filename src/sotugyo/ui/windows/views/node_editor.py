@@ -973,8 +973,11 @@ class NodeEditorWindow(QMainWindow):
             return False
         for _, path in targets:
             try:
-                if path.is_file():
-                    path.unlink()
+                normalized_path = self._normalize_windows_path(path)
+                if path.is_dir():
+                    shutil.rmtree(normalized_path)
+                elif path.is_file():
+                    os.unlink(normalized_path)
             except OSError as exc:
                 self._show_warning_dialog(f"ファイル削除に失敗しました: {exc}")
         return True
