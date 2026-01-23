@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import uuid
@@ -972,11 +973,8 @@ class NodeEditorWindow(QMainWindow):
         if result != QMessageBox.StandardButton.Yes:
             return False
         for _, path in targets:
-            try:
-                if path.is_file():
-                    path.unlink()
-            except OSError as exc:
-                self._show_warning_dialog(f"ファイル削除に失敗しました: {exc}")
+            if not self._remove_project_path(path):
+                self._show_warning_dialog(f"ファイル削除に失敗しました: {path}")
         return True
 
     # ------------------------------------------------------------------
@@ -2177,12 +2175,31 @@ class NodeEditorWindow(QMainWindow):
         file_nodes = [
             node for node in self._collect_all_nodes() if isinstance(node, FileNode)
         ]
-        if not file_nodes:
-            return True
         for node in file_nodes:
             if not self._sync_file_node_to_project(node):
                 return False
+        self._cleanup_file_node_directories(file_nodes)
         return True
+
+    def _cleanup_file_node_directories(self, file_nodes: Iterable[FileNode]) -> None:
+        if self._current_project_root is None:
+            return
+        base_dir = self._current_project_root / "file_nodes"
+        if not base_dir.exists():
+            return
+        keep_dirs: Set[str] = set()
+        for node in file_nodes:
+            node_uuid, _, _ = self._ensure_node_metadata(node)
+            keep_dirs.add(self._project_file_node_dir(node_uuid).name)
+        for entry in base_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name in keep_dirs:
+                continue
+            if not self._remove_directory_tree(entry):
+                self._show_warning_dialog(
+                    f"不要なファイルノードフォルダの削除に失敗しました: {entry}"
+                )
 
     def _sync_file_node_to_project(self, node) -> bool:
         if self._current_project_root is None:
@@ -2367,6 +2384,63 @@ class NodeEditorWindow(QMainWindow):
                 except FileNotFoundError:
                     missing_files.append(str(source_file))
         return missing_files
+
+    def _remove_project_path(self, target: Path) -> bool:
+        normalized = self._normalize_windows_path(target)
+        if not os.path.exists(normalized):
+            return True
+        if os.path.isdir(normalized):
+            return self._remove_directory_tree(Path(normalized))
+        return self._remove_single_file(Path(normalized))
+
+    def _remove_directory_tree(self, target: Path) -> bool:
+        normalized_root = self._normalize_windows_path(target)
+        if not os.path.exists(normalized_root):
+            return True
+        removed = True
+        try:
+            for root, dirs, files in os.walk(normalized_root, topdown=False):
+                for filename in files:
+                    file_path = Path(root) / filename
+                    if not self._remove_single_file(file_path):
+                        removed = False
+                for directory in dirs:
+                    dir_path = Path(root) / directory
+                    if not self._remove_empty_dir(dir_path):
+                        removed = False
+            if not self._remove_empty_dir(Path(normalized_root)):
+                removed = False
+        except OSError:
+            removed = False
+        return removed
+
+    def _remove_single_file(self, target: Path) -> bool:
+        normalized = self._normalize_windows_path(target)
+        try:
+            os.chmod(normalized, stat.S_IWRITE)
+        except OSError:
+            pass
+        try:
+            os.unlink(normalized)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    def _remove_empty_dir(self, target: Path) -> bool:
+        normalized = self._normalize_windows_path(target)
+        try:
+            os.chmod(normalized, stat.S_IWRITE)
+        except OSError:
+            pass
+        try:
+            os.rmdir(normalized)
+        except FileNotFoundError:
+            return True
+        except OSError:
+            return False
+        return True
 
     def _normalize_windows_path(self, path: Path) -> str:
         path_str = str(path)
