@@ -2143,7 +2143,10 @@ class NodeEditorWindow(QMainWindow):
                             )
                 else:
                     if source != destination:
-                        shutil.copy2(source, destination)
+                        shutil.copy2(
+                            self._normalize_windows_path(source),
+                            self._normalize_windows_path(destination),
+                        )
             except OSError as exc:
                 self._show_warning_dialog(
                     "ファイルノードのコピーに失敗しました。\n"
@@ -2170,10 +2173,26 @@ class NodeEditorWindow(QMainWindow):
                 target_file = target_root / filename
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 try:
-                    shutil.copy2(source_file, target_file)
+                    shutil.copy2(
+                        self._normalize_windows_path(source_file),
+                        self._normalize_windows_path(target_file),
+                    )
                 except FileNotFoundError:
                     missing_files.append(str(source_file))
         return missing_files
+
+    def _normalize_windows_path(self, path: Path) -> str:
+        path_str = str(path)
+        if not sys.platform.startswith("win"):
+            return path_str
+        normalized = os.path.normpath(path_str)
+        if normalized.startswith("\\\\?\\"):
+            return normalized
+        if normalized.startswith("\\\\"):
+            return "\\\\?\\UNC\\" + normalized.lstrip("\\")
+        if len(normalized) >= 240:
+            return "\\\\?\\" + normalized
+        return normalized
 
     def _project_file_node_dir(self, node_uuid: str) -> Path:
         base = self._current_project_root / "file_nodes"
