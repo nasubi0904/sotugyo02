@@ -173,6 +173,8 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._environment_dir = environment_dir
         self._environment_path = environment_path
         self._required_plugins: list[dict[str, str]] = []
+        self._package_py_cache: dict[Path, str] = {}
+        self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -332,12 +334,8 @@ class ToolEnvironmentEditorDialog(QDialog):
         return str(Path.home())
 
     def _resolve_execute_path_from_package(self, package: RezPackageSpec) -> Optional[Path]:
-        package_file = package.path / "package.py"
-        if not package_file.exists():
-            return None
-        try:
-            content = package_file.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        content = self._read_package_py(package)
+        if not content:
             return None
         matches = re.findall(
             r"EXECUTE_[A-Z0-9_]+_EXE[\"']\]\s*=\s*r?[\"']([^\"'\n]+)",
@@ -459,12 +457,23 @@ class ToolEnvironmentEditorDialog(QDialog):
                     }
                 )
                 continue
+            normalized = self._normalize_relative_path(relative)
+            if normalized is None:
+                entry.clear()
+                entry.update(
+                    {
+                        "name": absolute.stem,
+                        "path_type": "absolute",
+                        "path": str(absolute),
+                    }
+                )
+                continue
             entry.clear()
             entry.update(
                 {
                     "name": absolute.stem,
                     "path_type": "tool",
-                    "relative_path": relative,
+                    "relative_path": normalized,
                 }
             )
         self._refresh_plugin_list()
@@ -526,10 +535,13 @@ class ToolEnvironmentEditorDialog(QDialog):
         if not self._is_under_base(absolute, base_dir):
             return None
         relative = os.path.relpath(str(absolute), str(base_dir)).replace("\\", "/")
+        normalized = self._normalize_relative_path(relative)
+        if normalized is None:
+            return None
         return {
             "name": path.stem,
             "path_type": "tool",
-            "relative_path": relative,
+            "relative_path": normalized,
         }
 
     def _resolve_plugin_absolute_path(self, entry: dict[str, str]) -> Optional[Path]:
@@ -573,16 +585,19 @@ class ToolEnvironmentEditorDialog(QDialog):
         package = self._current_package_spec()
         if package is None:
             return None
+        normalized = self._normalize_relative_path(relative)
+        if normalized is None:
+            return None
         reference_paths = self._collect_package_reference_paths(package)
         if not reference_paths:
             return None
         for reference in reference_paths:
             base = self._reference_base_dir(reference)
-            candidate = base / Path(relative.replace("/", os.sep))
+            candidate = base / Path(normalized.replace("/", os.sep))
             if candidate.exists():
                 return candidate
         base = self._reference_base_dir(reference_paths[0])
-        return base / Path(relative.replace("/", os.sep))
+        return base / Path(normalized.replace("/", os.sep))
 
     def _build_environment_variables(self) -> str:
         raw_text = self._env_vars_edit.toPlainText().strip()
@@ -647,11 +662,14 @@ class ToolEnvironmentEditorDialog(QDialog):
         relative = self._build_relative_from_reference_paths(absolute, reference_paths)
         if relative is None:
             return None
+        normalized = self._normalize_relative_path(relative)
+        if normalized is None:
+            return None
         return {
             "name": path.stem,
             "path_type": "package",
             "package": package.name,
-            "relative_path": relative,
+            "relative_path": normalized,
         }
 
     def _current_package_spec(self) -> Optional[RezPackageSpec]:
@@ -661,12 +679,8 @@ class ToolEnvironmentEditorDialog(QDialog):
         return None
 
     def _collect_package_reference_paths(self, package: RezPackageSpec) -> list[Path]:
-        package_file = package.path / "package.py"
-        if not package_file.exists():
-            return []
-        try:
-            content = package_file.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        content = self._read_package_py(package)
+        if not content:
             return []
         matches = re.findall(r"([A-Za-z]:\\\\[^\"\n]+)", content, flags=re.IGNORECASE)
         return self._normalize_reference_paths(matches)
@@ -692,7 +706,10 @@ class ToolEnvironmentEditorDialog(QDialog):
             if not self._is_under_base(absolute, anchor):
                 continue
             relative = os.path.relpath(str(absolute), str(anchor))
-            return relative.replace("\\", "/")
+            normalized = self._normalize_relative_path(relative.replace("\\", "/"))
+            if normalized is None:
+                return None
+            return normalized
         return None
 
     @staticmethod
@@ -708,14 +725,19 @@ class ToolEnvironmentEditorDialog(QDialog):
         for known_id, base in self._collect_known_folders():
             if self._is_under_base(absolute, base):
                 relative = os.path.relpath(str(absolute), str(base))
+                normalized = self._normalize_relative_path(relative.replace("\\", "/"))
+                if normalized is None:
+                    return None
                 return {
                     "path_type": "known",
                     "known_id": known_id,
-                    "relative_path": relative.replace("\\", "/"),
+                    "relative_path": normalized,
                 }
         return None
 
     def _collect_known_folders(self) -> list[tuple[str, Path]]:
+        if self._known_folders_cache is not None:
+            return list(self._known_folders_cache)
         known_folder_ids = {
             "FOLDERID_Documents": "{FDD39AD0-238F-46AF-ADB4-6C85480369C7}",
             "FOLDERID_Downloads": "{374DE290-123F-4565-9164-39C4925E467B}",
@@ -732,7 +754,8 @@ class ToolEnvironmentEditorDialog(QDialog):
             if resolved is None:
                 continue
             known_folders.append((name, resolved))
-        return known_folders
+        self._known_folders_cache = list(known_folders)
+        return list(known_folders)
 
     def _resolve_known_folder(self, guid_text: str) -> Optional[Path]:
         folder_id = self._guid_from_string(guid_text)
@@ -755,6 +778,36 @@ class ToolEnvironmentEditorDialog(QDialog):
         except ValueError:
             return None
         return _Guid.from_uuid(guid)
+
+    def _read_package_py(self, package: RezPackageSpec) -> str:
+        package_file = package.path / "package.py"
+        cached = self._package_py_cache.get(package_file)
+        if cached is not None:
+            return cached
+        if not package_file.exists():
+            self._package_py_cache[package_file] = ""
+            return ""
+        try:
+            content = package_file.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            self._package_py_cache[package_file] = ""
+            return ""
+        self._package_py_cache[package_file] = content
+        return content
+
+    @staticmethod
+    def _normalize_relative_path(relative: str) -> Optional[str]:
+        normalized = relative.replace("\\", "/").strip()
+        if not normalized:
+            return None
+        if normalized.startswith(("/", "\\")):
+            return None
+        if ":" in normalized:
+            return None
+        parts = [part for part in normalized.split("/") if part]
+        if any(part == ".." for part in parts):
+            return None
+        return "/".join(parts)
 
     @staticmethod
     def _is_under_base(path: Path, base: Path) -> bool:
