@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import uuid
 import ctypes
 from pathlib import Path
 from typing import Optional
+import tomllib
 
 from qtpy import QtCore, QtWidgets
 
@@ -143,6 +145,10 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.saved_path() is not None:
+            self._refresh_on_accept = True
+            self._load_environment_list()
+            self._select_environment(dialog.saved_path())
 
     def _open_edit_dialog(self) -> None:
         path = self._selected_environment_path()
@@ -155,6 +161,19 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.saved_path() is not None:
+            self._refresh_on_accept = True
+            self._load_environment_list()
+            self._select_environment(dialog.saved_path())
+
+    def _select_environment(self, path: Optional[Path]) -> None:
+        if path is None:
+            return
+        for index in range(self._environment_list.count()):
+            item = self._environment_list.item(index)
+            if item.data(Qt.UserRole) == path:
+                self._environment_list.setCurrentRow(index)
+                return
 
 
 class ToolEnvironmentEditorDialog(QDialog):
@@ -172,9 +191,11 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._environment_id: Optional[str] = None
         self._required_plugins: list[dict[str, str]] = []
         self._package_py_cache: dict[Path, str] = {}
         self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
+        self._saved_path: Optional[Path] = None
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -255,7 +276,7 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         button_layout = QHBoxLayout()
         self._create_button = QPushButton("環境作成", self)
-        self._create_button.clicked.connect(self._print_environment)
+        self._create_button.clicked.connect(self._save_environment)
         button_layout.addWidget(self._create_button)
         button_layout.addStretch(1)
 
@@ -283,20 +304,142 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._refresh_plugin_list()
         if self._environment_path is None:
             self._name_edit.setText("")
+            self._create_button.setText("環境作成")
             return
-        self._name_edit.setText(self._environment_path.stem)
+        payload = self._read_environment_payload(self._environment_path)
+        if payload is None:
+            self._name_edit.setText(self._environment_path.stem)
+            return
+        self._name_edit.setText(str(payload.get("name") or self._environment_path.stem))
+        self._environment_id = payload.get("environment_id")
+        self._apply_payload_to_form(payload)
+        self._create_button.setText("保存")
 
-    def _print_environment(self) -> None:
+    def saved_path(self) -> Optional[Path]:
+        return self._saved_path
+
+    def _save_environment(self) -> None:
         package = self._package_combo.currentData()
+        name = self._name_edit.text().strip() or "無名の環境"
+        payload = self._build_payload(name, package)
+        target = self._resolve_environment_path(name)
+        if target is None:
+            QMessageBox.warning(self, "保存失敗", "保存先のファイル名を確定できませんでした。")
+            return
+        target.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            target.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            QMessageBox.warning(self, "保存失敗", "環境定義ファイルを保存できませんでした。")
+            return
+        if self._environment_path and self._environment_path != target:
+            try:
+                self._environment_path.unlink()
+            except OSError:
+                QMessageBox.information(
+                    self,
+                    "ファイル移動の注意",
+                    "旧ファイルの削除に失敗しました。",
+                )
+        self._saved_path = target
+        self.accept()
+
+    def _build_payload(self, name: str, package: object) -> dict[str, object]:
         payload = {
-            "name": self._name_edit.text().strip() or "無名の環境",
+            "environment_id": self._environment_id or str(uuid.uuid4()),
+            "name": name,
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
             "environment_variables": self._build_environment_variables(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return payload
+
+    def _resolve_environment_path(self, name: str) -> Optional[Path]:
+        filename = self._sanitize_filename(name)
+        if not filename:
+            return None
+        suffix = ".json"
+        if self._environment_path is not None:
+            suffix = self._environment_path.suffix or ".json"
+        return self._environment_dir / f"{filename}{suffix}"
+
+    @staticmethod
+    def _sanitize_filename(value: str) -> str:
+        cleaned = re.sub(r"[\\/:*?\"<>|]+", "_", value.strip())
+        cleaned = re.sub(r"\s+", "_", cleaned)
+        return cleaned.strip("_")
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict[str, object]]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        suffix = path.suffix.lower()
+        try:
+            if suffix == ".toml":
+                payload = tomllib.loads(content)
+            elif suffix in {".yml", ".yaml"}:
+                payload = self._load_yaml_payload(content)
+            else:
+                payload = json.loads(content)
+        except (ValueError, json.JSONDecodeError):
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    @staticmethod
+    def _load_yaml_payload(content: str) -> dict[str, object]:
+        if importlib.util.find_spec("yaml") is None:
+            return {}
+        yaml_module = importlib.import_module("yaml")
+        payload = yaml_module.safe_load(content)
+        if isinstance(payload, dict):
+            return payload
+        return {}
+
+    def _apply_payload_to_form(self, payload: dict[str, object]) -> None:
+        package_name = payload.get("package")
+        package_version = payload.get("package_version")
+        if package_name:
+            self._select_package(str(package_name), package_version)
+        env_vars = payload.get("environment_variables")
+        if isinstance(env_vars, dict):
+            env_lines = [f"{key}={value}" for key, value in env_vars.items()]
+            self._env_vars_edit.setPlainText("\n".join(env_lines))
+        elif isinstance(env_vars, str):
+            self._env_vars_edit.setPlainText(env_vars)
+        launch_args = payload.get("launch_arguments")
+        if isinstance(launch_args, str):
+            self._launch_args_edit.setPlainText(launch_args)
+        required_plugins = payload.get("required_plugins")
+        if isinstance(required_plugins, list):
+            self._required_plugins = [
+                entry for entry in required_plugins if isinstance(entry, dict)
+            ]
+            self._refresh_plugin_list()
+
+    def _select_package(self, name: str, version: object) -> None:
+        for index in range(self._package_combo.count()):
+            spec = self._package_combo.itemData(index)
+            if not isinstance(spec, RezPackageSpec):
+                continue
+            if spec.name != name:
+                continue
+            if version and spec.version != str(version):
+                continue
+            self._package_combo.setCurrentIndex(index)
+            return
+        for index in range(self._package_combo.count()):
+            spec = self._package_combo.itemData(index)
+            if isinstance(spec, RezPackageSpec) and spec.name == name:
+                self._package_combo.setCurrentIndex(index)
+                return
 
     def _open_plugin_dialog(self) -> None:
         start_path = self._resolve_plugin_dialog_start_path()
