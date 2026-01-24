@@ -34,7 +34,6 @@ class NodeInspectorPanel(QWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
-    file_path_folder_pick_requested = Signal()
 
     def __init__(
         self,
@@ -69,16 +68,11 @@ class NodeInspectorPanel(QWidget):
         self._file_reveal_button.setEnabled(False)
         self._file_reveal_button.clicked.connect(self._emit_file_reveal_request)
         self._file_path_input = QLineEdit(self)
-        self._file_path_input.setPlaceholderText("ファイルパスを選択")
+        self._file_path_input.setPlaceholderText("ファイル/フォルダを選択")
         self._file_path_input.setReadOnly(True)
-        self._file_path_file_button = QPushButton("ファイルを選択", self)
-        self._file_path_file_button.setEnabled(False)
-        self._file_path_file_button.clicked.connect(self._emit_file_path_pick_request)
-        self._file_path_folder_button = QPushButton("フォルダを選択", self)
-        self._file_path_folder_button.setEnabled(False)
-        self._file_path_folder_button.clicked.connect(
-            self._emit_file_path_folder_pick_request
-        )
+        self._file_path_pick_button = QPushButton("パスを選択", self)
+        self._file_path_pick_button.setEnabled(False)
+        self._file_path_pick_button.clicked.connect(self._emit_file_path_pick_request)
         self._file_path_verify_button = QPushButton("パスを検証/変換", self)
         self._file_path_verify_button.setEnabled(False)
         self._file_path_verify_button.clicked.connect(self._emit_file_path_verify_request)
@@ -142,8 +136,7 @@ class NodeInspectorPanel(QWidget):
         layout.addWidget(self._file_path_input)
         file_path_buttons = QHBoxLayout()
         file_path_buttons.setSpacing(6)
-        file_path_buttons.addWidget(self._file_path_file_button)
-        file_path_buttons.addWidget(self._file_path_folder_button)
+        file_path_buttons.addWidget(self._file_path_pick_button)
         file_path_buttons.addWidget(self._file_path_verify_button)
         layout.addLayout(file_path_buttons)
         return widget
@@ -303,12 +296,10 @@ class NodeInspectorPanel(QWidget):
         self._file_path_input.setText(path or "")
         self._file_path_input.blockSignals(False)
         self._file_path_input.setEnabled(enabled)
-        self._file_path_file_button.setEnabled(enabled)
-        self._file_path_folder_button.setEnabled(enabled)
+        self._file_path_pick_button.setEnabled(enabled)
         self._file_path_verify_button.setEnabled(enabled)
         self._file_path_input.setVisible(visible)
-        self._file_path_file_button.setVisible(visible)
-        self._file_path_folder_button.setVisible(visible)
+        self._file_path_pick_button.setVisible(visible)
         self._file_path_verify_button.setVisible(visible)
 
     def _emit_rename_request(self) -> None:
@@ -336,14 +327,9 @@ class NodeInspectorPanel(QWidget):
         self.file_path_changed.emit(text)
 
     def _emit_file_path_pick_request(self) -> None:
-        if not self._file_path_file_button.isEnabled():
+        if not self._file_path_pick_button.isEnabled():
             return
         self.file_path_pick_requested.emit()
-
-    def _emit_file_path_folder_pick_request(self) -> None:
-        if not self._file_path_folder_button.isEnabled():
-            return
-        self.file_path_folder_pick_requested.emit()
 
     def _emit_file_path_verify_request(self) -> None:
         if not self._file_path_verify_button.isEnabled():
@@ -380,7 +366,6 @@ class NodeInspectorDock(QDockWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
-    file_path_folder_pick_requested = Signal()
 
     def __init__(
         self,
@@ -411,7 +396,6 @@ class NodeInspectorDock(QDockWidget):
         panel.file_path_changed.connect(self.file_path_changed)
         panel.file_path_verify_requested.connect(self.file_path_verify_requested)
         panel.file_path_pick_requested.connect(self.file_path_pick_requested)
-        panel.file_path_folder_pick_requested.connect(self.file_path_folder_pick_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")

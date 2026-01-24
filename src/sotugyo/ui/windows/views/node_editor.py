@@ -275,9 +275,6 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         inspector_dock.file_path_verify_requested.connect(self._handle_file_path_verify_requested)
         inspector_dock.file_path_pick_requested.connect(self._handle_file_path_pick_requested)
-        inspector_dock.file_path_folder_pick_requested.connect(
-            self._handle_file_path_folder_pick_requested
-        )
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1526,13 +1523,19 @@ class NodeEditorWindow(QMainWindow):
         self._update_selected_node_info()
 
     def _handle_file_path_pick_requested(self) -> None:
-        selected = self._select_file_node_path(kind="file")
-        if not selected:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
             return
-        self._handle_file_path_changed(selected)
-
-    def _handle_file_path_folder_pick_requested(self) -> None:
-        selected = self._select_file_node_path(kind="directory")
+        menu = QMenu(self)
+        file_action = menu.addAction("ファイルを選択")
+        folder_action = menu.addAction("フォルダを選択")
+        chosen = menu.exec_(QtGui.QCursor.pos())
+        if chosen is file_action:
+            selected = self._select_file_node_path(kind="file")
+        elif chosen is folder_action:
+            selected = self._select_file_node_path(kind="directory")
+        else:
+            return
         if not selected:
             return
         self._handle_file_path_changed(selected)
