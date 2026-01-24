@@ -30,7 +30,6 @@ rez_detached_launcher.py
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -115,26 +114,16 @@ def ensure_kdmrez_in_rez_packages_path(prepend_path: Optional[Path] = None) -> P
 
 def resolve_rez_env_exe(hint: Optional[str] = None) -> str:
     """
-    rez-env 実行ファイルを確実に見つける。
+    現在の Python 環境から rez-env 実行ファイルを確実に見つける。
 
-    探索順:
-      1) hint（フルパスなど）を指定した場合はそれ
-      2) PATH 上の rez-env(.exe)
-      3) 現在の Python 実行ファイル近傍（venv/埋め込み環境の Scripts）にある rez-env.exe
+    ルール:
+      - いかなる場合でも「現在の Python 環境に pip install された rez」を使う。
+      - PATH 上の rez-env は使用しない。
+      - hint が指定された場合は、現在の Python 環境内の候補と一致する場合のみ許可する。
 
     失敗時:
       RezEnvNotFoundError を送出
     """
-    if hint:
-        p = Path(hint)
-        if p.exists():
-            return str(p)
-        # hint が無効でも次の探索へ進む（呼び出し側が柔軟に運用できるように）
-
-    w = shutil.which("rez-env")
-    if w:
-        return w
-
     py = Path(sys.executable)
 
     candidates = (
@@ -143,12 +132,35 @@ def resolve_rez_env_exe(hint: Optional[str] = None) -> str:
         py.parent / "Scripts" / "rez-env.exe",
         py.parent / "Scripts" / "rez-env",
     )
-    for c in candidates:
-        if c.exists():
-            return str(c)
+    existing = [c for c in candidates if c.exists()]
+
+    if hint:
+        hint_path = Path(hint)
+        if not hint_path.exists():
+            raise RezEnvNotFoundError(
+                "rez-env の指定パスが存在しません。現在の Python 環境に rez をインストールしてください。"
+            )
+        try:
+            hint_resolved = hint_path.resolve()
+        except OSError:
+            hint_resolved = hint_path
+        for c in existing:
+            try:
+                if c.resolve() == hint_resolved:
+                    return str(c)
+            except OSError:
+                if c == hint_resolved:
+                    return str(c)
+        raise RezEnvNotFoundError(
+            "指定された rez-env は現在の Python 環境外です。"
+            " このツールは現在の Python 環境に pip install された rez のみ使用できます。"
+        )
+
+    if existing:
+        return str(existing[0])
 
     raise RezEnvNotFoundError(
-        "rez-env が見つかりません。PATH または現在の Python 環境の Scripts に rez-env.exe が必要です。"
+        "rez-env が見つかりません。現在の Python 環境に rez をインストールしてください。"
     )
 
 
