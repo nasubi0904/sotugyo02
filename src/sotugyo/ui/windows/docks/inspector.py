@@ -30,6 +30,10 @@ class NodeInspectorPanel(QWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    file_reveal_requested = Signal()
+    file_path_changed = Signal(str)
+    file_path_verify_requested = Signal()
+    file_path_pick_requested = Signal()
 
     def __init__(
         self,
@@ -58,6 +62,20 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_button = QPushButton("ツールを起動", self)
         self._tool_launch_button.setEnabled(False)
         self._tool_launch_button.clicked.connect(self._emit_tool_launch_request)
+        self._file_reveal_label = QLabel("ファイル: -", self)
+        self._file_reveal_label.setWordWrap(True)
+        self._file_reveal_button = QPushButton("エクスプローラーで表示", self)
+        self._file_reveal_button.setEnabled(False)
+        self._file_reveal_button.clicked.connect(self._emit_file_reveal_request)
+        self._file_path_input = QLineEdit(self)
+        self._file_path_input.setPlaceholderText("ファイル/フォルダを選択")
+        self._file_path_input.setReadOnly(True)
+        self._file_path_pick_button = QPushButton("パスを選択", self)
+        self._file_path_pick_button.setEnabled(False)
+        self._file_path_pick_button.clicked.connect(self._emit_file_path_pick_request)
+        self._file_path_verify_button = QPushButton("パスを検証/変換", self)
+        self._file_path_verify_button.setEnabled(False)
+        self._file_path_verify_button.clicked.connect(self._emit_file_path_verify_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -112,6 +130,15 @@ class NodeInspectorPanel(QWidget):
         layout.addSpacing(8)
         layout.addWidget(self._tool_launch_label)
         layout.addWidget(self._tool_launch_button)
+        layout.addSpacing(6)
+        layout.addWidget(self._file_reveal_label)
+        layout.addWidget(self._file_reveal_button)
+        layout.addWidget(self._file_path_input)
+        file_path_buttons = QHBoxLayout()
+        file_path_buttons.setSpacing(6)
+        file_path_buttons.addWidget(self._file_path_pick_button)
+        file_path_buttons.addWidget(self._file_path_verify_button)
+        layout.addLayout(file_path_buttons)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -223,6 +250,8 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
+        self.set_file_reveal_state(enabled=False, label="-", visible=False)
+        self.set_file_path_state(enabled=False, path="", visible=False)
 
     def set_tool_launch_state(
         self,
@@ -239,6 +268,40 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_label.setVisible(visible)
         self._tool_launch_button.setVisible(visible)
 
+    def set_file_reveal_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ファイル表示ボタンの状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._file_reveal_label.setText(f"ファイル: {display}")
+        self._file_reveal_button.setEnabled(enabled)
+        self._file_reveal_label.setVisible(visible)
+        self._file_reveal_button.setVisible(visible)
+
+    def set_file_path_state(
+        self,
+        *,
+        enabled: bool,
+        path: str,
+        visible: bool,
+    ) -> None:
+        """ファイルパス入力欄の状態を更新する。"""
+
+        self._file_path_input.blockSignals(True)
+        self._file_path_input.setText(path or "")
+        self._file_path_input.blockSignals(False)
+        self._file_path_input.setEnabled(enabled)
+        self._file_path_pick_button.setEnabled(enabled)
+        self._file_path_verify_button.setEnabled(enabled)
+        self._file_path_input.setVisible(visible)
+        self._file_path_pick_button.setVisible(visible)
+        self._file_path_verify_button.setVisible(visible)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -249,6 +312,29 @@ class NodeInspectorPanel(QWidget):
         if not self._tool_launch_button.isEnabled():
             return
         self.tool_launch_requested.emit()
+
+    def _emit_file_reveal_request(self) -> None:
+        if not self._file_reveal_button.isEnabled():
+            return
+        self.file_reveal_requested.emit()
+
+    def _emit_file_path_changed(self) -> None:
+        if not self._file_path_input.isEnabled():
+            return
+        text = self._file_path_input.text().strip()
+        if not text:
+            return
+        self.file_path_changed.emit(text)
+
+    def _emit_file_path_pick_request(self) -> None:
+        if not self._file_path_pick_button.isEnabled():
+            return
+        self.file_path_pick_requested.emit()
+
+    def _emit_file_path_verify_request(self) -> None:
+        if not self._file_path_verify_button.isEnabled():
+            return
+        self.file_path_verify_requested.emit()
 
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
@@ -276,6 +362,10 @@ class NodeInspectorDock(QDockWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    file_reveal_requested = Signal()
+    file_path_changed = Signal(str)
+    file_path_verify_requested = Signal()
+    file_path_pick_requested = Signal()
 
     def __init__(
         self,
@@ -302,6 +392,10 @@ class NodeInspectorDock(QDockWidget):
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
         panel.tool_launch_requested.connect(self.tool_launch_requested)
+        panel.file_reveal_requested.connect(self.file_reveal_requested)
+        panel.file_path_changed.connect(self.file_path_changed)
+        panel.file_path_verify_requested.connect(self.file_path_verify_requested)
+        panel.file_path_pick_requested.connect(self.file_path_pick_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -366,5 +460,31 @@ class NodeInspectorDock(QDockWidget):
         self._panel.set_tool_launch_state(
             enabled=enabled,
             label=label,
+            visible=visible,
+        )
+
+    def set_file_reveal_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_file_reveal_state(
+            enabled=enabled,
+            label=label,
+            visible=visible,
+        )
+
+    def set_file_path_state(
+        self,
+        *,
+        enabled: bool,
+        path: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_file_path_state(
+            enabled=enabled,
+            path=path,
             visible=visible,
         )
