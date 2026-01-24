@@ -120,6 +120,23 @@ class NodeSnapSettings:
             return value
         return round(value / self.grid_size) * self.grid_size
 
+
+@dataclass(frozen=True)
+class RezLaunchTarget:
+    package_request: str
+    available: bool
+    requested_version: Optional[str]
+    resolved_version: Optional[str]
+
+    def is_fallback(self) -> bool:
+        if not self.available:
+            return False
+        if not self.requested_version:
+            return False
+        if self.requested_version.lower() == "local":
+            return False
+        return (self.requested_version or "").strip() != (self.resolved_version or "").strip()
+
 class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
 
@@ -1451,16 +1468,24 @@ class NodeEditorWindow(QMainWindow):
         if target is None:
             self._show_warning_dialog("Rez 情報が見つからないため起動できません。")
             return
-        package_request, available = target
-        if not available:
+        if not target.available:
             self._show_warning_dialog(
                 "ローカルの Rez パッケージが見つかりません。\n"
-                f"起動対象: {package_request}\n"
+                f"起動対象: {target.package_request}\n"
                 f"KDMrez: {get_rez_package_dir()}"
             )
             return
+        if target.is_fallback():
+            requested = target.requested_version or "(未指定)"
+            resolved = target.resolved_version or "(指定なし)"
+            self._show_warning_dialog(
+                "指定した Rez バージョンがローカルに見つからないため、"
+                "起動に利用するバージョンを調整しました。\n"
+                f"要求: {requested}\n"
+                f"使用: {resolved}"
+            )
         try:
-            result = launch_rez_detached(package_request=package_request, tool_args=None)
+            result = launch_rez_detached(package_request=target.package_request, tool_args=None)
         except RezLauncherError as exc:
             self._show_error_dialog(f"Rez 環境の起動に失敗しました: {exc}")
             return
@@ -1994,15 +2019,18 @@ class NodeEditorWindow(QMainWindow):
         if target is None:
             inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし", visible=True)
             return
-        package_request, available = target
-        if not available:
+        if not target.available:
             inspector.set_tool_launch_state(
                 enabled=False,
-                label=f"{package_request} (未検出)",
+                label=f"{target.package_request} (未検出)",
                 visible=True,
             )
             return
-        inspector.set_tool_launch_state(enabled=True, label=package_request, visible=True)
+        inspector.set_tool_launch_state(
+            enabled=True,
+            label=target.package_request,
+            visible=True,
+        )
 
     def _update_file_reveal_controls(self, node) -> None:
         inspector = self._inspector_dock
@@ -2690,19 +2718,35 @@ class NodeEditorWindow(QMainWindow):
                 version_from_label = raw_version.rstrip(")").strip() or None
         return name_from_label, version_from_label
 
-    def _resolve_local_rez_launch_target(
-        self, node
-    ) -> Optional[Tuple[str, bool]]:
+    def _resolve_local_rez_launch_target(self, node) -> Optional[RezLaunchTarget]:
         name, version = self._read_rez_package_properties(node)
         if not name:
             return None
-        version_label = (version or "").strip()
-        if version_label and version_label.lower() != "local":
-            package_request = f"{name}-{version_label}"
-        else:
-            package_request = name
+        requested_version = (version or "").strip()
         available = name in self._local_rez_packages
-        return package_request, available
+        resolved_version = requested_version
+        if available:
+            local_spec = self._local_rez_packages[name]
+            local_version = (local_spec.version or "").strip()
+            if requested_version and requested_version.lower() != "local":
+                if local_version and local_version != requested_version:
+                    resolved_version = local_version
+                elif not local_version:
+                    resolved_version = ""
+            else:
+                resolved_version = local_version or ""
+
+        package_request = name
+        if resolved_version and resolved_version.lower() != "local":
+            package_request = f"{name}-{resolved_version}"
+        elif requested_version and requested_version.lower() != "local" and not resolved_version:
+            package_request = name
+        return RezLaunchTarget(
+            package_request=package_request,
+            available=available,
+            requested_version=requested_version,
+            resolved_version=resolved_version,
+        )
 
     def _apply_tool_node_rez_properties(self, node, definition) -> None:
         if not isinstance(node, ToolEnvironmentNode):
