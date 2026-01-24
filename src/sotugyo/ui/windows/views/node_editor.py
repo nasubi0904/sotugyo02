@@ -472,11 +472,11 @@ class NodeEditorWindow(QMainWindow):
         self._refresh_content_browser_entries()
 
     def _refresh_tool_configuration(self) -> None:
+        self._load_local_rez_packages()
         snapshot = self._coordinator.load_tool_snapshot()
         self._tool_snapshot = snapshot
         self._registered_tools = dict(snapshot.tools)
         self._tool_environments = dict(snapshot.environments)
-        self._load_local_rez_packages()
         self._refresh_content_browser_entries()
 
     def _refresh_content_browser_entries(self) -> None:

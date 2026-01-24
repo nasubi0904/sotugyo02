@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import re
@@ -9,6 +10,7 @@ import uuid
 import ctypes
 from pathlib import Path
 from typing import Optional
+import tomllib
 
 from qtpy import QtCore, QtWidgets
 
@@ -143,6 +145,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
     def _open_edit_dialog(self) -> None:
         path = self._selected_environment_path()
@@ -155,6 +160,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
 
 class ToolEnvironmentEditorDialog(QDialog):
@@ -172,6 +180,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._refresh_on_accept = False
         self._required_plugins: list[dict[str, str]] = []
         self._package_py_cache: dict[Path, str] = {}
         self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
@@ -182,6 +191,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._build_ui()
         self._populate_packages()
         self._load_existing()
+
+    def refresh_requested(self) -> bool:
+        return self._refresh_on_accept
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -255,7 +267,7 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         button_layout = QHBoxLayout()
         self._create_button = QPushButton("環境作成", self)
-        self._create_button.clicked.connect(self._print_environment)
+        self._create_button.clicked.connect(self._save_environment)
         button_layout.addWidget(self._create_button)
         button_layout.addStretch(1)
 
@@ -285,18 +297,208 @@ class ToolEnvironmentEditorDialog(QDialog):
             self._name_edit.setText("")
             return
         self._name_edit.setText(self._environment_path.stem)
+        payload = self._read_environment_payload(self._environment_path)
+        if not isinstance(payload, dict):
+            return
+        self._apply_environment_payload(payload)
 
-    def _print_environment(self) -> None:
+    def _apply_environment_payload(self, payload: dict) -> None:
+        name = payload.get("name")
+        if isinstance(name, str) and name.strip():
+            self._name_edit.setText(name.strip())
+        package_name = payload.get("package") or payload.get("package_name")
+        package_version = payload.get("package_version") or payload.get("version_label")
+        if not package_name and isinstance(payload.get("rez_packages"), list):
+            for entry in payload.get("rez_packages", []):
+                if isinstance(entry, str) and entry.strip():
+                    package_name = entry.strip()
+                    break
+        self._select_package_combo(package_name, package_version)
+        env_vars = payload.get("environment_variables")
+        if not isinstance(env_vars, str) and isinstance(payload.get("metadata"), dict):
+            env_vars = payload.get("metadata", {}).get("environment_variables")
+        if isinstance(env_vars, str):
+            self._env_vars_edit.setPlainText(env_vars.strip())
+        launch_args = payload.get("launch_arguments")
+        if not isinstance(launch_args, str) and isinstance(payload.get("metadata"), dict):
+            launch_args = payload.get("metadata", {}).get("launch_arguments")
+        if isinstance(launch_args, str):
+            self._launch_args_edit.setPlainText(launch_args.strip())
+        required_plugins = payload.get("required_plugins")
+        if not isinstance(required_plugins, list) and isinstance(payload.get("metadata"), dict):
+            required_plugins = payload.get("metadata", {}).get("required_plugins")
+        if isinstance(required_plugins, list):
+            self._required_plugins = [
+                entry for entry in required_plugins if isinstance(entry, dict)
+            ]
+            self._refresh_plugin_list()
+
+    def _select_package_combo(self, package_name: Optional[str], version: Optional[str]) -> None:
+        if not package_name:
+            return
+        for index in range(self._package_combo.count()):
+            data = self._package_combo.itemData(index)
+            if isinstance(data, RezPackageSpec):
+                if data.name != package_name:
+                    continue
+                if version and data.version and data.version != version:
+                    continue
+                self._package_combo.setCurrentIndex(index)
+                return
+
+    def _save_environment(self) -> None:
+        payload = self._build_environment_payload()
+        if not payload.get("package"):
+            QMessageBox.warning(self, "入力エラー", "ツールパッケージを選択してください。")
+            return
+        target_path = self._resolve_environment_path(payload["name"])
+        if target_path is None:
+            return
+        if target_path.exists():
+            result = QMessageBox.question(
+                self,
+                "確認",
+                f"環境ファイルを上書きしますか？\n{target_path}",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return
+        if not self._write_environment_payload(target_path, payload):
+            return
+        self._environment_path = target_path
+        self._refresh_on_accept = True
+        QMessageBox.information(self, "保存完了", "環境定義を保存しました。")
+        self.accept()
+
+    def _build_environment_payload(self) -> dict:
         package = self._package_combo.currentData()
-        payload = {
+        env_vars = self._build_environment_variables()
+        rez_environment = self._parse_environment_variables(env_vars)
+        return {
             "name": self._name_edit.text().strip() or "無名の環境",
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "environment_variables": self._build_environment_variables(),
+            "environment_variables": env_vars,
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
+            "rez_environment": rez_environment,
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _resolve_environment_path(self, name: str) -> Optional[Path]:
+        if self._environment_path is not None:
+            return self._environment_path
+        normalized = self._normalize_environment_filename(name)
+        if not normalized:
+            QMessageBox.warning(self, "入力エラー", "環境名を入力してください。")
+            return None
+        return self._environment_dir / f"{normalized}.json"
+
+    @staticmethod
+    def _normalize_environment_filename(name: str) -> str:
+        cleaned = re.sub(r"[^\w\s\-]", "", name, flags=re.UNICODE).strip()
+        cleaned = re.sub(r"\s+", "_", cleaned)
+        return cleaned
+
+    def _write_environment_payload(self, path: Path, payload: dict) -> bool:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            data = json.dumps(payload, ensure_ascii=False, indent=2)
+        elif suffix in {".yml", ".yaml"}:
+            yaml = self._load_yaml_module()
+            if yaml is None:
+                QMessageBox.warning(
+                    self,
+                    "保存エラー",
+                    "PyYAML が見つからないため YAML 形式で保存できませんでした。",
+                )
+                return False
+            data = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+        elif suffix == ".toml":
+            toml_writer = self._load_toml_writer()
+            if toml_writer is None:
+                QMessageBox.warning(
+                    self,
+                    "保存エラー",
+                    "tomli-w または toml が見つからないため TOML 形式で保存できませんでした。",
+                )
+                return False
+            data = toml_writer.dumps(payload)
+        else:
+            QMessageBox.warning(self, "保存エラー", "未対応の拡張子です。")
+            return False
+        try:
+            path.write_text(data, encoding="utf-8")
+        except OSError:
+            QMessageBox.warning(self, "保存エラー", "環境定義の保存に失敗しました。")
+            return False
+        return True
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict]:
+        if not path.exists():
+            return None
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                return None
+        elif suffix in {".yml", ".yaml"}:
+            yaml = self._load_yaml_module()
+            if yaml is None:
+                return None
+            payload = yaml.safe_load(content)
+        elif suffix == ".toml":
+            try:
+                payload = tomllib.loads(content)
+            except tomllib.TOMLDecodeError:
+                return None
+        else:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    @staticmethod
+    def _load_yaml_module():
+        if importlib.util.find_spec("yaml") is None:
+            return None
+        import yaml  # type: ignore
+
+        return yaml
+
+    @staticmethod
+    def _load_toml_writer():
+        if importlib.util.find_spec("tomli_w") is not None:
+            import tomli_w  # type: ignore
+
+            return tomli_w
+        if importlib.util.find_spec("toml") is not None:
+            import toml  # type: ignore
+
+            return toml
+        return None
+
+    @staticmethod
+    def _parse_environment_variables(value: str) -> dict[str, str]:
+        env_map: dict[str, str] = {}
+        if not value:
+            return env_map
+        for raw_line in value.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, entry_value = line.split("=", 1)
+            key = key.strip()
+            entry_value = entry_value.strip()
+            if key:
+                env_map[key] = entry_value
+        return env_map
 
     def _open_plugin_dialog(self) -> None:
         start_path = self._resolve_plugin_dialog_start_path()
