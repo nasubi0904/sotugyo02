@@ -314,39 +314,75 @@ def _collect_execute_vars_via_rez_env(
         "print(json.dumps(d, ensure_ascii=False))"
     )
 
-    cmd = [rez_env_exe, package_request, "--", sys.executable, "-c", probe]
+    def _run_rez_env(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        try:
+            return subprocess.run(
+                list(cmd),
+                capture_output=True,
+                text=True,
+                env=(extra_env if extra_env is not None else os.environ.copy()),
+                check=False,
+            )
+        except OSError as e:
+            raise LaunchError(f"EXECUTE_ 変数取得用の rez-env 実行に失敗しました: {e}") from e
 
-    try:
-        cp = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=(extra_env if extra_env is not None else os.environ.copy()),
-            check=False,
-        )
-    except OSError as e:
-        raise LaunchError(f"EXECUTE_ 変数取得用の rez-env 実行に失敗しました: {e}") from e
-
-    if cp.returncode != 0:
-        # stderr も stdout に含めて最低限のトラブルシュート情報を残す
+    def _build_error_detail(cp: subprocess.CompletedProcess[str]) -> str:
         msg = (cp.stderr or "").strip()
         out = (cp.stdout or "").strip()
-        detail = msg if msg else out
-        raise LaunchError(f"EXECUTE_ 変数の取得に失敗しました（rez-env returncode={cp.returncode}）。{detail}")
+        return msg if msg else out
 
-    raw = (cp.stdout or "").strip()
-    if not raw:
+    def _parse_execute_vars_from_env(raw_env: str) -> Dict[str, str]:
+        values: Dict[str, str] = {}
+        for line in raw_env.splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key.startswith("EXECUTE_"):
+                continue
+            if value.strip():
+                values[key] = value.strip()
+        return values
+
+    python_cmd = [rez_env_exe, package_request, "--", sys.executable, "-c", probe]
+    cp = _run_rez_env(python_cmd)
+    if cp.returncode == 0:
+        raw = (cp.stdout or "").strip()
+        if not raw:
+            return {}
+        try:
+            import json as _json
+            data = _json.loads(raw)
+            if isinstance(data, dict):
+                return {str(k): str(v) for k, v in data.items() if str(v).strip()}
+        except Exception:
+            pass
+
+    python_detail = _build_error_detail(cp)
+
+    if os.name == "nt":
+        env_cmd = [rez_env_exe, package_request, "--", "cmd", "/c", "set"]
+    else:
+        env_cmd = [rez_env_exe, package_request, "--", "env"]
+
+    env_cp = _run_rez_env(env_cmd)
+    if env_cp.returncode != 0:
+        env_detail = _build_error_detail(env_cp)
+        detail_parts = []
+        if python_detail:
+            detail_parts.append(f"python={python_detail}")
+        if env_detail:
+            detail_parts.append(f"env={env_detail}")
+        detail_text = " / ".join(detail_parts)
+        raise LaunchError(
+            f"EXECUTE_ 変数の取得に失敗しました（rez-env returncode={env_cp.returncode}）。{detail_text}"
+        )
+
+    env_raw = (env_cp.stdout or "").strip()
+    if not env_raw:
         return {}
 
-    try:
-        import json as _json
-        data = _json.loads(raw)
-        if isinstance(data, dict):
-            # 値が文字列であることだけ保証
-            return {str(k): str(v) for k, v in data.items() if str(v).strip()}
-        return {}
-    except Exception as e:
-        raise LaunchError(f"EXECUTE_ 変数の解析に失敗しました（JSON として解釈不可）。stdout={raw}") from e
+    return _parse_execute_vars_from_env(env_raw)
 
 
 def _resolve_tool_args_from_execute_vars(
