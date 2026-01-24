@@ -117,6 +117,9 @@ class NodeEditorCoordinator:
     def list_rez_packages(self) -> List[RezPackageSpec]:
         return self.tool_service.list_rez_packages()
 
+    def list_rez_package_entries(self) -> List[RezPackageSpec]:
+        return self.tool_service.list_rez_package_entries()
+
     def list_project_rez_packages(self, project_root: Path) -> List[RezPackageSpec]:
         return self.tool_service.list_project_rez_packages(project_root)
 

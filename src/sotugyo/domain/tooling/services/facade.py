@@ -178,6 +178,9 @@ class ToolEnvironmentService:
     def list_rez_packages(self) -> List[RezPackageSpec]:
         return self.rez_repository.list_packages()
 
+    def list_rez_package_entries(self) -> List[RezPackageSpec]:
+        return self.rez_repository.list_package_entries()
+
     def list_project_rez_packages(self, project_root: Path) -> List[RezPackageSpec]:
         return ProjectRezPackageRepository(project_root).list_packages()
 
