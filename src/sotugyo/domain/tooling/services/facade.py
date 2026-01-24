@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import logging
 from pathlib import Path
 import re
+import importlib
 from typing import Dict, Iterable, List, Optional
+
+import tomllib
 
 from ..models import (
     RegisteredTool,
@@ -22,9 +27,12 @@ from ..repositories.rez_packages import (
     RezPackageValidationResult,
 )
 from ..templates.gateway import TemplateGateway
+from ....infrastructure.paths.storage import get_tool_environment_dir
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
 from .rez import RezPackageQueryService, RezQueryResult
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -243,6 +251,10 @@ class ToolEnvironmentService:
         package_map = {self._build_rez_tool_id(spec): spec for spec in specs}
 
         tools, environments = self.registry_service.repository.load_all()
+        environments = self._merge_environment_definitions(
+            environments,
+            self._load_environment_definitions_from_dir(),
+        )
         tool_map = {tool.tool_id: tool for tool in tools}
         tool_by_package: Dict[str, RegisteredTool] = {}
         for tool in tools:
@@ -259,6 +271,7 @@ class ToolEnvironmentService:
         now = datetime.utcnow()
         synced_tools: List[RegisteredTool] = []
         synced_envs: List[ToolEnvironmentDefinition] = []
+        used_env_ids: set[str] = set()
 
         for tool_id, spec in sorted(package_map.items()):
             resolved_executable = self.rez_repository.resolve_executable(spec)
@@ -315,8 +328,199 @@ class ToolEnvironmentService:
                 environment.environment_id = f"rez:{tool_id}"
                 environment.updated_at = now
             synced_envs.append(environment)
+            used_env_ids.add(environment.environment_id)
+
+        for environment in environments:
+            if environment.environment_id in used_env_ids:
+                continue
+            synced_envs.append(environment)
 
         self.registry_service.repository.save_all(synced_tools, synced_envs)
+
+    def _load_environment_definitions_from_dir(self) -> List[ToolEnvironmentDefinition]:
+        env_dir = get_tool_environment_dir()
+        files = self._collect_environment_files(env_dir)
+        definitions: List[ToolEnvironmentDefinition] = []
+        for path in files:
+            payload = self._read_environment_payload(path)
+            if payload is None:
+                continue
+            definition = self._build_environment_definition(payload, path)
+            if definition is None:
+                continue
+            definitions.append(definition)
+        return definitions
+
+    @staticmethod
+    def _collect_environment_files(root: Path) -> List[Path]:
+        if not root.exists():
+            return []
+        try:
+            entries = [entry for entry in root.iterdir() if entry.is_file()]
+        except OSError:
+            LOGGER.debug("環境定義ディレクトリの走査に失敗しました: %s", root, exc_info=True)
+            return []
+        preferred = [
+            entry
+            for entry in entries
+            if entry.suffix.lower() in {".json", ".yml", ".yaml", ".toml"}
+        ]
+        return sorted(preferred or entries)
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            LOGGER.warning("環境定義ファイルの読み込みに失敗しました: %s", path, exc_info=True)
+            return None
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            try:
+                payload = json.loads(content)
+            except json.JSONDecodeError:
+                LOGGER.warning("環境定義 JSON の解析に失敗しました: %s", path, exc_info=True)
+                return None
+            return payload if isinstance(payload, dict) else None
+        if suffix in {".yml", ".yaml"}:
+            module = importlib.util.find_spec("yaml")
+            if module is None:
+                LOGGER.warning("YAML の解析ライブラリが無いため %s を読み込めません。", path)
+                return None
+            yaml_module = importlib.import_module("yaml")
+            payload = yaml_module.safe_load(content)
+            return payload if isinstance(payload, dict) else None
+        if suffix == ".toml":
+            try:
+                payload = tomllib.loads(content)
+            except tomllib.TOMLDecodeError:
+                LOGGER.warning("TOML の解析に失敗しました: %s", path, exc_info=True)
+                return None
+            return payload if isinstance(payload, dict) else None
+        return None
+
+    def _build_environment_definition(
+        self,
+        payload: dict,
+        source_path: Path,
+    ) -> Optional[ToolEnvironmentDefinition]:
+        name = str(payload.get("name") or source_path.stem).strip() or source_path.stem
+        tool_id = str(payload.get("tool_id") or "").strip()
+        package_name = str(
+            payload.get("package") or payload.get("package_name") or ""
+        ).strip()
+        version_label = str(
+            payload.get("version_label")
+            or payload.get("package_version")
+            or payload.get("version")
+            or "local"
+        ).strip()
+        if not tool_id:
+            if package_name:
+                tool_id = f"{package_name}@{version_label or 'local'}"
+            else:
+                LOGGER.warning(
+                    "環境定義のツール情報が不足しているため読み込みをスキップしました: %s",
+                    source_path,
+                )
+                return None
+
+        rez_packages = self._normalize_sequence(payload.get("rez_packages"))
+        if not rez_packages and package_name:
+            rez_packages = (package_name,)
+        rez_variants = self._normalize_sequence(payload.get("rez_variants"))
+        rez_environment = self._normalize_environment(payload.get("rez_environment"))
+        if rez_environment is None:
+            rez_environment = self._parse_environment_variables(
+                payload.get("environment_variables")
+            )
+        metadata: Dict[str, object] = {}
+        raw_metadata = payload.get("metadata")
+        if isinstance(raw_metadata, dict):
+            metadata.update(raw_metadata)
+        metadata["source_file"] = str(source_path)
+        metadata["source_format"] = source_path.suffix.lower()
+        if "launch_arguments" in payload:
+            metadata["launch_arguments"] = payload.get("launch_arguments")
+        if "required_plugins" in payload:
+            metadata["required_plugins"] = payload.get("required_plugins")
+
+        environment_id = str(payload.get("environment_id") or "").strip()
+        if not environment_id:
+            environment_id = f"file:{source_path.stem}"
+        template_id = payload.get("template_id")
+        if template_id is not None:
+            template_id = str(template_id)
+        now = datetime.utcnow()
+        return ToolEnvironmentDefinition(
+            environment_id=environment_id,
+            name=name,
+            tool_id=tool_id,
+            version_label=version_label or "local",
+            template_id=template_id,
+            rez_packages=rez_packages or (),
+            rez_variants=rez_variants or (),
+            rez_environment=rez_environment or {},
+            metadata=metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+    @staticmethod
+    def _parse_environment_variables(raw: object) -> Optional[Dict[str, str]]:
+        if raw is None:
+            return None
+        if isinstance(raw, dict):
+            return {
+                str(key): str(value)
+                for key, value in raw.items()
+                if isinstance(key, str)
+            }
+        if not isinstance(raw, str):
+            return None
+        env_map: Dict[str, str] = {}
+        for line in raw.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            env_map[key.strip()] = value.strip()
+        return env_map
+
+    @staticmethod
+    def _merge_environment_definitions(
+        existing: List[ToolEnvironmentDefinition],
+        loaded: List[ToolEnvironmentDefinition],
+    ) -> List[ToolEnvironmentDefinition]:
+        merged = {env.environment_id: env for env in existing}
+        for env in loaded:
+            merged[env.environment_id] = env
+        return list(merged.values())
+
+    @staticmethod
+    def _normalize_sequence(values: object) -> Optional[tuple[str, ...]]:
+        if values is None:
+            return None
+        if isinstance(values, (list, tuple, set)):
+            return tuple(
+                str(entry).strip()
+                for entry in values
+                if isinstance(entry, str) and entry.strip()
+            )
+        if isinstance(values, str):
+            return tuple(entry.strip() for entry in values.split(",") if entry.strip())
+        return None
+
+    @staticmethod
+    def _normalize_environment(values: object) -> Optional[Dict[str, str]]:
+        if values is None:
+            return None
+        if not isinstance(values, dict):
+            return None
+        normalized: Dict[str, str] = {}
+        for key, value in values.items():
+            if isinstance(key, str) and isinstance(value, str):
+                normalized[key.strip()] = value.strip()
+        return normalized
 
     @staticmethod
     def _build_rez_tool_id(spec: RezPackageSpec) -> str:
