@@ -24,6 +24,15 @@ class ToolEnvironmentNode(BaseNode):
         self.set_property("height", 180, push_undo=False)
         self.set_color(80, 130, 190)
 
+    def ensure_input_ports(self, names: list[str]) -> None:
+        """指定された入力プラグを追加する。"""
+
+        existing = {port.name() for port in self.input_ports()}
+        for name in names:
+            if name and name not in existing:
+                self.add_input(name)
+                existing.add(name)
+
     @classmethod
     def node_type_identifier(cls) -> str:
         return f"{cls.__identifier__}.{cls.__name__}"

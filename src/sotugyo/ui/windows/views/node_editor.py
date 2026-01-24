@@ -843,6 +843,7 @@ class NodeEditorWindow(QMainWindow):
             position=position,
         )
         self._apply_tool_node_rez_properties(node, definition)
+        self._apply_tool_node_environment_payload(node, definition)
 
     def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
         env_id = ""
@@ -871,6 +872,58 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(existing, Mapping) and dict(existing) == rez_info:
             return False
         return self._set_node_custom_property(node, "rez_info", rez_info)
+
+    def _apply_tool_node_environment_payload(
+        self,
+        node,
+        definition: ToolEnvironmentDefinition,
+    ) -> bool:
+        payload = self._tool_environment_payload(definition)
+        if payload is None:
+            return False
+        existing = self._node_custom_property_value(node, "tool_environment_payload")
+        if isinstance(existing, Mapping) and dict(existing) == payload:
+            return False
+        updated = self._set_node_custom_property(node, "tool_environment_payload", payload)
+        if isinstance(node, ToolEnvironmentNode):
+            input_names = self._extract_tool_environment_input_names(payload)
+            if input_names:
+                node.ensure_input_ports(input_names)
+        return updated
+
+    def _tool_environment_payload(
+        self,
+        definition: ToolEnvironmentDefinition,
+    ) -> Optional[Dict[str, object]]:
+        metadata = definition.metadata or {}
+        payload = metadata.get("tool_environment_payload")
+        if isinstance(payload, Mapping):
+            return dict(payload)
+        return None
+
+    def _extract_tool_environment_input_names(
+        self, payload: Mapping[str, object]
+    ) -> List[str]:
+        names: List[str] = []
+        raw_inputs = payload.get("input_plugs")
+        if isinstance(raw_inputs, list):
+            for entry in raw_inputs:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                if isinstance(name, str) and name and name not in names:
+                    names.append(name)
+        raw_plugins = payload.get("required_plugins")
+        if isinstance(raw_plugins, list):
+            for entry in raw_plugins:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("path_type") != "node_input":
+                    continue
+                name = entry.get("name")
+                if isinstance(name, str) and name and name not in names:
+                    names.append(name)
+        return names
 
     def _ensure_tool_node_rez_properties(self, node) -> bool:
         if not isinstance(node, ToolEnvironmentNode):

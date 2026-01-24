@@ -15,6 +15,7 @@ from ..models import (
     ToolEnvironmentDefinition,
 )
 from ..repositories.config import ToolConfigRepository
+from ..repositories.environment_files import ToolEnvironmentFileRepository
 from ..repositories.rez_packages import (
     ProjectRezPackageRepository,
     RezPackageRepository,
@@ -36,6 +37,7 @@ class ToolEnvironmentService:
     template_gateway: TemplateGateway
     rez_repository: RezPackageRepository
     rez_query_service: RezPackageQueryService
+    environment_file_repository: ToolEnvironmentFileRepository
 
     def __init__(
         self,
@@ -55,6 +57,7 @@ class ToolEnvironmentService:
         self.template_gateway = template_gateway or TemplateGateway()
         self.rez_repository = rez_repository or RezPackageRepository()
         self.rez_query_service = rez_query_service or RezPackageQueryService()
+        self.environment_file_repository = ToolEnvironmentFileRepository()
 
     # ------------------------------------------------------------------
     # ツール登録
@@ -244,21 +247,17 @@ class ToolEnvironmentService:
 
         tools, environments = self.registry_service.repository.load_all()
         tool_map = {tool.tool_id: tool for tool in tools}
+        existing_envs = {env.environment_id: env for env in environments}
         tool_by_package: Dict[str, RegisteredTool] = {}
         for tool in tools:
             if tool.template_id:
                 tool_by_package[
                     self.rez_repository.normalize_template_id(tool.template_id)
                 ] = tool
-        env_map = {env.tool_id: env for env in environments}
-        env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
-        for env in environments:
-            for package in env.rez_packages:
-                env_by_package[package] = env
 
         now = datetime.utcnow()
         synced_tools: List[RegisteredTool] = []
-        synced_envs: List[ToolEnvironmentDefinition] = []
+        synced_envs: Dict[str, ToolEnvironmentDefinition] = {}
 
         for tool_id, spec in sorted(package_map.items()):
             resolved_executable = self.rez_repository.resolve_executable(spec)
@@ -288,40 +287,72 @@ class ToolEnvironmentService:
                 tool.version = spec.version
                 tool.updated_at = now
             synced_tools.append(tool)
-
-            environment = (
-                env_map.get(tool_id)
-                or env_map.get(spec.name)
-                or env_by_package.get(spec.name)
+            env_id = f"rez:{tool_id}"
+            existing_env = existing_envs.get(env_id)
+            default_env = ToolEnvironmentDefinition(
+                environment_id=env_id,
+                name=self._build_rez_environment_name(spec),
+                tool_id=tool_id,
+                version_label=spec.version or "local",
+                rez_packages=(spec.name,),
+                rez_variants=(),
+                rez_environment={},
+                metadata=dict(existing_env.metadata) if existing_env else {},
+                created_at=existing_env.created_at if existing_env else now,
+                updated_at=now,
             )
-            if environment is None:
-                environment = ToolEnvironmentDefinition(
-                    environment_id=f"rez:{tool_id}",
-                    name=self._build_rez_environment_name(spec),
-                    tool_id=tool_id,
-                    version_label=spec.version or "local",
-                    rez_packages=(spec.name,),
-                    rez_variants=(),
-                    rez_environment={},
-                    metadata={},
-                    created_at=now,
-                    updated_at=now,
-                )
-            else:
-                environment.tool_id = tool_id
-                environment.name = self._build_rez_environment_name(spec)
-                environment.version_label = spec.version or environment.version_label or "local"
-                environment.rez_packages = (spec.name,)
-                environment.environment_id = f"rez:{tool_id}"
-                environment.updated_at = now
-            synced_envs.append(environment)
+            synced_envs[default_env.environment_id] = default_env
 
-        self.registry_service.repository.save_all(synced_tools, synced_envs)
+        synced_tool_ids = {tool.tool_id for tool in synced_tools}
+        file_payloads = self.environment_file_repository.load_all()
+        for path, payload in file_payloads:
+            tool_payload = payload.get("tool", {}) if isinstance(payload, dict) else {}
+            tool_id = tool_payload.get("tool_id") if isinstance(tool_payload, dict) else None
+            package_name = tool_payload.get("package") if isinstance(tool_payload, dict) else None
+            version_label = tool_payload.get("version") if isinstance(tool_payload, dict) else None
+            if not isinstance(tool_id, str) or not tool_id:
+                if isinstance(package_name, str) and package_name:
+                    tool_id = self.build_rez_tool_id(package_name, version_label)
+            if not tool_id or tool_id not in synced_tool_ids:
+                continue
+            env_id = payload.get("environment_id")
+            if not isinstance(env_id, str) or not env_id:
+                continue
+            name = payload.get("name") if isinstance(payload.get("name"), str) else path.stem
+            rez_packages = (package_name,) if isinstance(package_name, str) and package_name else ()
+            existing_env = existing_envs.get(env_id)
+            metadata = dict(existing_env.metadata) if existing_env else {}
+            raw_payload = payload.get("payload")
+            if isinstance(raw_payload, dict):
+                metadata["tool_environment_payload"] = dict(raw_payload)
+            metadata["environment_file"] = path.name
+            custom_env = ToolEnvironmentDefinition(
+                environment_id=env_id,
+                name=name or path.stem,
+                tool_id=tool_id,
+                version_label=version_label or "local",
+                rez_packages=rez_packages,
+                rez_variants=(),
+                rez_environment={},
+                metadata=metadata,
+                created_at=existing_env.created_at if existing_env else now,
+                updated_at=now,
+            )
+            synced_envs[custom_env.environment_id] = custom_env
+
+        self.registry_service.repository.save_all(synced_tools, synced_envs.values())
 
     @staticmethod
     def _build_rez_tool_id(spec: RezPackageSpec) -> str:
         version_label = spec.version or "local"
         return f"{spec.name}@{version_label}"
+
+    @staticmethod
+    def build_rez_tool_id(package_name: str, version_label: str | None) -> str:
+        """パッケージ名とバージョンからツール ID を構成する。"""
+
+        version = version_label or "local"
+        return f"{package_name}@{version}"
 
     @staticmethod
     def _build_rez_environment_name(spec: RezPackageSpec) -> str:
