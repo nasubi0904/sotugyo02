@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -9,6 +11,8 @@ import uuid
 import ctypes
 from pathlib import Path
 from typing import Optional
+
+import tomllib
 
 from qtpy import QtCore, QtWidgets
 
@@ -143,6 +147,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.result() == QDialog.Accepted:
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
     def _open_edit_dialog(self) -> None:
         path = self._selected_environment_path()
@@ -155,6 +162,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.result() == QDialog.Accepted:
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
 
 class ToolEnvironmentEditorDialog(QDialog):
@@ -172,6 +182,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._environment_id: Optional[str] = None
         self._required_plugins: list[dict[str, str]] = []
         self._package_py_cache: dict[Path, str] = {}
         self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
@@ -254,8 +265,8 @@ class ToolEnvironmentEditorDialog(QDialog):
         layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()
-        self._create_button = QPushButton("環境作成", self)
-        self._create_button.clicked.connect(self._print_environment)
+        self._create_button = QPushButton("保存", self)
+        self._create_button.clicked.connect(self._save_environment)
         button_layout.addWidget(self._create_button)
         button_layout.addStretch(1)
 
@@ -284,19 +295,268 @@ class ToolEnvironmentEditorDialog(QDialog):
         if self._environment_path is None:
             self._name_edit.setText("")
             return
-        self._name_edit.setText(self._environment_path.stem)
+        payload = self._read_environment_payload(self._environment_path)
+        if payload is None:
+            self._name_edit.setText(self._environment_path.stem)
+            return
+        normalized = self._normalize_environment_payload(payload)
+        self._environment_id = normalized.get("environment_id")
+        self._name_edit.setText(normalized.get("name") or self._environment_path.stem)
+        self._load_package_from_payload(normalized)
+        env_text = self._format_environment_variables(normalized.get("environment_variables"))
+        self._env_vars_edit.setPlainText(env_text)
+        self._launch_args_edit.setPlainText(
+            str(normalized.get("launch_arguments") or "").strip()
+        )
+        plugins = normalized.get("required_plugins")
+        if isinstance(plugins, list):
+            self._required_plugins = [
+                entry for entry in plugins if isinstance(entry, dict)
+            ]
+        self._refresh_plugin_list()
 
-    def _print_environment(self) -> None:
-        package = self._package_combo.currentData()
-        payload = {
-            "name": self._name_edit.text().strip() or "無名の環境",
-            "package": package.name if isinstance(package, RezPackageSpec) else None,
-            "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "environment_variables": self._build_environment_variables(),
+    def _save_environment(self) -> None:
+        name = self._name_edit.text().strip()
+        if not name:
+            QMessageBox.warning(self, "入力エラー", "環境名を入力してください。")
+            return
+        package = self._current_package_spec()
+        if package is None:
+            QMessageBox.warning(self, "入力エラー", "ツールパッケージを選択してください。")
+            return
+        payload = self._build_environment_payload(name, package)
+        target_path = self._resolve_target_path(name)
+        if target_path is None:
+            QMessageBox.warning(self, "保存失敗", "保存先ファイルを確定できませんでした。")
+            return
+        if not self._write_environment_payload(target_path, payload):
+            QMessageBox.warning(self, "保存失敗", "環境定義の保存に失敗しました。")
+            return
+        self._environment_path = target_path
+        self.accept()
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            return self._parse_json_payload(content)
+        if suffix in {".yml", ".yaml"}:
+            return self._parse_yaml_payload(content)
+        if suffix == ".toml":
+            return self._parse_toml_payload(content)
+        return self._parse_json_payload(content)
+
+    @staticmethod
+    def _parse_json_payload(content: str) -> Optional[dict]:
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    @staticmethod
+    def _parse_yaml_payload(content: str) -> Optional[dict]:
+        if importlib.util.find_spec("yaml") is None:
+            return None
+        yaml_module = importlib.import_module("yaml")
+        parsed = yaml_module.safe_load(content)
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    @staticmethod
+    def _parse_toml_payload(content: str) -> Optional[dict]:
+        try:
+            parsed = tomllib.loads(content)
+        except tomllib.TOMLDecodeError:
+            return None
+        if isinstance(parsed, dict):
+            return parsed
+        return None
+
+    def _normalize_environment_payload(self, payload: dict) -> dict:
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict):
+            merged = dict(metadata)
+            for key in ("environment_variables", "launch_arguments", "required_plugins"):
+                if key in payload:
+                    merged.setdefault(key, payload.get(key))
+            merged.setdefault("package", payload.get("package"))
+            merged.setdefault("package_version", payload.get("package_version"))
+        else:
+            merged = {}
+        result = dict(payload)
+        if merged:
+            result["metadata"] = merged
+        if "environment_variables" not in result:
+            if "rez_environment" in result and isinstance(result.get("rez_environment"), dict):
+                result["environment_variables"] = result.get("rez_environment")
+            else:
+                result["environment_variables"] = merged.get("environment_variables")
+        if "launch_arguments" not in result:
+            result["launch_arguments"] = merged.get("launch_arguments")
+        if "required_plugins" not in result:
+            result["required_plugins"] = merged.get("required_plugins")
+        if "package" not in result:
+            result["package"] = merged.get("package")
+        if "package_version" not in result:
+            result["package_version"] = merged.get("package_version")
+        if "name" not in result and self._environment_path is not None:
+            result["name"] = self._environment_path.stem
+        return result
+
+    def _load_package_from_payload(self, payload: dict) -> None:
+        package_name = payload.get("package")
+        package_version = payload.get("package_version")
+        tool_id = payload.get("tool_id")
+        if not package_name and isinstance(tool_id, str) and "@" in tool_id:
+            package_name, package_version = tool_id.split("@", 1)
+        if not package_name:
+            return
+        self._select_package(str(package_name), str(package_version or ""))
+
+    def _select_package(self, package_name: str, version_label: str) -> None:
+        for index in range(self._package_combo.count()):
+            data = self._package_combo.itemData(index)
+            if not isinstance(data, RezPackageSpec):
+                continue
+            if data.name != package_name:
+                continue
+            if version_label and data.version and data.version != version_label:
+                continue
+            self._package_combo.setCurrentIndex(index)
+            return
+
+    @staticmethod
+    def _format_environment_variables(raw: object) -> str:
+        if isinstance(raw, str):
+            return raw.strip()
+        if isinstance(raw, dict):
+            lines = [f"{key}={value}" for key, value in raw.items()]
+            return "\n".join(lines).strip()
+        return ""
+
+    def _build_environment_payload(
+        self,
+        name: str,
+        package: RezPackageSpec,
+    ) -> dict:
+        version_label = package.version or "local"
+        tool_id = f"{package.name}@{version_label}"
+        env_text = self._build_environment_variables()
+        env_map = self._parse_environment_variable_lines(env_text)
+        metadata = {
+            "environment_variables": env_text,
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
+            "package": package.name,
+            "package_version": package.version,
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        environment_id = self._environment_id or str(uuid.uuid4())
+        self._environment_id = environment_id
+        return {
+            "schema_version": 1,
+            "environment_id": environment_id,
+            "name": name,
+            "tool_id": tool_id,
+            "version_label": version_label,
+            "package": package.name,
+            "package_version": package.version,
+            "rez_packages": [package.name],
+            "rez_variants": [],
+            "rez_environment": env_map,
+            "environment_variables": env_text,
+            "launch_arguments": metadata["launch_arguments"],
+            "required_plugins": metadata["required_plugins"],
+            "metadata": metadata,
+        }
+
+    def _resolve_target_path(self, name: str) -> Optional[Path]:
+        suffix = ".json"
+        if self._environment_path is not None and self._environment_path.suffix:
+            suffix = self._environment_path.suffix
+        safe_name = self._sanitize_filename(name)
+        if not safe_name:
+            safe_name = "environment"
+        target = self._environment_dir / f"{safe_name}{suffix}"
+        if self._environment_path is None:
+            return self._ensure_unique_path(target)
+        if target == self._environment_path:
+            return target
+        return self._ensure_unique_path(target)
+
+    @staticmethod
+    def _sanitize_filename(value: str) -> str:
+        cleaned = re.sub(r"[\\/:\n\r\t]", "_", value.strip())
+        cleaned = re.sub(r"\s+", "_", cleaned)
+        cleaned = re.sub(r"[^0-9A-Za-z_\-ぁ-んァ-ン一-龥]", "", cleaned)
+        return cleaned.strip("_")
+
+    def _ensure_unique_path(self, target: Path) -> Path:
+        if not target.exists():
+            return target
+        base = target.stem
+        suffix = target.suffix or ".json"
+        for index in range(1, 100):
+            candidate = target.with_name(f"{base}_{index}{suffix}")
+            if not candidate.exists():
+                return candidate
+        return target.with_name(f"{base}_{uuid.uuid4().hex}{suffix}")
+
+    def _write_environment_payload(self, path: Path, payload: dict) -> bool:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        suffix = path.suffix.lower()
+        if suffix == ".json":
+            content = json.dumps(payload, ensure_ascii=False, indent=2)
+            return self._write_text(path, content)
+        if suffix in {".yml", ".yaml"}:
+            return self._write_yaml_payload(path, payload)
+        if suffix == ".toml":
+            return self._write_toml_payload(path, payload)
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
+        return self._write_text(path, content)
+
+    @staticmethod
+    def _write_text(path: Path, content: str) -> bool:
+        try:
+            path.write_text(content, encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def _write_yaml_payload(self, path: Path, payload: dict) -> bool:
+        if importlib.util.find_spec("yaml") is None:
+            return False
+        yaml_module = importlib.import_module("yaml")
+        content = yaml_module.safe_dump(payload, allow_unicode=True, sort_keys=False)
+        return self._write_text(path, content)
+
+    def _write_toml_payload(self, path: Path, payload: dict) -> bool:
+        if importlib.util.find_spec("tomli_w") is not None:
+            toml_module = importlib.import_module("tomli_w")
+            content = toml_module.dumps(payload)
+            return self._write_text(path, content)
+        if importlib.util.find_spec("toml") is not None:
+            toml_module = importlib.import_module("toml")
+            content = toml_module.dumps(payload)
+            return self._write_text(path, content)
+        return False
+
+    @staticmethod
+    def _parse_environment_variable_lines(raw_text: str) -> dict[str, str]:
+        env_map: dict[str, str] = {}
+        for line in raw_text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                continue
+            key, value = stripped.split("=", 1)
+            env_map[key.strip()] = value.strip()
+        return env_map
 
     def _open_plugin_dialog(self) -> None:
         start_path = self._resolve_plugin_dialog_start_path()
