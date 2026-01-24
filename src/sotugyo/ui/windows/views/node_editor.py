@@ -274,6 +274,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         inspector_dock.file_path_verify_requested.connect(self._handle_file_path_verify_requested)
+        inspector_dock.file_path_pick_requested.connect(self._handle_file_path_pick_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1520,6 +1521,53 @@ class NodeEditorWindow(QMainWindow):
             self._current_node.set_name(new_name)
         self._set_modified(True)
         self._update_selected_node_info()
+
+    def _handle_file_path_pick_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return
+        menu = QMenu(self)
+        file_action = menu.addAction("ファイルを選択")
+        folder_action = menu.addAction("フォルダを選択")
+        chosen = menu.exec_(QtGui.QCursor.pos())
+        if chosen is file_action:
+            selected = self._select_file_node_path(kind="file")
+        elif chosen is folder_action:
+            selected = self._select_file_node_path(kind="directory")
+        else:
+            return
+        if not selected:
+            return
+        self._handle_file_path_changed(selected)
+
+    def _select_file_node_path(self, *, kind: str) -> Optional[str]:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return None
+        base_dir = self._current_project_root or Path.home()
+        initial_dir = self._resolve_project_file_path(
+            self._file_node_value(self._current_node)
+        )
+        if initial_dir is None:
+            initial_path = str(base_dir)
+        else:
+            initial_path = str(initial_dir if initial_dir.is_dir() else initial_dir.parent)
+        if kind == "directory":
+            return QFileDialog.getExistingDirectory(
+                self,
+                "フォルダを選択",
+                initial_path,
+            )
+        if kind == "file":
+            filename, _ = QFileDialog.getOpenFileName(
+                self,
+                "ファイルを選択",
+                initial_path,
+                "すべてのファイル (*.*)",
+            )
+            return filename
+        self._show_warning_dialog("ファイル選択の種別が不正です。")
+        return None
 
     def _handle_file_path_verify_requested(self) -> None:
         if self._current_node is None or not isinstance(self._current_node, FileNode):
