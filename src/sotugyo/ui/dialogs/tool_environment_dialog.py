@@ -23,6 +23,7 @@ QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
 QListWidgetItem = QtWidgets.QListWidgetItem
 QPlainTextEdit = QtWidgets.QPlainTextEdit
+QInputDialog = QtWidgets.QInputDialog
 QPushButton = QtWidgets.QPushButton
 QComboBox = QtWidgets.QComboBox
 QVBoxLayout = QtWidgets.QVBoxLayout
@@ -32,7 +33,10 @@ QMessageBox = QtWidgets.QMessageBox
 
 from ...domain.tooling.models import RezPackageSpec
 from ...domain.tooling import ToolEnvironmentService
+from ...infrastructure.paths import encode_file_node_path, parse_file_node_path
 from ...infrastructure.paths.storage import get_tool_environment_dir
+
+FILE_NODE_TOKEN_PATTERN = re.compile(r"file-node(?:-dir)?://[0-9a-fA-F-]{36}")
 
 
 class ToolEnvironmentManagerDialog(QDialog):
@@ -219,6 +223,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._plugin_add_button = QPushButton("追加", self)
         self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
         plugin_button_layout.addWidget(self._plugin_add_button)
+        self._plugin_add_file_node_button = QPushButton("ファイルノード参照を追加", self)
+        self._plugin_add_file_node_button.clicked.connect(self._open_file_node_reference_dialog)
+        plugin_button_layout.addWidget(self._plugin_add_file_node_button)
         self._plugin_remove_button = QPushButton("削除", self)
         self._plugin_remove_button.setEnabled(False)
         self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
@@ -244,13 +251,17 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._known_path_checkbox.setChecked(True)
         layout.addWidget(self._known_path_checkbox)
         self._env_vars_edit = QPlainTextEdit(self)
-        self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
+        self._env_vars_edit.setPlaceholderText(
+            "例:\nOCIO=path/to/config.ocio\nPLUGIN_DIR=file-node-dir://{UUID}\nAPP_MODE=dev"
+        )
         layout.addWidget(self._env_vars_edit)
 
         args_label = QLabel("起動引数の設定", self)
         layout.addWidget(args_label)
         self._launch_args_edit = QPlainTextEdit(self)
-        self._launch_args_edit.setPlaceholderText("例:\n--project path/to/project\n--verbose")
+        self._launch_args_edit.setPlaceholderText(
+            "例:\n--project file-node-dir://{UUID}\n--verbose"
+        )
         layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()
@@ -293,7 +304,7 @@ class ToolEnvironmentEditorDialog(QDialog):
             "package": package.name if isinstance(package, RezPackageSpec) else None,
             "package_version": package.version if isinstance(package, RezPackageSpec) else None,
             "environment_variables": self._build_environment_variables(),
-            "launch_arguments": self._launch_args_edit.toPlainText().strip(),
+            "launch_arguments": self._build_launch_arguments(),
             "required_plugins": list(self._required_plugins),
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -318,6 +329,34 @@ class ToolEnvironmentEditorDialog(QDialog):
             return
         for path in paths:
             self._append_required_plugin(Path(path))
+
+    def _open_file_node_reference_dialog(self) -> None:
+        node_uuid, ok = QInputDialog.getText(
+            self,
+            "ファイルノード参照の追加",
+            "ファイルノードの UUID を入力してください。",
+        )
+        if not ok:
+            return
+        encoded = encode_file_node_path(node_uuid.strip(), kind="directory")
+        spec = parse_file_node_path(encoded)
+        if spec is None:
+            QMessageBox.warning(
+                self,
+                "UUID の形式が不正です",
+                "ファイルノードの UUID を正しい形式で入力してください。",
+            )
+            return
+        name = f"ファイルノード ({spec.node_uuid[:8]})"
+        self._required_plugins.append(
+            {
+                "name": name,
+                "path_type": "file_node",
+                "node_uuid": spec.node_uuid,
+                "path_kind": spec.kind,
+            }
+        )
+        self._refresh_plugin_list()
 
     def _resolve_plugin_dialog_start_path(self) -> str:
         package = self._current_package_spec()
@@ -390,6 +429,11 @@ class ToolEnvironmentEditorDialog(QDialog):
                 label = (
                     f"{entry['name']} (tool:{entry['relative_path']})"
                 )
+            elif entry.get("path_type") == "file_node":
+                node_uuid = entry.get("node_uuid", "")
+                kind = entry.get("path_kind", "file")
+                reference = encode_file_node_path(node_uuid, kind=kind) or node_uuid
+                label = f"{entry['name']} ({reference})"
             else:
                 label = f"{entry['name']} ({entry['path']})"
             item = QListWidgetItem(label, self._plugin_list)
@@ -573,6 +617,8 @@ class ToolEnvironmentEditorDialog(QDialog):
             if base_dir is None:
                 return None
             return base_dir / Path(relative.replace("/", os.sep))
+        if path_type == "file_node":
+            return None
         return None
 
     def _resolve_known_folder_base(self, known_id: str) -> Optional[Path]:
@@ -599,17 +645,37 @@ class ToolEnvironmentEditorDialog(QDialog):
         base = self._reference_base_dir(reference_paths[0])
         return base / Path(normalized.replace("/", os.sep))
 
+    def _build_launch_arguments(self) -> str:
+        raw_text = self._launch_args_edit.toPlainText().strip()
+        if not raw_text:
+            return ""
+        return self._normalize_file_node_references(raw_text)
+
     def _build_environment_variables(self) -> str:
         raw_text = self._env_vars_edit.toPlainText().strip()
         if not raw_text:
             return ""
         if not self._known_path_checkbox.isChecked():
-            return raw_text
+            return self._normalize_file_node_references(raw_text)
         if os.name != "nt":
-            return raw_text
+            return self._normalize_file_node_references(raw_text)
         lines = raw_text.splitlines()
         replaced_lines = [self._replace_known_paths_in_line(line) for line in lines]
-        return "\n".join(replaced_lines).strip()
+        return self._normalize_file_node_references("\n".join(replaced_lines).strip())
+
+    def _normalize_file_node_references(self, raw_text: str) -> str:
+        if not raw_text:
+            return ""
+
+        def replace(match: re.Match[str]) -> str:
+            token = match.group(0)
+            spec = parse_file_node_path(token)
+            if spec is None:
+                return token
+            encoded = encode_file_node_path(spec.node_uuid, kind=spec.kind)
+            return encoded or token
+
+        return FILE_NODE_TOKEN_PATTERN.sub(replace, raw_text)
 
     def _replace_known_paths_in_line(self, line: str) -> str:
         stripped = line.strip()
