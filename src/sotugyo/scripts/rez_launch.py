@@ -325,7 +325,10 @@ def _collect_execute_vars_via_rez_env(
             check=False,
         )
     except OSError as e:
-        raise LaunchError(f"EXECUTE_ 変数取得用の rez-env 実行に失敗しました: {e}") from e
+        env_source = extra_env if extra_env is not None else os.environ
+        rez_packages_path = env_source.get("REZ_PACKAGES_PATH", "")
+        detail = f"rez_env={rez_env_exe}, REZ_PACKAGES_PATH={rez_packages_path}"
+        raise LaunchError(f"EXECUTE_ 変数取得用の rez-env 実行に失敗しました: {e}。{detail}") from e
 
     if cp.returncode != 0:
         # stderr も stdout に含めて最低限のトラブルシュート情報を残す
