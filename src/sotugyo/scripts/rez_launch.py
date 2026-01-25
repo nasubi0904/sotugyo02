@@ -34,7 +34,7 @@ import time
 from dataclasses import dataclass
 import importlib.util
 from pathlib import Path
-from typing import Optional, Sequence, Tuple, Dict, List
+from typing import Optional, Sequence, Tuple, Dict, List, Mapping
 
 
 # =========================
@@ -290,6 +290,8 @@ def launch_rez_detached(
     log_dir: Optional[str] = None,
     add_kdmrez: bool = True,
     exec_var: Optional[str] = None,
+    extra_env: Optional[Mapping[str, str]] = None,
+    extra_args: Optional[Sequence[str]] = None,
 ) -> LaunchResult:
     """
     外部から呼ぶ「高レベル API」。
@@ -309,6 +311,10 @@ def launch_rez_detached(
         True の場合、REZ_PACKAGES_PATH に %LOCALAPPDATA%\\KDMrez を実行時に追加する
       exec_var:
         EXECUTE_ 変数が複数ある場合などに、使う変数名を明示する（例: "EXECUTE_ADOBE_AFTER_EFFECTS_EXE"）
+      extra_env:
+        Rez 環境に追加で適用する環境変数の上書き定義
+      extra_args:
+        EXECUTE_ で解決した起動コマンドへ追記する引数
 
     戻り値:
       LaunchResult(pid, log_path, command)
@@ -330,6 +336,8 @@ def launch_rez_detached(
     resolved_env = _get_context_environ(context)
     merged_env = os.environ.copy()
     merged_env.update(resolved_env)
+    if extra_env:
+        merged_env.update(extra_env)
 
     # tool_args が無い場合は EXECUTE_... から自動解決
     resolved_tool_args: List[str]
@@ -338,6 +346,8 @@ def launch_rez_detached(
     else:
         execute_vars = _collect_execute_vars_from_env(resolved_env)
         resolved_tool_args = _resolve_tool_args_from_execute_vars(execute_vars, exec_var=exec_var)
+    if extra_args:
+        resolved_tool_args.extend(list(extra_args))
 
     cmd = tuple(resolved_tool_args)
     log_path = _make_log_path(log_dir, package_request, resolved_tool_args)

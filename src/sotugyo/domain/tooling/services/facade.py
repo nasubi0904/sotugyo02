@@ -4,11 +4,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
+import logging
 from pathlib import Path
 import re
 from typing import Dict, Iterable, List, Optional
 
 from ..models import (
+    collect_node_input_names,
     RegisteredTool,
     RezPackageSpec,
     TemplateInstallationCandidate,
@@ -22,6 +25,7 @@ from ..repositories.rez_packages import (
     RezPackageValidationResult,
 )
 from ..templates.gateway import TemplateGateway
+from ....infrastructure.paths.storage import get_tool_environment_dir
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
 from .rez import RezPackageQueryService, RezQueryResult
@@ -250,11 +254,17 @@ class ToolEnvironmentService:
                 tool_by_package[
                     self.rez_repository.normalize_template_id(tool.template_id)
                 ] = tool
-        env_map = {env.tool_id: env for env in environments}
-        env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
+        rez_env_map = {
+            env.tool_id: env
+            for env in environments
+            if env.environment_id.startswith("rez:")
+        }
+        rez_env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
         for env in environments:
+            if not env.environment_id.startswith("rez:"):
+                continue
             for package in env.rez_packages:
-                env_by_package[package] = env
+                rez_env_by_package[package] = env
 
         now = datetime.utcnow()
         synced_tools: List[RegisteredTool] = []
@@ -290,9 +300,9 @@ class ToolEnvironmentService:
             synced_tools.append(tool)
 
             environment = (
-                env_map.get(tool_id)
-                or env_map.get(spec.name)
-                or env_by_package.get(spec.name)
+                rez_env_map.get(tool_id)
+                or rez_env_map.get(spec.name)
+                or rez_env_by_package.get(spec.name)
             )
             if environment is None:
                 environment = ToolEnvironmentDefinition(
@@ -314,6 +324,14 @@ class ToolEnvironmentService:
                 environment.rez_packages = (spec.name,)
                 environment.environment_id = f"rez:{tool_id}"
                 environment.updated_at = now
+            synced_envs.append(environment)
+
+        for path, payload in self._load_environment_payloads():
+            environment = self._build_environment_definition_from_payload(payload, path, now)
+            if environment is None:
+                continue
+            if environment.environment_id in {env.environment_id for env in synced_envs}:
+                continue
             synced_envs.append(environment)
 
         self.registry_service.repository.save_all(synced_tools, synced_envs)
@@ -341,3 +359,72 @@ class ToolEnvironmentService:
         cleaned = re.sub(r"\s+", "_", cleaned)
         cleaned = re.sub(r"[^a-z0-9_]", "", cleaned)
         return cleaned
+
+    def _load_environment_payloads(self) -> List[tuple[Path, Dict[str, object]]]:
+        env_dir = get_tool_environment_dir()
+        if not env_dir.exists():
+            return []
+        payloads: List[tuple[Path, Dict[str, object]]] = []
+        for entry in sorted(env_dir.iterdir()):
+            if not entry.is_file():
+                continue
+            if entry.suffix.lower() != ".json":
+                continue
+            try:
+                content = entry.read_text(encoding="utf-8")
+            except OSError:
+                LOGGER.warning("環境定義ファイルの読み込みに失敗しました: %s", entry)
+                continue
+            try:
+                parsed = json.loads(content)
+            except json.JSONDecodeError:
+                LOGGER.warning("環境定義ファイルの解析に失敗しました: %s", entry)
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            payloads.append((entry, dict(parsed)))
+        return payloads
+
+    def _build_environment_definition_from_payload(
+        self,
+        payload: Dict[str, object],
+        path: Path,
+        now: datetime,
+    ) -> Optional[ToolEnvironmentDefinition]:
+        package_name = payload.get("package")
+        if not isinstance(package_name, str) or not package_name.strip():
+            return None
+        version_label = payload.get("package_version")
+        if isinstance(version_label, str):
+            version_label = version_label.strip()
+        else:
+            version_label = ""
+        tool_id = f"{package_name}@{version_label or 'local'}"
+        environment_id = payload.get("environment_id")
+        if not isinstance(environment_id, str) or not environment_id.strip():
+            environment_id = f"envfile:{path.stem}"
+        name = payload.get("name")
+        if not isinstance(name, str) or not name.strip():
+            name = path.stem
+        node_inputs = collect_node_input_names(payload)
+        metadata = {
+            "environment_payload": payload,
+            "environment_inputs": node_inputs,
+            "environment_file": str(path),
+        }
+        return ToolEnvironmentDefinition(
+            environment_id=environment_id,
+            name=str(name),
+            tool_id=tool_id,
+            version_label=str(version_label or "local"),
+            template_id=None,
+            rez_packages=(str(package_name),),
+            rez_variants=(),
+            rez_environment={},
+            metadata=metadata,
+            created_at=now,
+            updated_at=now,
+        )
+
+
+LOGGER = logging.getLogger(__name__)
