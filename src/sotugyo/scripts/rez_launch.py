@@ -4,7 +4,7 @@ rez_detached_launcher.py
 
 コンセプト
 ----------
-- Rez パッケージ環境を介して DCC/ツールを起動する。
+- Rez Python API でパッケージ環境を解決し、DCC/ツールを起動する。
 - 親プロセスが落ちても、起動したツールが落ちないよう「独立起動(detached)」する。
 - 標準出力/標準エラーは、親プロセスのパイプ監視ではなく「ログファイルへリダイレクト」する。
   （親が死んだ後でもログが残るため）
@@ -21,8 +21,6 @@ rez_detached_launcher.py
 提供する主な API
 ----------------
 - ensure_kdmrez_in_rez_packages_path()
-- resolve_rez_env_exe()
-- build_rez_env_command()
 - launch_detached_with_log()
 - launch_rez_detached()  ← 外部からはこれを呼ぶのが基本
 """
@@ -30,11 +28,11 @@ rez_detached_launcher.py
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
+import importlib.util
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, Dict, List
 
@@ -44,10 +42,6 @@ from typing import Optional, Sequence, Tuple, Dict, List
 # =========================
 class RezLauncherError(RuntimeError):
     """本モジュールの基底例外。"""
-
-
-class RezEnvNotFoundError(RezLauncherError):
-    """rez-env 実行ファイルが見つからない。"""
 
 
 class InvalidArgumentsError(RezLauncherError):
@@ -111,77 +105,6 @@ def ensure_kdmrez_in_rez_packages_path(prepend_path: Optional[Path] = None) -> P
         os.environ["REZ_PACKAGES_PATH"] = ";".join(parts)
 
     return prepend_path
-
-
-def resolve_rez_env_exe(hint: Optional[str] = None) -> str:
-    """
-    rez-env 実行ファイルを確実に見つける。
-
-    探索順:
-      1) hint（フルパスなど）を指定した場合はそれ
-      2) PATH 上の rez-env(.exe)
-      3) 現在の Python 実行ファイル近傍（venv/埋め込み環境の Scripts）にある rez-env.exe
-
-    失敗時:
-      RezEnvNotFoundError を送出
-    """
-    if hint:
-        p = Path(hint)
-        if p.exists():
-            return str(p)
-        # hint が無効でも次の探索へ進む（呼び出し側が柔軟に運用できるように）
-
-    w = shutil.which("rez-env")
-    if w:
-        return w
-
-    py = Path(sys.executable)
-
-    candidates = (
-        py.parent / "rez-env.exe",
-        py.parent / "rez-env",
-        py.parent / "Scripts" / "rez-env.exe",
-        py.parent / "Scripts" / "rez-env",
-    )
-    for c in candidates:
-        if c.exists():
-            return str(c)
-
-    raise RezEnvNotFoundError(
-        "rez-env が見つかりません。PATH または現在の Python 環境の Scripts に rez-env.exe が必要です。"
-    )
-
-
-def build_rez_env_command(
-    rez_env_exe: str,
-    package_request: str,
-    tool_args: Sequence[str],
-) -> Tuple[str, ...]:
-    """
-    rez-env の実行コマンドを生成する。
-
-    形式:
-      rez-env <package_request> -- <tool> <args...>
-
-    注意:
-      tool_args は ['AfterFX'] のように「コマンド単位」で渡す。
-      文字列 1 つを文字分解して渡すような処理はここでは一切しない。
-
-    失敗時:
-      InvalidArgumentsError を送出
-    """
-    if not rez_env_exe:
-        raise InvalidArgumentsError("rez_env_exe が空です。")
-    if not package_request or not isinstance(package_request, str):
-        raise InvalidArgumentsError("package_request が不正です（空または非文字列）。")
-    if not tool_args:
-        raise InvalidArgumentsError("tool_args が空です（起動コマンドが必要です）。")
-
-    # tool_args 内に空文字が混じるのは事故率が高いので弾く
-    if any((not isinstance(a, str)) or (a.strip() == "") for a in tool_args):
-        raise InvalidArgumentsError("tool_args に空要素または非文字列が含まれています。")
-
-    return tuple([rez_env_exe, package_request, "--", *tool_args])
 
 
 def _sanitize_log_token(value: str) -> str:
@@ -291,85 +214,31 @@ def tail_log_file(log_path: Path, poll_sec: float = 0.2) -> None:
 # =========================
 # 追加: Rez 環境内の EXECUTE_ 変数を取得して起動コマンドを決める
 # =========================
-def _collect_execute_vars_via_rez_env(
-    rez_env_exe: str,
-    package_request: str,
-    rez_env_hint: Optional[str] = None,
-    extra_env: Optional[dict] = None,
-) -> Dict[str, str]:
-    """
-    rez-env <pkg> -- python -c ... を実行し、Rez 環境内で定義された EXECUTE_ 変数を収集する。
+def _resolve_rez_context(package_request: str) -> object:
+    if not package_request or not isinstance(package_request, str):
+        raise InvalidArgumentsError("package_request が不正です（空または非文字列）。")
+    if importlib.util.find_spec("rez") is None:
+        raise RezLauncherError("rez Python モジュールが見つかりません。")
 
-    返り値:
-      {"EXECUTE_...": "C:\\path\\to\\exe", ...}
+    from rez.resolved_context import ResolvedContext
 
-    失敗時:
-      RezLauncherError 派生例外を送出
-    """
-    # Windows でも確実に動くよう python 実行を優先
-    # （rez-env は指定した Python を解決する可能性があるため）
-    probe = (
-        "import os, json; "
-        "d={k:v for k,v in os.environ.items() if k.startswith('EXECUTE_') and v}; "
-        "print(json.dumps(d, ensure_ascii=False))"
-    )
+    return ResolvedContext([package_request])
 
-    cmd = [rez_env_exe, package_request, "--", sys.executable, "-c", probe]
 
-    def format_rez_env_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
-        stdout = (result.stdout or "").strip() or "<empty>"
-        stderr = (result.stderr or "").strip() or "<empty>"
-        command_str = " ".join(cmd)
-        return (
-            "rez-env 実行に失敗しました。\n"
-            f"returncode={result.returncode}\n"
-            f"command={command_str}\n"
-            f"stdout={stdout}\n"
-            f"stderr={stderr}"
-        )
+def _get_context_environ(context: object) -> Dict[str, str]:
+    getter = getattr(context, "get_environ", None)
+    if getter is None:
+        getter = getattr(context, "get_environment", None)
+    if getter is None:
+        raise LaunchError("Rez 環境から環境変数を取得できませんでした。")
+    resolved = getter()
+    if not isinstance(resolved, dict):
+        raise LaunchError("Rez 環境変数の取得結果が不正です。")
+    return {str(k): str(v) for k, v in resolved.items()}
 
-    try:
-        cp = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            env=(extra_env if extra_env is not None else os.environ.copy()),
-            check=False,
-        )
-    except OSError as e:
-        command_str = " ".join(cmd)
-        raise LaunchError(
-            "EXECUTE_ 変数取得用の rez-env 実行に失敗しました。"
-            f" command={command_str} error={e}"
-        ) from e
 
-    if cp.returncode != 0:
-        detail = format_rez_env_failure_detail(cp)
-        raise LaunchError(
-            "EXECUTE_ 変数の取得に失敗しました。\n"
-            f"{detail}"
-        )
-
-    raw = (cp.stdout or "").strip()
-    if not raw:
-        return {}
-
-    try:
-        import json as _json
-        data = _json.loads(raw)
-        if isinstance(data, dict):
-            # 値が文字列であることだけ保証
-            return {str(k): str(v) for k, v in data.items() if str(v).strip()}
-        return {}
-    except Exception as e:
-        stderr = (cp.stderr or "").strip() or "<empty>"
-        command_str = " ".join(cmd)
-        raise LaunchError(
-            "EXECUTE_ 変数の解析に失敗しました（JSON として解釈不可）。\n"
-            f"command={command_str}\n"
-            f"stdout={raw}\n"
-            f"stderr={stderr}"
-        ) from e
+def _collect_execute_vars_from_env(resolved_env: Dict[str, str]) -> Dict[str, str]:
+    return {key: value for key, value in resolved_env.items() if key.startswith("EXECUTE_") and value}
 
 
 def _resolve_tool_args_from_execute_vars(
@@ -433,7 +302,7 @@ def launch_rez_detached(
         例) ["AfterFX"] / ["houdinifx"] / ["houdinifx", "-foreground"] 等
         None または空の場合は、Rez 環境内の EXECUTE_... 変数から起動コマンドを自動解決する。
       rez_env_hint:
-        rez-env.exe のパスを明示したい場合に指定（None なら自動探索）
+        互換のための引数（現在は使用しない）
       log_dir:
         ログ保存ディレクトリ（None/空なら %TEMP%\\rez_detached_logs）
       add_kdmrez:
@@ -445,30 +314,35 @@ def launch_rez_detached(
       LaunchResult(pid, log_path, command)
 
     例外:
-      RezEnvNotFoundError / InvalidArgumentsError / LaunchError / ExecuteVarNotFoundError / ExecuteVarAmbiguousError
+      InvalidArgumentsError / LaunchError / ExecuteVarNotFoundError / ExecuteVarAmbiguousError
     """
     if add_kdmrez:
         ensure_kdmrez_in_rez_packages_path()
 
-    rez_env = resolve_rez_env_exe(rez_env_hint)
+    _ = rez_env_hint
+
+    context = _resolve_rez_context(package_request)
+    if hasattr(context, "success") and not getattr(context, "success"):
+        detail = str(getattr(context, "failure_description", "")).strip()
+        message = detail or "Rez パッケージの解決に失敗しました。"
+        raise LaunchError(message)
+
+    resolved_env = _get_context_environ(context)
+    merged_env = os.environ.copy()
+    merged_env.update(resolved_env)
 
     # tool_args が無い場合は EXECUTE_... から自動解決
     resolved_tool_args: List[str]
     if tool_args:
         resolved_tool_args = list(tool_args)
     else:
-        execute_vars = _collect_execute_vars_via_rez_env(
-            rez_env_exe=rez_env,
-            package_request=package_request,
-            rez_env_hint=rez_env_hint,
-            extra_env=os.environ.copy(),
-        )
+        execute_vars = _collect_execute_vars_from_env(resolved_env)
         resolved_tool_args = _resolve_tool_args_from_execute_vars(execute_vars, exec_var=exec_var)
 
-    cmd = build_rez_env_command(rez_env, package_request, resolved_tool_args)
+    cmd = tuple(resolved_tool_args)
     log_path = _make_log_path(log_dir, package_request, resolved_tool_args)
 
-    pid = launch_detached_with_log(cmd, log_path, env=os.environ.copy())
+    pid = launch_detached_with_log(cmd, log_path, env=merged_env)
     return LaunchResult(pid=pid, log_path=log_path, command=cmd)
 
 
@@ -488,7 +362,6 @@ def _parse_cli(
 
     ap = _argparse.ArgumentParser()
     ap.add_argument("--pkg", required=True, help="Rez パッケージ要求（例: adobe_after_effects-2025）")
-    ap.add_argument("--rez-env", default=None, help="rez-env.exe のパス（省略可）")
     ap.add_argument("--logdir", default=None, help="ログ保存先ディレクトリ（省略可）")
     ap.add_argument("--no-kdmrez", action="store_true", help="KDMrez を REZ_PACKAGES_PATH に追加しない")
     ap.add_argument("--tail", action="store_true", help="起動後にログを tail する（親が生存中のみ）")
@@ -508,7 +381,7 @@ def _parse_cli(
         tool_args = tool_args[1:]
 
     # ここでは「空でもOK」にする（自動解決に回すため）
-    return ns.pkg, tool_args, ns.rez_env, ns.logdir, (not ns.no_kdmrez), ns.tail, ns.exec_var
+    return ns.pkg, tool_args, None, ns.logdir, (not ns.no_kdmrez), ns.tail, ns.exec_var
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

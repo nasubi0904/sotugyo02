@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
-import subprocess
 from dataclasses import dataclass
 import importlib.util
 from typing import Dict, Iterable, Mapping, Sequence, Tuple
@@ -155,7 +153,7 @@ class _RezPackagesPathContext:
 
 
 class RezEnvironmentResolver:
-    """Rez CLI を呼び出してパッケージ解決を検証する。"""
+    """Rez Python API を呼び出してパッケージ解決を検証する。"""
 
     def __init__(
         self,
@@ -183,63 +181,52 @@ class RezEnvironmentResolver:
                 stdout="Rez パッケージが指定されていないため検証を省略しました。",
             )
 
-        env = self._build_environment(environment)
-
-        if not self._is_executable_available(env):
+        if importlib.util.find_spec("rez") is None:
             return RezResolveResult(
                 success=False,
-                command=(self._executable,),
+                command=tuple(normalized),
                 return_code=127,
-                stderr="rez コマンドが見つかりません。パス設定を確認してください。",
+                stderr="rez Python モジュールが見つかりません。パス設定を確認してください。",
             )
 
-        command = self._build_command(normalized, variants or ())
+        _ = timeout
+        env_map = self._build_environment(environment)
+        os.environ.update({"PATH": env_map["PATH"], "Path": env_map["Path"]})
 
-        try:
-            completed = subprocess.run(  # noqa: S603,S607 - 実行コマンドを明示
-                command,
-                capture_output=True,
-                text=True,
-                timeout=timeout,
-                check=False,
-                env=env,
-            )
-        except (OSError, subprocess.SubprocessError) as exc:  # pragma: no cover - 実行環境依存
-            LOGGER.error("Rez コマンドの実行に失敗しました: %s", exc)
-            return RezResolveResult(
-                success=False,
-                command=tuple(command),
-                return_code=-1,
-                stderr=str(exc),
-            )
+        command = tuple(self._build_request(normalized, variants or ()))
 
-        success = completed.returncode == 0
+        from rez.resolved_context import ResolvedContext
+
+        with self._ensure_kdmrez_packages_path():
+            try:
+                context = ResolvedContext(list(command))
+            except Exception as exc:  # pragma: no cover - rez 依存
+                LOGGER.error("Rez パッケージの解決に失敗しました: %s", exc, exc_info=True)
+                return RezResolveResult(
+                    success=False,
+                    command=command,
+                    return_code=1,
+                    stderr=str(exc),
+                )
+
+        success = bool(getattr(context, "success", True))
+        stdout = ""
+        stderr = ""
         if not success:
-            if completed.stdout:
-                LOGGER.error("Rez コマンド標準出力:\n%s", completed.stdout)
-            if completed.stderr:
-                LOGGER.error("Rez コマンド標準エラー:\n%s", completed.stderr)
+            stderr = str(getattr(context, "failure_description", "")) or "Rez パッケージの解決に失敗しました。"
+            LOGGER.error("Rez パッケージの解決に失敗しました: %s", stderr)
         return RezResolveResult(
             success=success,
-            command=tuple(command),
-            return_code=completed.returncode,
-            stdout=completed.stdout,
-            stderr=completed.stderr,
+            command=command,
+            return_code=0 if success else 1,
+            stdout=stdout,
+            stderr=stderr,
         )
 
     @staticmethod
-    def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
-        normalized = [variant.strip() for variant in variants if variant and variant.strip()]
-        if not normalized:
-            return ()
-        joined = ",".join(normalized)
-        return ("--variants", joined)
-
-    def _build_command(self, packages: Sequence[str], variants: Iterable[str]) -> list[str]:
-        command: list[str] = [self._executable, "env", *packages]
-        command.extend(self._build_variant_arguments(variants))
-        command.extend(["--", "python", "-c", "pass"])
-        return command
+    def _build_request(packages: Sequence[str], variants: Iterable[str]) -> list[str]:
+        normalized_variants = [variant.strip() for variant in variants if variant and variant.strip()]
+        return [*packages, *normalized_variants]
 
     def _build_environment(
         self, user_environment: Mapping[str, str] | None = None
@@ -292,9 +279,20 @@ class RezEnvironmentResolver:
                 normalized[key] = value
         return normalized
 
-    def _is_executable_available(self, env: Mapping[str, str]) -> bool:
-        path_env = env.get("PATH") or env.get("Path") or ""
-        return shutil.which(self._executable, path=path_env) is not None
+    @staticmethod
+    def _ensure_kdmrez_packages_path():
+        kdmrez_path = get_rez_package_dir()
+        current = os.environ.get("REZ_PACKAGES_PATH", "")
+        if not current:
+            os.environ["REZ_PACKAGES_PATH"] = str(kdmrez_path)
+            return _RezPackagesPathContext(previous=None)
+        parts = [entry for entry in current.split(os.pathsep) if entry]
+        lowered = {entry.lower() for entry in parts}
+        if str(kdmrez_path).lower() in lowered:
+            return _RezPackagesPathContext(previous=None)
+        updated = os.pathsep.join([str(kdmrez_path), *parts])
+        os.environ["REZ_PACKAGES_PATH"] = updated
+        return _RezPackagesPathContext(previous=current)
 
 
 __all__ = [

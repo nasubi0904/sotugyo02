@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import importlib.util
 import locale
 import os
-import shutil
 import subprocess
-import sys
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 
 # =========================
@@ -18,7 +17,6 @@ from typing import List, Optional
 # =========================
 DEFAULT_PKG = "adobe_after_effects-2025"
 DEFAULT_TOOL_CMD = ["AfterFX"]
-DEFAULT_REZ_ENV_EXE = ""  # 空なら自動検出
 DEFAULT_LOG_DIR = ""      # 空なら %TEMP% 配下に作る
 DEFAULT_TAIL = True       # 親が生きている間だけログ監視する
 
@@ -33,26 +31,15 @@ def _preferred_text_encoding() -> str:
 # =========================
 # rez helpers
 # =========================
-def find_rez_env_exe(explicit: str = "") -> str:
-    if explicit:
-        p = Path(explicit)
-        if p.exists():
-            return str(p)
+def resolve_rez_context(package_request: str) -> object:
+    if not package_request or not isinstance(package_request, str):
+        raise ValueError("package_request が不正です（空または非文字列）。")
+    if importlib.util.find_spec("rez") is None:
+        raise FileNotFoundError("rez Python モジュールが見つかりません。")
 
-    w = shutil.which("rez-env")
-    if w:
-        return w
+    from rez.resolved_context import ResolvedContext
 
-    py = Path(sys.executable)
-    candidates = [
-        py.parent / "rez-env.exe",
-        py.parent / "Scripts" / "rez-env.exe",
-    ]
-    for c in candidates:
-        if c.exists():
-            return str(c)
-
-    raise FileNotFoundError("rez-env が見つかりません（PATH または Python 環境の Scripts を確認してください）。")
+    return ResolvedContext([package_request])
 
 
 def ensure_rez_packages_path_add_kdmrez() -> Path:
@@ -71,10 +58,16 @@ def ensure_rez_packages_path_add_kdmrez() -> Path:
     return kdmrez
 
 
-def build_rez_command(rez_env_exe: str, package_request: str, tool_and_args: List[str]) -> List[str]:
-    if not tool_and_args:
-        raise ValueError("起動したいコマンドが空です。")
-    return [rez_env_exe, package_request, "--", *tool_and_args]
+def _get_context_environ(context: object) -> dict[str, str]:
+    getter = getattr(context, "get_environ", None)
+    if getter is None:
+        getter = getattr(context, "get_environment", None)
+    if getter is None:
+        raise RuntimeError("Rez 環境から環境変数を取得できませんでした。")
+    resolved = getter()
+    if not isinstance(resolved, dict):
+        raise RuntimeError("Rez 環境変数の取得結果が不正です。")
+    return {str(k): str(v) for k, v in resolved.items()}
 
 
 # =========================
@@ -148,7 +141,6 @@ def _normalize_tool_args(tool_args: List[str]) -> List[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rez-env", default=DEFAULT_REZ_ENV_EXE, help="rez-env 実行ファイル（空なら自動検出）")
     ap.add_argument("--pkg", default=DEFAULT_PKG, help="Rez パッケージ要求")
     ap.add_argument("--logdir", default=DEFAULT_LOG_DIR, help="ログ出力ディレクトリ（空なら %TEMP% ）")
     ap.add_argument("--tail", action="store_true", default=DEFAULT_TAIL, help="起動後にログを監視する（親が生存中のみ）")
@@ -164,20 +156,26 @@ def main() -> int:
     kdmrez = ensure_rez_packages_path_add_kdmrez()
     print(f"[launcher] REZ_PACKAGES_PATH ensured: {kdmrez}")
 
-    rez_env_exe = find_rez_env_exe(args.rez_env)
+    context = resolve_rez_context(args.pkg)
+    if hasattr(context, "success") and not getattr(context, "success"):
+        detail = str(getattr(context, "failure_description", "")).strip()
+        message = detail or "Rez パッケージの解決に失敗しました。"
+        raise RuntimeError(message)
 
-    rez_cmd = build_rez_command(rez_env_exe, args.pkg, tool_args)
+    resolved_env = _get_context_environ(context)
+    merged_env = os.environ.copy()
+    merged_env.update(resolved_env)
 
     # ログファイル決定（親が死んでも残る）
     ts = _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     logdir = Path(args.logdir) if args.logdir else Path(os.environ.get("TEMP", ".")) / "rez_detached_logs"
     log_file = logdir / f"{args.pkg}__{'_'.join(tool_args[:1])}__{ts}.log"
 
-    print("[launcher] rez-env resolved:", rez_env_exe)
-    print("[launcher] detached launch:", " ".join(rez_cmd))
+    print("[launcher] rez context resolved:", args.pkg)
+    print("[launcher] detached launch:", " ".join(tool_args))
     print("[launcher] log file:", str(log_file))
 
-    pid = launch_detached_with_log(rez_cmd, log_file)
+    pid = launch_detached_with_log(tool_args, log_file, env=merged_env)
     print(f"[launcher] started (detached) pid={pid}")
 
     # 親が生きている間だけログ監視（親が落ちた後は当然止まるが、ログは残る）

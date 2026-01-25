@@ -6,7 +6,6 @@ from .rez_launch import (
     InvalidArgumentsError,
     LaunchError,
     LaunchResult,
-    RezEnvNotFoundError,
     RezLauncherError,
     launch_rez_detached,
 )
@@ -17,7 +16,6 @@ __all__ = [
     "InvalidArgumentsError",
     "LaunchError",
     "LaunchResult",
-    "RezEnvNotFoundError",
     "RezLauncherError",
     "launch_rez_detached",
 ]
