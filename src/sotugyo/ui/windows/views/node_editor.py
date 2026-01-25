@@ -1682,7 +1682,11 @@ class NodeEditorWindow(QMainWindow):
             stripped = line.strip()
             if not stripped:
                 continue
-            resolved_line, missing_names = self._resolve_tokenized_text(stripped, input_paths)
+            resolved_line, missing_names = self._resolve_tokenized_text(
+                stripped,
+                input_paths,
+                quote_paths=True,
+            )
             for name in missing_names:
                 if name not in missing:
                     missing.append(name)
@@ -1697,6 +1701,8 @@ class NodeEditorWindow(QMainWindow):
         self,
         text: str,
         input_paths: Dict[str, Path],
+        *,
+        quote_paths: bool = False,
     ) -> Tuple[str, List[str]]:
         missing: List[str] = []
 
@@ -1707,7 +1713,12 @@ class NodeEditorWindow(QMainWindow):
                 if name and name not in missing:
                     missing.append(name)
                 return match.group(0)
-            return str(resolved)
+            resolved_text = str(resolved)
+            if quote_paths and " " in resolved_text and not (
+                resolved_text.startswith('"') and resolved_text.endswith('"')
+            ):
+                return f"\"{resolved_text}\""
+            return resolved_text
 
         resolved_text = NODE_INPUT_TOKEN_PATTERN.sub(_replace, text)
         return resolved_text, missing
