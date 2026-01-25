@@ -316,6 +316,19 @@ def _collect_execute_vars_via_rez_env(
 
     cmd = [rez_env_exe, package_request, "--", sys.executable, "-c", probe]
 
+    def format_rez_env_failure_detail(result: subprocess.CompletedProcess[str]) -> str:
+        stdout = (result.stdout or "").strip() or "<empty>"
+        stderr = (result.stderr or "").strip() or "<empty>"
+        command_str = " ".join(cmd)
+        return (
+            "step=rez_env_run\n"
+            "rez-env 実行に失敗しました。\n"
+            f"returncode={result.returncode}\n"
+            f"command={command_str}\n"
+            f"stdout={stdout}\n"
+            f"stderr={stderr}"
+        )
+
     try:
         cp = subprocess.run(
             cmd,
@@ -325,14 +338,19 @@ def _collect_execute_vars_via_rez_env(
             check=False,
         )
     except OSError as e:
-        raise LaunchError(f"EXECUTE_ 変数取得用の rez-env 実行に失敗しました: {e}") from e
+        command_str = " ".join(cmd)
+        raise LaunchError(
+            "step=rez_env_run\n"
+            "EXECUTE_ 変数取得用の rez-env 実行に失敗しました。"
+            f" command={command_str} error={e}"
+        ) from e
 
     if cp.returncode != 0:
-        # stderr も stdout に含めて最低限のトラブルシュート情報を残す
-        msg = (cp.stderr or "").strip()
-        out = (cp.stdout or "").strip()
-        detail = msg if msg else out
-        raise LaunchError(f"EXECUTE_ 変数の取得に失敗しました（rez-env returncode={cp.returncode}）。{detail}")
+        detail = format_rez_env_failure_detail(cp)
+        raise LaunchError(
+            "EXECUTE_ 変数の取得に失敗しました。\n"
+            f"{detail}"
+        )
 
     raw = (cp.stdout or "").strip()
     if not raw:
@@ -346,7 +364,15 @@ def _collect_execute_vars_via_rez_env(
             return {str(k): str(v) for k, v in data.items() if str(v).strip()}
         return {}
     except Exception as e:
-        raise LaunchError(f"EXECUTE_ 変数の解析に失敗しました（JSON として解釈不可）。stdout={raw}") from e
+        stderr = (cp.stderr or "").strip() or "<empty>"
+        command_str = " ".join(cmd)
+        raise LaunchError(
+            "step=parse_execute_vars_json\n"
+            "EXECUTE_ 変数の解析に失敗しました（JSON として解釈不可）。\n"
+            f"command={command_str}\n"
+            f"stdout={raw}\n"
+            f"stderr={stderr}"
+        ) from e
 
 
 def _resolve_tool_args_from_execute_vars(
@@ -424,28 +450,52 @@ def launch_rez_detached(
     例外:
       RezEnvNotFoundError / InvalidArgumentsError / LaunchError / ExecuteVarNotFoundError / ExecuteVarAmbiguousError
     """
-    if add_kdmrez:
-        ensure_kdmrez_in_rez_packages_path()
+    def raise_with_step(step: str, error: RezLauncherError) -> None:
+        raise type(error)(f"[step:{step}] {error}") from error
 
-    rez_env = resolve_rez_env_exe(rez_env_hint)
+    if add_kdmrez:
+        try:
+            ensure_kdmrez_in_rez_packages_path()
+        except RezLauncherError as e:
+            raise_with_step("add_kdmrez_path", e)
+
+    try:
+        rez_env = resolve_rez_env_exe(rez_env_hint)
+    except RezLauncherError as e:
+        raise_with_step("resolve_rez_env", e)
 
     # tool_args が無い場合は EXECUTE_... から自動解決
     resolved_tool_args: List[str]
     if tool_args:
         resolved_tool_args = list(tool_args)
     else:
-        execute_vars = _collect_execute_vars_via_rez_env(
-            rez_env_exe=rez_env,
-            package_request=package_request,
-            rez_env_hint=rez_env_hint,
-            extra_env=os.environ.copy(),
-        )
-        resolved_tool_args = _resolve_tool_args_from_execute_vars(execute_vars, exec_var=exec_var)
+        try:
+            execute_vars = _collect_execute_vars_via_rez_env(
+                rez_env_exe=rez_env,
+                package_request=package_request,
+                rez_env_hint=rez_env_hint,
+                extra_env=os.environ.copy(),
+            )
+        except RezLauncherError as e:
+            raise_with_step("collect_execute_vars", e)
+        try:
+            resolved_tool_args = _resolve_tool_args_from_execute_vars(execute_vars, exec_var=exec_var)
+        except RezLauncherError as e:
+            raise_with_step("resolve_execute_var", e)
 
-    cmd = build_rez_env_command(rez_env, package_request, resolved_tool_args)
-    log_path = _make_log_path(log_dir, package_request, resolved_tool_args)
+    try:
+        cmd = build_rez_env_command(rez_env, package_request, resolved_tool_args)
+    except RezLauncherError as e:
+        raise_with_step("build_rez_env_command", e)
+    try:
+        log_path = _make_log_path(log_dir, package_request, resolved_tool_args)
+    except RezLauncherError as e:
+        raise_with_step("make_log_path", e)
 
-    pid = launch_detached_with_log(cmd, log_path, env=os.environ.copy())
+    try:
+        pid = launch_detached_with_log(cmd, log_path, env=os.environ.copy())
+    except RezLauncherError as e:
+        raise_with_step("launch_detached", e)
     return LaunchResult(pid=pid, log_path=log_path, command=cmd)
 
 
