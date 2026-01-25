@@ -224,20 +224,6 @@ class RezEnvironmentResolver:
         )
 
     @staticmethod
-    def _build_variant_arguments(variants: Iterable[str]) -> Tuple[str, ...]:
-        normalized = [variant.strip() for variant in variants if variant and variant.strip()]
-        if not normalized:
-            return ()
-        joined = ",".join(normalized)
-        return ("--variants", joined)
-
-    def _build_command(self, packages: Sequence[str], variants: Iterable[str]) -> list[str]:
-        command: list[str] = [self._executable, "env", *packages]
-        command.extend(self._build_variant_arguments(variants))
-        command.extend(["--", "python", "-c", "pass"])
-        return command
-
-    @staticmethod
     def _build_request(packages: Sequence[str], variants: Iterable[str]) -> list[str]:
         normalized_variants = [variant.strip() for variant in variants if variant and variant.strip()]
         return [*packages, *normalized_variants]

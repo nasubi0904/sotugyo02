@@ -17,7 +17,6 @@ from typing import List
 # =========================
 DEFAULT_PKG = "adobe_after_effects-2025"
 DEFAULT_TOOL_CMD = ["AfterFX"]
-DEFAULT_REZ_ENV_EXE = ""  # 互換用（現在は未使用）
 DEFAULT_LOG_DIR = ""      # 空なら %TEMP% 配下に作る
 DEFAULT_TAIL = True       # 親が生きている間だけログ監視する
 
@@ -142,7 +141,6 @@ def _normalize_tool_args(tool_args: List[str]) -> List[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--rez-env", default=DEFAULT_REZ_ENV_EXE, help="互換用（現在は未使用）")
     ap.add_argument("--pkg", default=DEFAULT_PKG, help="Rez パッケージ要求")
     ap.add_argument("--logdir", default=DEFAULT_LOG_DIR, help="ログ出力ディレクトリ（空なら %TEMP% ）")
     ap.add_argument("--tail", action="store_true", default=DEFAULT_TAIL, help="起動後にログを監視する（親が生存中のみ）")
@@ -157,8 +155,6 @@ def main() -> int:
     # Rez パス自動追加
     kdmrez = ensure_rez_packages_path_add_kdmrez()
     print(f"[launcher] REZ_PACKAGES_PATH ensured: {kdmrez}")
-
-    _ = args.rez_env
 
     context = resolve_rez_context(args.pkg)
     if hasattr(context, "success") and not getattr(context, "success"):

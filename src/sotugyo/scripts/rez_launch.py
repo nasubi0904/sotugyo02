@@ -21,8 +21,6 @@ rez_detached_launcher.py
 提供する主な API
 ----------------
 - ensure_kdmrez_in_rez_packages_path()
-- resolve_rez_env_exe()
-- build_rez_env_command()
 - launch_detached_with_log()
 - launch_rez_detached()  ← 外部からはこれを呼ぶのが基本
 """
@@ -30,7 +28,6 @@ rez_detached_launcher.py
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -45,10 +42,6 @@ from typing import Optional, Sequence, Tuple, Dict, List
 # =========================
 class RezLauncherError(RuntimeError):
     """本モジュールの基底例外。"""
-
-
-class RezEnvNotFoundError(RezLauncherError):
-    """rez-env 実行ファイルが見つからない。"""
 
 
 class InvalidArgumentsError(RezLauncherError):
@@ -112,77 +105,6 @@ def ensure_kdmrez_in_rez_packages_path(prepend_path: Optional[Path] = None) -> P
         os.environ["REZ_PACKAGES_PATH"] = ";".join(parts)
 
     return prepend_path
-
-
-def resolve_rez_env_exe(hint: Optional[str] = None) -> str:
-    """
-    rez-env 実行ファイルを確実に見つける。
-
-    探索順:
-      1) hint（フルパスなど）を指定した場合はそれ
-      2) PATH 上の rez-env(.exe)
-      3) 現在の Python 実行ファイル近傍（venv/埋め込み環境の Scripts）にある rez-env.exe
-
-    失敗時:
-      RezEnvNotFoundError を送出
-    """
-    if hint:
-        p = Path(hint)
-        if p.exists():
-            return str(p)
-        # hint が無効でも次の探索へ進む（呼び出し側が柔軟に運用できるように）
-
-    w = shutil.which("rez-env")
-    if w:
-        return w
-
-    py = Path(sys.executable)
-
-    candidates = (
-        py.parent / "rez-env.exe",
-        py.parent / "rez-env",
-        py.parent / "Scripts" / "rez-env.exe",
-        py.parent / "Scripts" / "rez-env",
-    )
-    for c in candidates:
-        if c.exists():
-            return str(c)
-
-    raise RezEnvNotFoundError(
-        "rez-env が見つかりません。PATH または現在の Python 環境の Scripts に rez-env.exe が必要です。"
-    )
-
-
-def build_rez_env_command(
-    rez_env_exe: str,
-    package_request: str,
-    tool_args: Sequence[str],
-) -> Tuple[str, ...]:
-    """
-    rez-env の実行コマンドを生成する（互換用）。
-
-    形式:
-      rez-env <package_request> -- <tool> <args...>
-
-    注意:
-      tool_args は ['AfterFX'] のように「コマンド単位」で渡す。
-      文字列 1 つを文字分解して渡すような処理はここでは一切しない。
-
-    失敗時:
-      InvalidArgumentsError を送出
-    """
-    if not rez_env_exe:
-        raise InvalidArgumentsError("rez_env_exe が空です。")
-    if not package_request or not isinstance(package_request, str):
-        raise InvalidArgumentsError("package_request が不正です（空または非文字列）。")
-    if not tool_args:
-        raise InvalidArgumentsError("tool_args が空です（起動コマンドが必要です）。")
-
-    # tool_args 内に空文字が混じるのは事故率が高いので弾く
-    if any((not isinstance(a, str)) or (a.strip() == "") for a in tool_args):
-        raise InvalidArgumentsError("tool_args に空要素または非文字列が含まれています。")
-
-    return tuple([rez_env_exe, package_request, "--", *tool_args])
 
 
 def _sanitize_log_token(value: str) -> str:
@@ -392,7 +314,7 @@ def launch_rez_detached(
       LaunchResult(pid, log_path, command)
 
     例外:
-      RezEnvNotFoundError / InvalidArgumentsError / LaunchError / ExecuteVarNotFoundError / ExecuteVarAmbiguousError
+      InvalidArgumentsError / LaunchError / ExecuteVarNotFoundError / ExecuteVarAmbiguousError
     """
     if add_kdmrez:
         ensure_kdmrez_in_rez_packages_path()
@@ -440,7 +362,6 @@ def _parse_cli(
 
     ap = _argparse.ArgumentParser()
     ap.add_argument("--pkg", required=True, help="Rez パッケージ要求（例: adobe_after_effects-2025）")
-    ap.add_argument("--rez-env", default=None, help="互換用（現在は未使用）")
     ap.add_argument("--logdir", default=None, help="ログ保存先ディレクトリ（省略可）")
     ap.add_argument("--no-kdmrez", action="store_true", help="KDMrez を REZ_PACKAGES_PATH に追加しない")
     ap.add_argument("--tail", action="store_true", help="起動後にログを tail する（親が生存中のみ）")
@@ -460,7 +381,7 @@ def _parse_cli(
         tool_args = tool_args[1:]
 
     # ここでは「空でもOK」にする（自動解決に回すため）
-    return ns.pkg, tool_args, ns.rez_env, ns.logdir, (not ns.no_kdmrez), ns.tail, ns.exec_var
+    return ns.pkg, tool_args, None, ns.logdir, (not ns.no_kdmrez), ns.tail, ns.exec_var
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
