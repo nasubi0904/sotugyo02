@@ -223,3 +223,5 @@
 
 最終更新日: 2026-03-29
 - 2026-03-29: Rez 起動時の `rez-env` 実行失敗に備え、EXECUTE 変数取得の詳細情報（コマンド・stdout/stderr・returncode）をエラーへ含める方針を確認した。
+最終更新日: 2026-03-30
+- 2026-03-30: Rez CLI への依存を避けるため、Rez Python API の `ResolvedContext` を用いた環境解決と EXECUTE 変数取得へ切り替える方針を確認した。

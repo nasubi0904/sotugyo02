@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import sys
-import types
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -168,39 +165,29 @@ def test_environment_registry_can_clear_template_and_packages() -> None:
 def test_rez_resolver_adds_path_from_environment(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text("#!/bin/sh\nexit 0\n")
-    rez_executable.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
 
-    called_env: dict | None = None
-
-    def _fake_run(*_, **kwargs):
-        nonlocal called_env
-        called_env = kwargs.get("env")
-        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
-
     resolver = RezEnvironmentResolver()
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    class DummyContext:
+        success = True
+
+    import rez.resolved_context as resolved_context
+
+    monkeypatch.setattr(resolved_context, "ResolvedContext", lambda *_: DummyContext())
 
     result = resolver.resolve(["maya"], environment={})
 
     assert result.success is True
-    assert called_env is not None
-    path_entries = called_env["PATH"].split(os.pathsep)
+    path_entries = os.environ["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
-    assert shutil.which("rez") is not None
 
 
 def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> None:
     bin_dir = tmp_path / "rez_bin"
     bin_dir.mkdir()
-    rez_executable = bin_dir / "rez"
-    rez_executable.write_text("#!/bin/sh\nexit 0\n")
-    rez_executable.chmod(0o755)
 
     monkeypatch.setenv("PATH", "")
     monkeypatch.delenv("SOTUGYO_REZ_PATH", raising=False)
@@ -209,18 +196,15 @@ def test_rez_resolver_uses_updated_hint_on_resolve(tmp_path, monkeypatch) -> Non
 
     monkeypatch.setenv("SOTUGYO_REZ_PATH", str(bin_dir))
 
-    called_env: dict | None = None
+    class DummyContext:
+        success = True
 
-    def _fake_run(*_, **kwargs):
-        nonlocal called_env
-        called_env = kwargs.get("env")
-        return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+    import rez.resolved_context as resolved_context
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(resolved_context, "ResolvedContext", lambda *_: DummyContext())
 
     result = resolver.resolve(["maya"], environment={})
 
     assert result.success is True
-    assert called_env is not None
-    path_entries = called_env["PATH"].split(os.pathsep)
+    path_entries = os.environ["PATH"].split(os.pathsep)
     assert path_entries[0] == str(bin_dir)
