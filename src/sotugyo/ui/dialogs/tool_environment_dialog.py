@@ -8,7 +8,7 @@ import re
 import uuid
 import ctypes
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from qtpy import QtCore, QtWidgets
 
@@ -30,7 +30,18 @@ QWidget = QtWidgets.QWidget
 QFileDialog = QtWidgets.QFileDialog
 QMessageBox = QtWidgets.QMessageBox
 
-from ...domain.tooling.models import RezPackageSpec
+from ...domain.tooling.models import (
+    TOOL_ENVIRONMENT_SCHEMA_VERSION,
+    build_node_input_placeholder,
+    collect_node_input_names,
+    merge_node_inputs,
+    normalize_node_input_name,
+    normalize_node_inputs,
+    normalize_relative_path,
+    normalize_required_plugins,
+    normalize_text_payload,
+    RezPackageSpec,
+)
 from ...domain.tooling import ToolEnvironmentService
 from ...infrastructure.paths.storage import get_tool_environment_dir
 
@@ -143,6 +154,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
     def _open_edit_dialog(self) -> None:
         path = self._selected_environment_path()
@@ -155,6 +169,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.refresh_requested():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
 
 class ToolEnvironmentEditorDialog(QDialog):
@@ -173,8 +190,11 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._environment_dir = environment_dir
         self._environment_path = environment_path
         self._required_plugins: list[dict[str, str]] = []
+        self._node_inputs: list[str] = []
         self._package_py_cache: dict[Path, str] = {}
         self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
+        self._environment_id: Optional[str] = None
+        self._refresh_on_accept = False
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -219,6 +239,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._plugin_add_button = QPushButton("追加", self)
         self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
         plugin_button_layout.addWidget(self._plugin_add_button)
+        self._plugin_input_button = QPushButton("ノード入力を追加", self)
+        self._plugin_input_button.clicked.connect(self._add_node_input_plugin)
+        plugin_button_layout.addWidget(self._plugin_input_button)
         self._plugin_remove_button = QPushButton("削除", self)
         self._plugin_remove_button.setEnabled(False)
         self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
@@ -243,19 +266,39 @@ class ToolEnvironmentEditorDialog(QDialog):
         )
         self._known_path_checkbox.setChecked(True)
         layout.addWidget(self._known_path_checkbox)
+        env_input_layout = QHBoxLayout()
+        env_input_layout.setContentsMargins(0, 0, 0, 0)
+        env_input_layout.setSpacing(6)
+        self._env_input_button = QPushButton("ノード入力を挿入", self)
+        self._env_input_button.clicked.connect(
+            lambda: self._insert_node_input_placeholder(self._env_vars_edit)
+        )
+        env_input_layout.addWidget(self._env_input_button)
+        env_input_layout.addStretch(1)
+        layout.addLayout(env_input_layout)
         self._env_vars_edit = QPlainTextEdit(self)
         self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
         layout.addWidget(self._env_vars_edit)
 
         args_label = QLabel("起動引数の設定", self)
         layout.addWidget(args_label)
+        args_input_layout = QHBoxLayout()
+        args_input_layout.setContentsMargins(0, 0, 0, 0)
+        args_input_layout.setSpacing(6)
+        self._args_input_button = QPushButton("ノード入力を挿入", self)
+        self._args_input_button.clicked.connect(
+            lambda: self._insert_node_input_placeholder(self._launch_args_edit)
+        )
+        args_input_layout.addWidget(self._args_input_button)
+        args_input_layout.addStretch(1)
+        layout.addLayout(args_input_layout)
         self._launch_args_edit = QPlainTextEdit(self)
         self._launch_args_edit.setPlaceholderText("例:\n--project path/to/project\n--verbose")
         layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()
         self._create_button = QPushButton("環境作成", self)
-        self._create_button.clicked.connect(self._print_environment)
+        self._create_button.clicked.connect(self._save_environment)
         button_layout.addWidget(self._create_button)
         button_layout.addStretch(1)
 
@@ -276,27 +319,189 @@ class ToolEnvironmentEditorDialog(QDialog):
             self._package_combo.addItem(label, spec)
         self._package_combo.setEnabled(True)
 
+    def refresh_requested(self) -> bool:
+        return self._refresh_on_accept
+
     def _load_existing(self) -> None:
         self._env_vars_edit.setPlainText("")
         self._launch_args_edit.setPlainText("")
         self._required_plugins = []
+        self._node_inputs = []
+        self._environment_id = None
         self._refresh_plugin_list()
         if self._environment_path is None:
             self._name_edit.setText("")
             return
-        self._name_edit.setText(self._environment_path.stem)
+        payload = self._read_environment_payload(self._environment_path)
+        if payload is None:
+            self._name_edit.setText(self._environment_path.stem)
+            return
+        name = payload.get("name")
+        display_name = (
+            name.strip()
+            if isinstance(name, str) and name.strip()
+            else self._environment_path.stem
+        )
+        self._name_edit.setText(display_name)
+        env_id = payload.get("environment_id")
+        if isinstance(env_id, str) and env_id.strip():
+            self._environment_id = env_id.strip()
+        self._required_plugins = normalize_required_plugins(payload.get("required_plugins"))
+        env_vars_payload = normalize_text_payload(payload.get("environment_variables"))
+        self._env_vars_edit.setPlainText(str(env_vars_payload.get("raw", "")))
+        launch_payload = normalize_text_payload(payload.get("launch_arguments"))
+        self._launch_args_edit.setPlainText(str(launch_payload.get("raw", "")))
+        node_inputs = normalize_node_inputs(payload.get("node_inputs"))
+        extra_inputs: list[str] = []
+        extra_inputs.extend(collect_node_input_names(env_vars_payload.get("tokens", [])))
+        extra_inputs.extend(collect_node_input_names(launch_payload.get("tokens", [])))
+        for entry in self._required_plugins:
+            if entry.get("path_type") == "node":
+                input_name = entry.get("input_name")
+                if isinstance(input_name, str):
+                    normalized = normalize_node_input_name(input_name)
+                    if normalized:
+                        extra_inputs.append(normalized)
+        merged = merge_node_inputs(node_inputs, extra_inputs)
+        self._node_inputs = [entry["name"] for entry in merged if "name" in entry]
+        self._refresh_plugin_list()
+        self._select_package_from_payload(payload)
 
-    def _print_environment(self) -> None:
-        package = self._package_combo.currentData()
-        payload = {
-            "name": self._name_edit.text().strip() or "無名の環境",
-            "package": package.name if isinstance(package, RezPackageSpec) else None,
-            "package_version": package.version if isinstance(package, RezPackageSpec) else None,
-            "environment_variables": self._build_environment_variables(),
-            "launch_arguments": self._launch_args_edit.toPlainText().strip(),
-            "required_plugins": list(self._required_plugins),
+    def _save_environment(self) -> None:
+        payload = self._build_environment_payload()
+        if payload is None:
+            return
+        target_path = self._resolve_environment_save_path(payload)
+        if target_path is None:
+            return
+        payload_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        try:
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            target_path.write_text(payload_text, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.critical(self, "保存に失敗", f"環境ファイルの保存に失敗しました: {exc}")
+            return
+        if self._environment_path is not None and self._environment_path != target_path:
+            try:
+                if self._environment_path.exists():
+                    self._environment_path.unlink()
+            except OSError:
+                QMessageBox.warning(
+                    self,
+                    "警告",
+                    "古い環境ファイルの削除に失敗しました。手動で整理してください。",
+                )
+        self._environment_path = target_path
+        self._refresh_on_accept = True
+        try:
+            self._service.list_environments()
+        except OSError:
+            pass
+        QMessageBox.information(self, "保存完了", "環境ファイルを保存しました。")
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict[str, object]]:
+        if not path.exists():
+            return None
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _select_package_from_payload(self, payload: dict[str, object]) -> None:
+        package_name = payload.get("package")
+        if not isinstance(package_name, str) or not package_name:
+            return
+        package_version = payload.get("package_version")
+        version_label = (
+            package_version if isinstance(package_version, str) and package_version else None
+        )
+        if isinstance(version_label, str) and version_label.lower() == "local":
+            version_label = None
+        for index in range(self._package_combo.count()):
+            data = self._package_combo.itemData(index)
+            if not isinstance(data, RezPackageSpec):
+                continue
+            if data.name != package_name:
+                continue
+            if version_label is not None and data.version != version_label:
+                continue
+            self._package_combo.setCurrentIndex(index)
+            return
+
+    def _build_environment_payload(self) -> Optional[dict[str, object]]:
+        package = self._current_package_spec()
+        if package is None:
+            QMessageBox.warning(self, "環境の作成", "ツールパッケージを選択してください。")
+            return None
+        name = self._name_edit.text().strip() or "無名の環境"
+        env_vars_raw = self._build_environment_variables()
+        env_vars_payload = normalize_text_payload(env_vars_raw)
+        launch_raw = self._launch_args_edit.toPlainText().strip()
+        launch_payload = normalize_text_payload(launch_raw)
+        required_plugins = normalize_required_plugins(self._required_plugins)
+        node_inputs = normalize_node_inputs(self._node_inputs)
+        extra_inputs: list[str] = []
+        extra_inputs.extend(collect_node_input_names(env_vars_payload["tokens"]))
+        extra_inputs.extend(collect_node_input_names(launch_payload["tokens"]))
+        for entry in required_plugins:
+            if entry.get("path_type") == "node":
+                input_name = entry.get("input_name")
+                if isinstance(input_name, str):
+                    normalized = normalize_node_input_name(input_name)
+                    if normalized:
+                        extra_inputs.append(normalized)
+        merged_inputs = merge_node_inputs(node_inputs, extra_inputs)
+        if self._environment_id is None:
+            self._environment_id = f"env:{uuid.uuid4()}"
+        return {
+            "schema_version": TOOL_ENVIRONMENT_SCHEMA_VERSION,
+            "environment_id": self._environment_id,
+            "name": name,
+            "package": package.name,
+            "package_version": package.version or "local",
+            "environment_variables": env_vars_payload,
+            "launch_arguments": launch_payload,
+            "required_plugins": required_plugins,
+            "node_inputs": merged_inputs,
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _resolve_environment_save_path(
+        self, payload: dict[str, object]
+    ) -> Optional[Path]:
+        name = payload.get("name")
+        if not isinstance(name, str):
+            return None
+        normalized = self._sanitize_filename(name)
+        if not normalized:
+            QMessageBox.warning(self, "環境の作成", "環境名が不正です。")
+            return None
+        if self._environment_path is not None:
+            target = self._environment_path
+            if self._environment_path.stem != normalized:
+                target = self._environment_path.with_name(f"{normalized}.json")
+            return target
+        target = self._environment_dir / f"{normalized}.json"
+        if not target.exists():
+            return target
+        suffix = 1
+        while True:
+            candidate = self._environment_dir / f"{normalized}_{suffix}.json"
+            if not candidate.exists():
+                return candidate
+            suffix += 1
+
+    @staticmethod
+    def _sanitize_filename(name: str) -> str:
+        sanitized = re.sub(r"[\\\\/:*?\"<>|]", "_", name.strip())
+        sanitized = sanitized.strip("._ ")
+        return sanitized
 
     def _open_plugin_dialog(self) -> None:
         start_path = self._resolve_plugin_dialog_start_path()
@@ -318,6 +523,74 @@ class ToolEnvironmentEditorDialog(QDialog):
             return
         for path in paths:
             self._append_required_plugin(Path(path))
+
+    def _add_node_input_plugin(self) -> None:
+        name = self._select_or_create_node_input_name()
+        if not name:
+            return
+        self._required_plugins.append(
+            {
+                "name": name,
+                "path_type": "node",
+                "input_name": name,
+                "path_kind": "directory",
+            }
+        )
+        self._register_node_input_name(name)
+        self._refresh_plugin_list()
+
+    def _insert_node_input_placeholder(self, target: QPlainTextEdit) -> None:
+        name = self._select_or_create_node_input_name()
+        if not name:
+            return
+        placeholder = build_node_input_placeholder(name)
+        cursor = target.textCursor()
+        cursor.insertText(placeholder)
+        target.setTextCursor(cursor)
+        self._register_node_input_name(name)
+
+    def _select_or_create_node_input_name(self) -> Optional[str]:
+        existing = self._existing_node_input_names()
+        if existing:
+            options = list(existing) + ["新しい入力を作成..."]
+            selection, ok = QtWidgets.QInputDialog.getItem(
+                self,
+                "ノード入力の選択",
+                "入力名を選択してください。",
+                options,
+                0,
+                False,
+            )
+            if not ok or not selection:
+                return None
+            if selection != "新しい入力を作成...":
+                return selection
+        return self._prompt_node_input_name()
+
+    def _prompt_node_input_name(self) -> Optional[str]:
+        name, ok = QtWidgets.QInputDialog.getText(
+            self,
+            "ノード入力を追加",
+            "入力プラグ名を入力してください。",
+        )
+        if not ok:
+            return None
+        normalized = normalize_node_input_name(name)
+        if normalized is None:
+            QMessageBox.warning(self, "入力名が不正です", "入力名を正しく入力してください。")
+            return None
+        return normalized
+
+    def _register_node_input_name(self, name: str) -> None:
+        normalized = normalize_node_input_name(name)
+        if normalized is None:
+            return
+        if normalized not in self._node_inputs:
+            self._node_inputs.append(normalized)
+
+    def _existing_node_input_names(self) -> List[str]:
+        names = [normalize_node_input_name(name) for name in self._node_inputs]
+        return [name for name in names if name]
 
     def _resolve_plugin_dialog_start_path(self) -> str:
         package = self._current_package_spec()
@@ -390,6 +663,9 @@ class ToolEnvironmentEditorDialog(QDialog):
                 label = (
                     f"{entry['name']} (tool:{entry['relative_path']})"
                 )
+            elif entry.get("path_type") == "node":
+                input_name = entry.get("input_name") or entry.get("name")
+                label = f"{entry['name']} (node:{input_name})"
             else:
                 label = f"{entry['name']} ({entry['path']})"
             item = QListWidgetItem(label, self._plugin_list)
@@ -457,7 +733,7 @@ class ToolEnvironmentEditorDialog(QDialog):
                     }
                 )
                 continue
-            normalized = self._normalize_relative_path(relative)
+            normalized = normalize_relative_path(relative)
             if normalized is None:
                 entry.clear()
                 entry.update(
@@ -535,7 +811,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         if not self._is_under_base(absolute, base_dir):
             return None
         relative = os.path.relpath(str(absolute), str(base_dir)).replace("\\", "/")
-        normalized = self._normalize_relative_path(relative)
+        normalized = normalize_relative_path(relative)
         if normalized is None:
             return None
         return {
@@ -573,6 +849,8 @@ class ToolEnvironmentEditorDialog(QDialog):
             if base_dir is None:
                 return None
             return base_dir / Path(relative.replace("/", os.sep))
+        if path_type == "node":
+            return None
         return None
 
     def _resolve_known_folder_base(self, known_id: str) -> Optional[Path]:
@@ -585,7 +863,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         package = self._current_package_spec()
         if package is None:
             return None
-        normalized = self._normalize_relative_path(relative)
+        normalized = normalize_relative_path(relative)
         if normalized is None:
             return None
         reference_paths = self._collect_package_reference_paths(package)
@@ -662,7 +940,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         relative = self._build_relative_from_reference_paths(absolute, reference_paths)
         if relative is None:
             return None
-        normalized = self._normalize_relative_path(relative)
+        normalized = normalize_relative_path(relative)
         if normalized is None:
             return None
         return {
@@ -706,7 +984,7 @@ class ToolEnvironmentEditorDialog(QDialog):
             if not self._is_under_base(absolute, anchor):
                 continue
             relative = os.path.relpath(str(absolute), str(anchor))
-            normalized = self._normalize_relative_path(relative.replace("\\", "/"))
+            normalized = normalize_relative_path(relative.replace("\\", "/"))
             if normalized is None:
                 return None
             return normalized
@@ -725,7 +1003,7 @@ class ToolEnvironmentEditorDialog(QDialog):
         for known_id, base in self._collect_known_folders():
             if self._is_under_base(absolute, base):
                 relative = os.path.relpath(str(absolute), str(base))
-                normalized = self._normalize_relative_path(relative.replace("\\", "/"))
+                normalized = normalize_relative_path(relative.replace("\\", "/"))
                 if normalized is None:
                     return None
                 return {
@@ -794,20 +1072,6 @@ class ToolEnvironmentEditorDialog(QDialog):
             return ""
         self._package_py_cache[package_file] = content
         return content
-
-    @staticmethod
-    def _normalize_relative_path(relative: str) -> Optional[str]:
-        normalized = relative.replace("\\", "/").strip()
-        if not normalized:
-            return None
-        if normalized.startswith(("/", "\\")):
-            return None
-        if ":" in normalized:
-            return None
-        parts = [part for part in normalized.split("/") if part]
-        if any(part == ".." for part in parts):
-            return None
-        return "/".join(parts)
 
     @staticmethod
     def _is_under_base(path: Path, base: Path) -> bool:

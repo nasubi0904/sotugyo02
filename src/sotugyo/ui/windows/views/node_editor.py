@@ -67,6 +67,7 @@ from sotugyo.domain.projects import ProjectContext, ProjectService, ProjectSetti
 from sotugyo.domain.tooling import (
     RegisteredTool,
     RezPackageSpec,
+    TOOL_ENVIRONMENT_METADATA_KEY,
     ToolEnvironmentDefinition,
 )
 from sotugyo.domain.tooling.coordinator import (
@@ -843,6 +844,7 @@ class NodeEditorWindow(QMainWindow):
             position=position,
         )
         self._apply_tool_node_rez_properties(node, definition)
+        self._apply_tool_environment_payload(node, definition)
 
     def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
         env_id = ""
@@ -2704,36 +2706,92 @@ class NodeEditorWindow(QMainWindow):
         available = name in self._local_rez_packages
         return package_request, available
 
-    def _apply_tool_node_rez_properties(self, node, definition) -> None:
+    def _apply_tool_node_rez_properties(self, node, definition) -> bool:
         if not isinstance(node, ToolEnvironmentNode):
-            return
+            return False
         if not getattr(definition, "rez_packages", None):
-            return
+            return False
         name = next((entry for entry in definition.rez_packages if entry), None)
         if not name:
-            return
+            return False
         version = definition.version_label or "local"
-        self._set_node_custom_property(node, "rez_info", {"name": name, "version": version})
+        return self._set_node_custom_property(
+            node, "rez_info", {"name": name, "version": version}
+        )
 
-    def _ensure_tool_node_rez_properties(self, node) -> None:
+    def _ensure_tool_node_rez_properties(self, node) -> bool:
         if not isinstance(node, ToolEnvironmentNode):
-            return
+            return False
         props = self._node_custom_properties(node)
         rez_info = props.get("rez_info")
         if isinstance(rez_info, dict):
             name_value = rez_info.get("name")
             if isinstance(name_value, str) and name_value.strip():
-                return
+                return False
         name_value = props.get("rez_name")
         if isinstance(name_value, str) and name_value.strip():
-            return
+            return False
         name, version = self._read_rez_package_properties(node)
         if not name:
-            return
+            return False
         version_label = version or "local"
-        self._set_node_custom_property(
+        return self._set_node_custom_property(
             node, "rez_info", {"name": name, "version": version_label}
         )
+
+    def _apply_tool_environment_payload(
+        self, node, definition: ToolEnvironmentDefinition
+    ) -> bool:
+        payload = self._tool_environment_payload(definition)
+        if not payload:
+            return False
+        updated = self._set_node_custom_property(node, TOOL_ENVIRONMENT_METADATA_KEY, payload)
+        if isinstance(node, ToolEnvironmentNode):
+            node.ensure_input_ports(self._extract_tool_environment_inputs(payload))
+        return updated
+
+    def _ensure_tool_environment_payload(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        props = self._node_custom_properties(node)
+        payload = props.get(TOOL_ENVIRONMENT_METADATA_KEY)
+        if isinstance(payload, Mapping):
+            node.ensure_input_ports(self._extract_tool_environment_inputs(payload))
+            return False
+        definition = self._find_tool_environment_definition(node)
+        if definition is None:
+            return False
+        payload = self._tool_environment_payload(definition)
+        if not payload:
+            return False
+        node.ensure_input_ports(self._extract_tool_environment_inputs(payload))
+        return self._set_node_custom_property(node, TOOL_ENVIRONMENT_METADATA_KEY, payload)
+
+    @staticmethod
+    def _tool_environment_payload(
+        definition: ToolEnvironmentDefinition,
+    ) -> Optional[Dict[str, object]]:
+        metadata = getattr(definition, "metadata", None)
+        if not isinstance(metadata, dict):
+            return None
+        payload = metadata.get(TOOL_ENVIRONMENT_METADATA_KEY)
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    @staticmethod
+    def _extract_tool_environment_inputs(payload: Mapping[str, object]) -> List[str]:
+        raw_inputs = payload.get("node_inputs")
+        if not isinstance(raw_inputs, list):
+            return []
+        names: List[str] = []
+        for entry in raw_inputs:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if isinstance(name, str) and name.strip() and name not in names:
+                names.append(name)
+        return names
 
     def _set_node_custom_property(self, node, key: str, value: object) -> None:
         try:
@@ -2963,6 +3021,8 @@ class NodeEditorWindow(QMainWindow):
                         if not self._set_node_custom_property(node, key, value):
                             LOGGER.debug("プロパティ %s の適用に失敗しました", key)
             if self._ensure_tool_node_rez_properties(node):
+                metadata_changed = True
+            if self._ensure_tool_environment_payload(node):
                 metadata_changed = True
 
         failed_operations: List[str] = []

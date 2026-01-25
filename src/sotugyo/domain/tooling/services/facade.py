@@ -9,10 +9,17 @@ import re
 from typing import Dict, Iterable, List, Optional
 
 from ..models import (
+    TOOL_ENVIRONMENT_METADATA_KEY,
     RegisteredTool,
     RezPackageSpec,
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
+    collect_node_input_names,
+    merge_node_inputs,
+    normalize_node_input_name,
+    normalize_node_inputs,
+    normalize_required_plugins,
+    normalize_text_payload,
 )
 from ..repositories.config import ToolConfigRepository
 from ..repositories.rez_packages import (
@@ -25,6 +32,7 @@ from ..templates.gateway import TemplateGateway
 from .environment import ToolEnvironmentRegistryService
 from .registry import ToolRegistryService
 from .rez import RezPackageQueryService, RezQueryResult
+from ....infrastructure.paths.storage import get_tool_environment_dir
 
 
 @dataclass(slots=True)
@@ -316,7 +324,9 @@ class ToolEnvironmentService:
                 environment.updated_at = now
             synced_envs.append(environment)
 
-        self.registry_service.repository.save_all(synced_tools, synced_envs)
+        custom_envs = self._load_custom_environments(synced_tools)
+        merged_envs = self._merge_environment_definitions(synced_envs, custom_envs)
+        self.registry_service.repository.save_all(synced_tools, merged_envs)
 
     @staticmethod
     def _build_rez_tool_id(spec: RezPackageSpec) -> str:
@@ -324,10 +334,143 @@ class ToolEnvironmentService:
         return f"{spec.name}@{version_label}"
 
     @staticmethod
+    def _build_rez_tool_id_from_payload(package: str, version_label: str) -> str:
+        return f"{package}@{version_label or 'local'}"
+
+    @staticmethod
     def _build_rez_environment_name(spec: RezPackageSpec) -> str:
         if spec.version:
             return f"Rez: {spec.name} ({spec.version})"
         return f"Rez: {spec.name}"
+
+    def _load_custom_environments(
+        self, tools: Iterable[RegisteredTool]
+    ) -> List[ToolEnvironmentDefinition]:
+        tool_map = {tool.tool_id: tool for tool in tools}
+        env_dir = get_tool_environment_dir()
+        if not env_dir.exists():
+            return []
+        envs: List[ToolEnvironmentDefinition] = []
+        try:
+            entries = [entry for entry in env_dir.iterdir() if entry.is_file()]
+        except OSError:
+            LOGGER.warning("環境定義ディレクトリの走査に失敗しました: %s", env_dir)
+            return []
+        for entry in sorted(entries):
+            if entry.suffix.lower() != ".json":
+                continue
+            payload = self._read_environment_payload(entry)
+            if payload is None:
+                continue
+            definition = self._build_environment_definition_from_payload(
+                payload, entry, tool_map
+            )
+            if definition is None:
+                continue
+            envs.append(definition)
+        return envs
+
+    def _read_environment_payload(self, path: Path) -> Optional[Dict[str, object]]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            LOGGER.warning("環境定義ファイルの読み込みに失敗しました: %s", path)
+            return None
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            LOGGER.warning("環境定義ファイルの解析に失敗しました: %s", path)
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _build_environment_definition_from_payload(
+        self,
+        payload: Dict[str, object],
+        source_path: Path,
+        tool_map: Dict[str, RegisteredTool],
+    ) -> Optional[ToolEnvironmentDefinition]:
+        package = payload.get("package")
+        if not isinstance(package, str) or not package.strip():
+            LOGGER.warning("環境定義に package が不足しています: %s", source_path)
+            return None
+        package_version = payload.get("package_version")
+        version_label = (
+            str(package_version).strip()
+            if isinstance(package_version, str) and package_version.strip()
+            else "local"
+        )
+        tool_id = self._build_rez_tool_id_from_payload(package, version_label)
+        if tool_id not in tool_map:
+            LOGGER.warning(
+                "環境定義が参照するツールが見つかりませんでした: %s (%s)",
+                package,
+                source_path,
+            )
+            return None
+        env_id = payload.get("environment_id")
+        if isinstance(env_id, str) and env_id.strip():
+            environment_id = env_id.strip()
+        else:
+            environment_id = f"env:{tool_id}:{source_path.stem}"
+        name = payload.get("name")
+        display_name = (
+            name.strip()
+            if isinstance(name, str) and name.strip()
+            else source_path.stem
+        )
+
+        env_vars_payload = normalize_text_payload(payload.get("environment_variables"))
+        launch_payload = normalize_text_payload(payload.get("launch_arguments"))
+        required_plugins = normalize_required_plugins(payload.get("required_plugins"))
+        node_inputs = normalize_node_inputs(payload.get("node_inputs"))
+        extra_inputs: List[str] = []
+        extra_inputs.extend(collect_node_input_names(env_vars_payload["tokens"]))
+        extra_inputs.extend(collect_node_input_names(launch_payload["tokens"]))
+        for entry in required_plugins:
+            if entry.get("path_type") == "node":
+                input_name = entry.get("input_name")
+                if isinstance(input_name, str):
+                    normalized = normalize_node_input_name(input_name)
+                    if normalized:
+                        extra_inputs.append(normalized)
+        merged_inputs = merge_node_inputs(node_inputs, extra_inputs)
+        tool_payload = {
+            "environment_id": environment_id,
+            "name": display_name,
+            "package": package,
+            "package_version": version_label,
+            "environment_variables": env_vars_payload,
+            "launch_arguments": launch_payload,
+            "required_plugins": required_plugins,
+            "node_inputs": merged_inputs,
+            "schema_version": payload.get("schema_version", 1),
+        }
+        metadata = {TOOL_ENVIRONMENT_METADATA_KEY: tool_payload}
+        return ToolEnvironmentDefinition(
+            environment_id=environment_id,
+            name=display_name,
+            tool_id=tool_id,
+            version_label=version_label,
+            template_id=None,
+            rez_packages=(package,),
+            rez_variants=(),
+            rez_environment={},
+            metadata=metadata,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+
+    @staticmethod
+    def _merge_environment_definitions(
+        base_envs: Iterable[ToolEnvironmentDefinition],
+        custom_envs: Iterable[ToolEnvironmentDefinition],
+    ) -> List[ToolEnvironmentDefinition]:
+        env_map = {env.environment_id: env for env in base_envs}
+        for env in custom_envs:
+            env_map[env.environment_id] = env
+        return list(env_map.values())
 
     def _ensure_template_id(self, template_id: str | None, display_name: str) -> str:
         if template_id:

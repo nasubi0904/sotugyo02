@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Iterable
 
 from sotugyo.qt_compat import ensure_qt_module_alias
 
@@ -23,6 +23,15 @@ class ToolEnvironmentNode(BaseNode):
         self.set_property("width", 260, push_undo=False)
         self.set_property("height", 180, push_undo=False)
         self.set_color(80, 130, 190)
+
+    def ensure_input_ports(self, names: Iterable[str]) -> None:
+        existing = {port.name() for port in self.input_ports()}
+        for name in names:
+            normalized = str(name).strip()
+            if not normalized or normalized in existing:
+                continue
+            self.add_input(normalized)
+            existing.add(normalized)
 
     @classmethod
     def node_type_identifier(cls) -> str:
