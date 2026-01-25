@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import ClassVar, Iterable
 
 from sotugyo.qt_compat import ensure_qt_module_alias
 
@@ -27,6 +27,15 @@ class ToolEnvironmentNode(BaseNode):
     @classmethod
     def node_type_identifier(cls) -> str:
         return f"{cls.__identifier__}.{cls.__name__}"
+
+    def sync_input_plugs(self, names: Iterable[str]) -> None:
+        existing = set(self.input_ports().keys())
+        for name in names:
+            cleaned = str(name).strip()
+            if not cleaned or cleaned in existing:
+                continue
+            self.add_input(cleaned)
+            existing.add(cleaned)
 
 
 __all__ = ["ToolEnvironmentNode"]

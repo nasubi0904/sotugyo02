@@ -69,6 +69,7 @@ from sotugyo.domain.tooling import (
     RezPackageSpec,
     ToolEnvironmentDefinition,
 )
+from sotugyo.domain.tooling.payloads import extract_input_plug_names
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -843,6 +844,7 @@ class NodeEditorWindow(QMainWindow):
             position=position,
         )
         self._apply_tool_node_rez_properties(node, definition)
+        self._apply_tool_node_environment_payload(node, definition)
 
     def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
         env_id = ""
@@ -861,6 +863,15 @@ class NodeEditorWindow(QMainWindow):
             "version": definition.version_label or "",
         }
 
+    @staticmethod
+    def _build_tool_node_environment_payload(
+        definition: ToolEnvironmentDefinition,
+    ) -> Optional[Dict[str, object]]:
+        raw = definition.metadata.get("environment_payload")
+        if not isinstance(raw, dict):
+            return None
+        return dict(raw)
+
     def _apply_tool_node_rez_properties(
         self,
         node,
@@ -872,6 +883,22 @@ class NodeEditorWindow(QMainWindow):
             return False
         return self._set_node_custom_property(node, "rez_info", rez_info)
 
+    def _apply_tool_node_environment_payload(
+        self,
+        node,
+        definition: ToolEnvironmentDefinition,
+    ) -> bool:
+        payload = self._build_tool_node_environment_payload(definition)
+        if payload is None:
+            return False
+        existing = self._node_custom_property_value(node, "environment_payload")
+        if isinstance(existing, Mapping) and dict(existing) == payload:
+            self._sync_tool_node_input_plugs(node, payload)
+            return False
+        updated = self._set_node_custom_property(node, "environment_payload", payload)
+        self._sync_tool_node_input_plugs(node, payload)
+        return updated
+
     def _ensure_tool_node_rez_properties(self, node) -> bool:
         if not isinstance(node, ToolEnvironmentNode):
             return False
@@ -879,6 +906,26 @@ class NodeEditorWindow(QMainWindow):
         if definition is None:
             return False
         return self._apply_tool_node_rez_properties(node, definition)
+
+    def _ensure_tool_node_environment_payload(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        payload = self._node_custom_property_value(node, "environment_payload")
+        if isinstance(payload, Mapping):
+            self._sync_tool_node_input_plugs(node, payload)
+            return False
+        definition = self._find_tool_environment_definition(node)
+        if definition is None:
+            return False
+        return self._apply_tool_node_environment_payload(node, definition)
+
+    def _sync_tool_node_input_plugs(self, node, payload: Mapping[str, object]) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        input_names = extract_input_plug_names(payload)
+        if not input_names:
+            return
+        node.sync_input_plugs(input_names)
 
     def _find_tool_environment_definition(
         self, node
@@ -2963,6 +3010,8 @@ class NodeEditorWindow(QMainWindow):
                         if not self._set_node_custom_property(node, key, value):
                             LOGGER.debug("プロパティ %s の適用に失敗しました", key)
             if self._ensure_tool_node_rez_properties(node):
+                metadata_changed = True
+            if self._ensure_tool_node_environment_payload(node):
                 metadata_changed = True
 
         failed_operations: List[str] = []

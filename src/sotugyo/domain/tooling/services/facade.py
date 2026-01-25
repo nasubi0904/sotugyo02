@@ -4,9 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import json
 from pathlib import Path
 import re
+import uuid
 from typing import Dict, Iterable, List, Optional
+
+from ....infrastructure.paths.storage import get_tool_environment_dir
 
 from ..models import (
     RegisteredTool,
@@ -14,6 +18,7 @@ from ..models import (
     TemplateInstallationCandidate,
     ToolEnvironmentDefinition,
 )
+from ..payloads import normalize_input_plugs
 from ..repositories.config import ToolConfigRepository
 from ..repositories.rez_packages import (
     ProjectRezPackageRepository,
@@ -316,7 +321,97 @@ class ToolEnvironmentService:
                 environment.updated_at = now
             synced_envs.append(environment)
 
+        custom_envs = self._load_custom_environment_definitions(now)
+        if custom_envs:
+            existing_ids = {env.environment_id for env in synced_envs}
+            for env in custom_envs:
+                if env.environment_id in existing_ids:
+                    continue
+                synced_envs.append(env)
+
         self.registry_service.repository.save_all(synced_tools, synced_envs)
+
+    def _load_custom_environment_definitions(
+        self, timestamp: datetime
+    ) -> List[ToolEnvironmentDefinition]:
+        env_dir = get_tool_environment_dir()
+        if not env_dir.exists():
+            return []
+        definitions: List[ToolEnvironmentDefinition] = []
+        try:
+            entries = list(env_dir.iterdir())
+        except OSError:
+            return []
+        for entry in entries:
+            if not entry.is_file() or entry.suffix.lower() != ".json":
+                continue
+            payload = self._read_environment_payload(entry)
+            if not payload:
+                continue
+            definition = self._build_environment_definition(entry, payload, timestamp)
+            if definition is None:
+                continue
+            definitions.append(definition)
+        return definitions
+
+    @staticmethod
+    def _read_environment_payload(path: Path) -> Optional[Dict[str, object]]:
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    def _build_environment_definition(
+        self,
+        path: Path,
+        payload: Dict[str, object],
+        timestamp: datetime,
+    ) -> Optional[ToolEnvironmentDefinition]:
+        name = str(payload.get("name", "")).strip()
+        package = str(payload.get("package", "")).strip()
+        if not name or not package:
+            return None
+        version_label = str(payload.get("package_version", "")).strip() or "local"
+        env_id = str(payload.get("environment_id", "")).strip()
+        if not env_id:
+            env_id = f"env:{uuid.uuid5(uuid.NAMESPACE_OID, f'{package}:{version_label}:{path.name}')}"
+        metadata_payload = dict(payload)
+        metadata_payload["environment_variables"] = str(
+            payload.get("environment_variables", "")
+        ).strip()
+        metadata_payload["launch_arguments"] = str(payload.get("launch_arguments", "")).strip()
+        raw_plugins = payload.get("required_plugins")
+        if isinstance(raw_plugins, list):
+            metadata_payload["required_plugins"] = [
+                entry for entry in raw_plugins if isinstance(entry, dict)
+            ]
+        raw_inputs = payload.get("input_plugs")
+        if isinstance(raw_inputs, list):
+            metadata_payload["input_plugs"] = normalize_input_plugs(raw_inputs)
+        metadata = {
+            "environment_payload": metadata_payload,
+            "environment_file": str(path),
+        }
+        return ToolEnvironmentDefinition(
+            environment_id=env_id,
+            name=name,
+            tool_id=f"{package}@{version_label}",
+            version_label=version_label,
+            template_id=None,
+            rez_packages=(package,),
+            rez_variants=(),
+            rez_environment={},
+            metadata=metadata,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
 
     @staticmethod
     def _build_rez_tool_id(spec: RezPackageSpec) -> str:
