@@ -1534,10 +1534,17 @@ class NodeEditorWindow(QMainWindow):
             return
         package_request, available = target
         if not available:
+            debug_text = self._format_launch_debug_text(
+                package_request=package_request,
+                tool_args=None,
+                extra_env=None,
+                resolved_command=None,
+            )
             self._show_warning_dialog(
                 "ローカルの Rez パッケージが見つかりません。\n"
                 f"起動対象: {package_request}\n"
-                f"KDMrez: {get_rez_package_dir()}"
+                f"KDMrez: {get_rez_package_dir()}\n\n"
+                f"{debug_text}"
             )
             return
         extra_env = None
@@ -1558,10 +1565,17 @@ class NodeEditorWindow(QMainWindow):
             missing = sorted(set(missing_env) | set(missing_args))
             if missing:
                 missing_list = "\n".join(f"・{name}" for name in missing)
+                debug_text = self._format_launch_debug_text(
+                    package_request=package_request,
+                    tool_args=tool_args,
+                    extra_env=extra_env,
+                    resolved_command=None,
+                )
                 self._show_warning_dialog(
                     "ノード入力パスを解決できませんでした。\n"
                     "入力ポートにファイルノードが接続されているか確認してください。\n"
-                    f"{missing_list}"
+                    f"{missing_list}\n\n"
+                    f"{debug_text}"
                 )
                 return
         try:
@@ -1571,12 +1585,29 @@ class NodeEditorWindow(QMainWindow):
                 extra_env=extra_env if extra_env else None,
             )
         except RezLauncherError as exc:
-            self._show_error_dialog(f"Rez 環境の起動に失敗しました: {exc}")
+            debug_text = self._format_launch_debug_text(
+                package_request=package_request,
+                tool_args=tool_args,
+                extra_env=extra_env,
+                resolved_command=None,
+            )
+            self._show_error_dialog(
+                "Rez 環境の起動に失敗しました。\n"
+                f"{exc}\n\n"
+                f"{debug_text}"
+            )
             return
+        debug_text = self._format_launch_debug_text(
+            package_request=package_request,
+            tool_args=tool_args,
+            extra_env=extra_env,
+            resolved_command=list(result.command),
+        )
         self._show_info_dialog(
             "Rez 環境を起動しました。\n"
             f"PID: {result.pid}\n"
-            f"Log: {result.log_path}"
+            f"Log: {result.log_path}\n\n"
+            f"{debug_text}"
         )
 
     def _tool_environment_payload(self, node) -> Optional[Dict[str, object]]:
@@ -1679,6 +1710,34 @@ class NodeEditorWindow(QMainWindow):
 
         resolved_text = NODE_INPUT_TOKEN_PATTERN.sub(_replace, text)
         return resolved_text, missing
+
+    def _format_launch_debug_text(
+        self,
+        *,
+        package_request: str,
+        tool_args: Optional[List[str]],
+        extra_env: Optional[Dict[str, str]],
+        resolved_command: Optional[List[str]],
+    ) -> str:
+        if resolved_command:
+            command = resolved_command
+        elif tool_args:
+            command = tool_args
+        else:
+            command = [f"(EXECUTE_ 自動解決) {package_request}"]
+        env_lines = []
+        if extra_env:
+            for key, value in sorted(extra_env.items()):
+                env_lines.append(f"{key}={value}")
+        if not env_lines:
+            env_lines.append("(環境変数の追加なし)")
+        return (
+            "起動コマンド:\n"
+            + " ".join(command)
+            + "\n\n"
+            + "環境変数:\n"
+            + "\n".join(env_lines)
+        )
 
     def _handle_file_reveal_requested(self) -> None:
         if self._current_node is None or not isinstance(self._current_node, FileNode):
