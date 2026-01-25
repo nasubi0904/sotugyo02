@@ -286,7 +286,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         args_option_layout.addStretch(1)
         layout.addLayout(args_option_layout)
         self._launch_args_edit = QPlainTextEdit(self)
-        self._launch_args_edit.setPlaceholderText("例:\n--project path/to/project\n--verbose")
+        self._launch_args_edit.setPlaceholderText(
+            "例:\n--project path/to/project\n--verbose\n(※EXECUTE コマンドに追記されます)"
+        )
         layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()

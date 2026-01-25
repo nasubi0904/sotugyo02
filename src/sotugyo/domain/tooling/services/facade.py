@@ -254,11 +254,17 @@ class ToolEnvironmentService:
                 tool_by_package[
                     self.rez_repository.normalize_template_id(tool.template_id)
                 ] = tool
-        env_map = {env.tool_id: env for env in environments}
-        env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
+        rez_env_map = {
+            env.tool_id: env
+            for env in environments
+            if env.environment_id.startswith("rez:")
+        }
+        rez_env_by_package: Dict[str, ToolEnvironmentDefinition] = {}
         for env in environments:
+            if not env.environment_id.startswith("rez:"):
+                continue
             for package in env.rez_packages:
-                env_by_package[package] = env
+                rez_env_by_package[package] = env
 
         now = datetime.utcnow()
         synced_tools: List[RegisteredTool] = []
@@ -294,9 +300,9 @@ class ToolEnvironmentService:
             synced_tools.append(tool)
 
             environment = (
-                env_map.get(tool_id)
-                or env_map.get(spec.name)
-                or env_by_package.get(spec.name)
+                rez_env_map.get(tool_id)
+                or rez_env_map.get(spec.name)
+                or rez_env_by_package.get(spec.name)
             )
             if environment is None:
                 environment = ToolEnvironmentDefinition(

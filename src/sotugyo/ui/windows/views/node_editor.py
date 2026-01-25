@@ -1536,7 +1536,7 @@ class NodeEditorWindow(QMainWindow):
         if not available:
             debug_text = self._format_launch_debug_text(
                 package_request=package_request,
-                tool_args=None,
+                extra_args=None,
                 extra_env=None,
                 resolved_command=None,
             )
@@ -1548,7 +1548,7 @@ class NodeEditorWindow(QMainWindow):
             )
             return
         extra_env = None
-        tool_args = None
+        extra_args = None
         payload = self._tool_environment_payload(self._current_node)
         if isinstance(payload, dict):
             input_paths = self._collect_tool_input_paths(self._current_node)
@@ -1558,7 +1558,7 @@ class NodeEditorWindow(QMainWindow):
                 env_text if isinstance(env_text, str) else "",
                 input_paths,
             )
-            tool_args, missing_args = self._build_tool_args(
+            extra_args, missing_args = self._build_tool_args(
                 args_text if isinstance(args_text, str) else "",
                 input_paths,
             )
@@ -1567,7 +1567,7 @@ class NodeEditorWindow(QMainWindow):
                 missing_list = "\n".join(f"・{name}" for name in missing)
                 debug_text = self._format_launch_debug_text(
                     package_request=package_request,
-                    tool_args=tool_args,
+                    extra_args=extra_args,
                     extra_env=extra_env,
                     resolved_command=None,
                 )
@@ -1581,13 +1581,14 @@ class NodeEditorWindow(QMainWindow):
         try:
             result = launch_rez_detached(
                 package_request=package_request,
-                tool_args=tool_args if tool_args else None,
+                tool_args=None,
                 extra_env=extra_env if extra_env else None,
+                extra_args=extra_args if extra_args else None,
             )
         except RezLauncherError as exc:
             debug_text = self._format_launch_debug_text(
                 package_request=package_request,
-                tool_args=tool_args,
+                extra_args=extra_args,
                 extra_env=extra_env,
                 resolved_command=None,
             )
@@ -1599,7 +1600,7 @@ class NodeEditorWindow(QMainWindow):
             return
         debug_text = self._format_launch_debug_text(
             package_request=package_request,
-            tool_args=tool_args,
+            extra_args=extra_args,
             extra_env=extra_env,
             resolved_command=list(result.command),
         )
@@ -1715,14 +1716,14 @@ class NodeEditorWindow(QMainWindow):
         self,
         *,
         package_request: str,
-        tool_args: Optional[List[str]],
+        extra_args: Optional[List[str]],
         extra_env: Optional[Dict[str, str]],
         resolved_command: Optional[List[str]],
     ) -> str:
         if resolved_command:
             command = resolved_command
-        elif tool_args:
-            command = tool_args
+        elif extra_args:
+            command = [f"(EXECUTE_ 自動解決) {package_request}", *extra_args]
         else:
             command = [f"(EXECUTE_ 自動解決) {package_request}"]
         env_lines = []
