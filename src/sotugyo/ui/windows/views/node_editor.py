@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -69,7 +71,10 @@ from sotugyo.domain.tooling import (
     RezPackageSpec,
     ToolEnvironmentDefinition,
 )
-from sotugyo.domain.tooling.models import collect_node_input_names
+from sotugyo.domain.tooling.models import (
+    NODE_INPUT_TOKEN_PATTERN,
+    collect_node_input_names,
+)
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -1535,8 +1540,36 @@ class NodeEditorWindow(QMainWindow):
                 f"KDMrez: {get_rez_package_dir()}"
             )
             return
+        extra_env = None
+        tool_args = None
+        payload = self._tool_environment_payload(self._current_node)
+        if isinstance(payload, dict):
+            input_paths = self._collect_tool_input_paths(self._current_node)
+            env_text = payload.get("environment_variables")
+            args_text = payload.get("launch_arguments")
+            extra_env, missing_env = self._build_environment_map(
+                env_text if isinstance(env_text, str) else "",
+                input_paths,
+            )
+            tool_args, missing_args = self._build_tool_args(
+                args_text if isinstance(args_text, str) else "",
+                input_paths,
+            )
+            missing = sorted(set(missing_env) | set(missing_args))
+            if missing:
+                missing_list = "\n".join(f"・{name}" for name in missing)
+                self._show_warning_dialog(
+                    "ノード入力パスを解決できませんでした。\n"
+                    "入力ポートにファイルノードが接続されているか確認してください。\n"
+                    f"{missing_list}"
+                )
+                return
         try:
-            result = launch_rez_detached(package_request=package_request, tool_args=None)
+            result = launch_rez_detached(
+                package_request=package_request,
+                tool_args=tool_args if tool_args else None,
+                extra_env=extra_env if extra_env else None,
+            )
         except RezLauncherError as exc:
             self._show_error_dialog(f"Rez 環境の起動に失敗しました: {exc}")
             return
@@ -1545,6 +1578,107 @@ class NodeEditorWindow(QMainWindow):
             f"PID: {result.pid}\n"
             f"Log: {result.log_path}"
         )
+
+    def _tool_environment_payload(self, node) -> Optional[Dict[str, object]]:
+        if not isinstance(node, ToolEnvironmentNode):
+            return None
+        props = self._node_custom_properties(node)
+        payload = props.get("tool_environment_payload")
+        if isinstance(payload, dict):
+            return payload
+        return None
+
+    def _collect_tool_input_paths(self, node) -> Dict[str, Path]:
+        if not isinstance(node, ToolEnvironmentNode):
+            return {}
+        input_paths: Dict[str, Path] = {}
+        for port in self._collect_ports(node, output=False):
+            port_name = self._safe_port_name(port)
+            if not port_name or port_name in input_paths:
+                continue
+            connected_ports = self._connected_ports(port)
+            for connected in connected_ports:
+                if not isinstance(connected, Port):
+                    continue
+                source_node = connected.node()
+                if not isinstance(source_node, FileNode):
+                    continue
+                file_value = self._file_node_value(source_node)
+                resolved = self._resolve_project_file_path(file_value)
+                if resolved is None and isinstance(file_value, str):
+                    candidate = Path(file_value)
+                    if candidate.is_absolute():
+                        resolved = candidate
+                if resolved is None:
+                    continue
+                input_paths[port_name] = resolved
+                break
+        return input_paths
+
+    def _build_environment_map(
+        self,
+        text: str,
+        input_paths: Dict[str, Path],
+    ) -> Tuple[Dict[str, str], List[str]]:
+        env_map: Dict[str, str] = {}
+        missing: List[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key:
+                continue
+            resolved_value, missing_names = self._resolve_tokenized_text(value, input_paths)
+            for name in missing_names:
+                if name not in missing:
+                    missing.append(name)
+            env_map[key] = resolved_value.strip()
+        return env_map, missing
+
+    def _build_tool_args(
+        self,
+        text: str,
+        input_paths: Dict[str, Path],
+    ) -> Tuple[List[str], List[str]]:
+        args: List[str] = []
+        missing: List[str] = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            resolved_line, missing_names = self._resolve_tokenized_text(stripped, input_paths)
+            for name in missing_names:
+                if name not in missing:
+                    missing.append(name)
+            try:
+                parts = shlex.split(resolved_line, posix=False)
+            except ValueError:
+                parts = [resolved_line]
+            args.extend(parts)
+        return args, missing
+
+    def _resolve_tokenized_text(
+        self,
+        text: str,
+        input_paths: Dict[str, Path],
+    ) -> Tuple[str, List[str]]:
+        missing: List[str] = []
+
+        def _replace(match: re.Match[str]) -> str:
+            name = match.group(1).strip()
+            resolved = input_paths.get(name)
+            if resolved is None:
+                if name and name not in missing:
+                    missing.append(name)
+                return match.group(0)
+            return str(resolved)
+
+        resolved_text = NODE_INPUT_TOKEN_PATTERN.sub(_replace, text)
+        return resolved_text, missing
 
     def _handle_file_reveal_requested(self) -> None:
         if self._current_node is None or not isinstance(self._current_node, FileNode):
