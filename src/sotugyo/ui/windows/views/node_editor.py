@@ -69,6 +69,7 @@ from sotugyo.domain.tooling import (
     RezPackageSpec,
     ToolEnvironmentDefinition,
 )
+from sotugyo.domain.tooling.models import collect_node_input_names
 from sotugyo.domain.tooling.coordinator import (
     NodeCatalogRecord,
     NodeEditorCoordinator,
@@ -843,6 +844,7 @@ class NodeEditorWindow(QMainWindow):
             position=position,
         )
         self._apply_tool_node_rez_properties(node, definition)
+        self._apply_tool_node_environment_payload(node, definition)
 
     def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
         env_id = ""
@@ -871,6 +873,80 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(existing, Mapping) and dict(existing) == rez_info:
             return False
         return self._set_node_custom_property(node, "rez_info", rez_info)
+
+    def _apply_tool_node_environment_payload(
+        self,
+        node,
+        definition: ToolEnvironmentDefinition,
+    ) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        payload = definition.metadata.get("environment_payload")
+        if not isinstance(payload, dict):
+            return False
+        node_inputs = definition.metadata.get("environment_inputs")
+        if isinstance(node_inputs, list):
+            normalized_inputs = [
+                name.strip()
+                for name in node_inputs
+                if isinstance(name, str) and name.strip()
+            ]
+        else:
+            normalized_inputs = collect_node_input_names(payload)
+        updated = False
+        if self._set_node_custom_property(node, "tool_environment_payload", payload):
+            updated = True
+        if normalized_inputs:
+            if self._set_node_custom_property(node, "tool_environment_inputs", normalized_inputs):
+                updated = True
+        if self._ensure_tool_node_inputs(node, normalized_inputs):
+            updated = True
+        return updated
+
+    def _ensure_tool_node_inputs_from_properties(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        props = self._node_custom_properties(node)
+        inputs = props.get("tool_environment_inputs")
+        if isinstance(inputs, list):
+            names = [
+                name.strip()
+                for name in inputs
+                if isinstance(name, str) and name.strip()
+            ]
+        else:
+            payload = props.get("tool_environment_payload")
+            if not isinstance(payload, dict):
+                return False
+            names = collect_node_input_names(payload)
+        if not names:
+            return False
+        return self._ensure_tool_node_inputs(node, names)
+
+    def _ensure_tool_node_inputs(self, node, input_names: Iterable[str]) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        inputs = [
+            name.strip() for name in input_names if isinstance(name, str) and name.strip()
+        ]
+        if not inputs:
+            return False
+        existing = {
+            self._safe_port_name(port)
+            for port in self._collect_ports(node, output=False)
+        }
+        added = False
+        for name in inputs:
+            if name in existing:
+                continue
+            try:
+                node.add_input(name)
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("ツール環境ノードの入力追加に失敗しました: %s", name, exc_info=True)
+                continue
+            existing.add(name)
+            added = True
+        return added
 
     def _ensure_tool_node_rez_properties(self, node) -> bool:
         if not isinstance(node, ToolEnvironmentNode):
@@ -2963,6 +3039,8 @@ class NodeEditorWindow(QMainWindow):
                         if not self._set_node_custom_property(node, key, value):
                             LOGGER.debug("プロパティ %s の適用に失敗しました", key)
             if self._ensure_tool_node_rez_properties(node):
+                metadata_changed = True
+            if self._ensure_tool_node_inputs_from_properties(node):
                 metadata_changed = True
 
         failed_operations: List[str] = []

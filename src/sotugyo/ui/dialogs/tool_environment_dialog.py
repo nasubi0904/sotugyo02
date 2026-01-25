@@ -18,6 +18,7 @@ QDialogButtonBox = QtWidgets.QDialogButtonBox
 QFormLayout = QtWidgets.QFormLayout
 QHBoxLayout = QtWidgets.QHBoxLayout
 QCheckBox = QtWidgets.QCheckBox
+QInputDialog = QtWidgets.QInputDialog
 QLabel = QtWidgets.QLabel
 QLineEdit = QtWidgets.QLineEdit
 QListWidget = QtWidgets.QListWidget
@@ -30,7 +31,12 @@ QWidget = QtWidgets.QWidget
 QFileDialog = QtWidgets.QFileDialog
 QMessageBox = QtWidgets.QMessageBox
 
-from ...domain.tooling.models import RezPackageSpec
+from ...domain.tooling.models import (
+    RezPackageSpec,
+    build_node_input_token,
+    collect_node_input_names,
+    normalize_node_input_name,
+)
 from ...domain.tooling import ToolEnvironmentService
 from ...infrastructure.paths.storage import get_tool_environment_dir
 
@@ -143,6 +149,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.was_saved():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
     def _open_edit_dialog(self) -> None:
         path = self._selected_environment_path()
@@ -155,6 +164,9 @@ class ToolEnvironmentManagerDialog(QDialog):
             parent=self,
         )
         dialog.exec()
+        if dialog.was_saved():
+            self._refresh_on_accept = True
+            self._load_environment_list()
 
 
 class ToolEnvironmentEditorDialog(QDialog):
@@ -172,9 +184,11 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._service = service
         self._environment_dir = environment_dir
         self._environment_path = environment_path
+        self._environment_id: Optional[str] = None
         self._required_plugins: list[dict[str, str]] = []
         self._package_py_cache: dict[Path, str] = {}
         self._known_folders_cache: Optional[list[tuple[str, Path]]] = None
+        self._saved = False
 
         self.setWindowTitle("ツール環境の編集")
         self.resize(640, 480)
@@ -182,6 +196,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._build_ui()
         self._populate_packages()
         self._load_existing()
+
+    def was_saved(self) -> bool:
+        return self._saved
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -219,6 +236,9 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._plugin_add_button = QPushButton("追加", self)
         self._plugin_add_button.clicked.connect(self._open_plugin_dialog)
         plugin_button_layout.addWidget(self._plugin_add_button)
+        self._plugin_add_node_button = QPushButton("ノードプラグ追加", self)
+        self._plugin_add_node_button.clicked.connect(self._open_node_plugin_dialog)
+        plugin_button_layout.addWidget(self._plugin_add_node_button)
         self._plugin_remove_button = QPushButton("削除", self)
         self._plugin_remove_button.setEnabled(False)
         self._plugin_remove_button.clicked.connect(self._remove_selected_plugins)
@@ -237,25 +257,41 @@ class ToolEnvironmentEditorDialog(QDialog):
 
         env_label = QLabel("環境変数の設定", self)
         layout.addWidget(env_label)
+        env_option_layout = QHBoxLayout()
         self._known_path_checkbox = QCheckBox(
             "環境変数のパスを Known Folder で補完する",
             self,
         )
         self._known_path_checkbox.setChecked(True)
-        layout.addWidget(self._known_path_checkbox)
+        env_option_layout.addWidget(self._known_path_checkbox)
+        env_insert_button = QPushButton("ノード入力トークンを挿入", self)
+        env_insert_button.clicked.connect(
+            lambda: self._insert_node_input_token(self._env_vars_edit)
+        )
+        env_option_layout.addWidget(env_insert_button)
+        env_option_layout.addStretch(1)
+        layout.addLayout(env_option_layout)
         self._env_vars_edit = QPlainTextEdit(self)
         self._env_vars_edit.setPlaceholderText("例:\nOCIO=path/to/config.ocio\nAPP_MODE=dev")
         layout.addWidget(self._env_vars_edit)
 
         args_label = QLabel("起動引数の設定", self)
         layout.addWidget(args_label)
+        args_option_layout = QHBoxLayout()
+        args_insert_button = QPushButton("ノード入力トークンを挿入", self)
+        args_insert_button.clicked.connect(
+            lambda: self._insert_node_input_token(self._launch_args_edit)
+        )
+        args_option_layout.addWidget(args_insert_button)
+        args_option_layout.addStretch(1)
+        layout.addLayout(args_option_layout)
         self._launch_args_edit = QPlainTextEdit(self)
         self._launch_args_edit.setPlaceholderText("例:\n--project path/to/project\n--verbose")
         layout.addWidget(self._launch_args_edit)
 
         button_layout = QHBoxLayout()
         self._create_button = QPushButton("環境作成", self)
-        self._create_button.clicked.connect(self._print_environment)
+        self._create_button.clicked.connect(self._save_environment)
         button_layout.addWidget(self._create_button)
         button_layout.addStretch(1)
 
@@ -284,19 +320,133 @@ class ToolEnvironmentEditorDialog(QDialog):
         if self._environment_path is None:
             self._name_edit.setText("")
             return
-        self._name_edit.setText(self._environment_path.stem)
+        payload = self._read_environment_payload(self._environment_path)
+        if not payload:
+            self._name_edit.setText(self._environment_path.stem)
+            return
+        self._environment_id = self._normalize_environment_id(payload.get("environment_id"))
+        name_value = payload.get("name")
+        name = name_value if isinstance(name_value, str) and name_value.strip() else self._environment_path.stem
+        self._name_edit.setText(name)
+        env_vars = payload.get("environment_variables")
+        if isinstance(env_vars, str):
+            self._env_vars_edit.setPlainText(env_vars)
+        launch_args = payload.get("launch_arguments")
+        if isinstance(launch_args, str):
+            self._launch_args_edit.setPlainText(launch_args)
+        raw_plugins = payload.get("required_plugins")
+        if isinstance(raw_plugins, list):
+            self._required_plugins = [
+                entry for entry in raw_plugins if isinstance(entry, dict)
+            ]
+        self._refresh_plugin_list()
+        package_name = payload.get("package")
+        version_label = payload.get("package_version")
+        if isinstance(package_name, str):
+            self._select_package(package_name, version_label if isinstance(version_label, str) else None)
 
-    def _print_environment(self) -> None:
+    def _save_environment(self) -> None:
+        payload = self._build_environment_payload()
+        if payload is None:
+            return
+        self._environment_dir.mkdir(parents=True, exist_ok=True)
+        target_path = self._resolve_environment_path(payload.get("name"))
+        payload["environment_id"] = self._environment_id or payload.get("environment_id")
+        payload["node_inputs"] = collect_node_input_names(payload)
+        try:
+            target_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "保存に失敗しました",
+                f"環境定義の保存に失敗しました: {exc}",
+            )
+            return
+        self._environment_path = target_path
+        self._environment_id = payload.get("environment_id") if isinstance(payload.get("environment_id"), str) else None
+        self._saved = True
+        QMessageBox.information(
+            self,
+            "保存しました",
+            "環境定義を保存しました。",
+        )
+
+    def _build_environment_payload(self) -> Optional[dict[str, object]]:
         package = self._package_combo.currentData()
-        payload = {
-            "name": self._name_edit.text().strip() or "無名の環境",
-            "package": package.name if isinstance(package, RezPackageSpec) else None,
-            "package_version": package.version if isinstance(package, RezPackageSpec) else None,
+        if not isinstance(package, RezPackageSpec):
+            QMessageBox.warning(
+                self,
+                "パッケージ未選択",
+                "ツールパッケージを選択してください。",
+            )
+            return None
+        name = self._name_edit.text().strip() or "無名の環境"
+        self._environment_id = self._environment_id or str(uuid.uuid4())
+        return {
+            "environment_id": self._environment_id,
+            "name": name,
+            "package": package.name,
+            "package_version": package.version or "",
             "environment_variables": self._build_environment_variables(),
             "launch_arguments": self._launch_args_edit.toPlainText().strip(),
             "required_plugins": list(self._required_plugins),
         }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _resolve_environment_path(self, name_value: object) -> Path:
+        if self._environment_path is not None:
+            return self._environment_path
+        name = str(name_value) if name_value else "environment"
+        slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_") or "environment"
+        candidate = self._environment_dir / f"{slug}.json"
+        if not candidate.exists():
+            return candidate
+        unique = uuid.uuid4().hex[:8]
+        return self._environment_dir / f"{slug}_{unique}.json"
+
+    def _read_environment_payload(self, path: Path) -> Optional[dict[str, object]]:
+        if not path.exists():
+            return None
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError:
+            QMessageBox.warning(
+                self,
+                "読み込みに失敗しました",
+                "環境定義ファイルの読み込みに失敗しました。",
+            )
+            return None
+        try:
+            payload = json.loads(content)
+        except json.JSONDecodeError:
+            QMessageBox.warning(
+                self,
+                "読み込みに失敗しました",
+                "環境定義ファイルの解析に失敗しました。",
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
+
+    def _normalize_environment_id(self, value: object) -> Optional[str]:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return None
+
+    def _select_package(self, name: str, version: Optional[str]) -> None:
+        for index in range(self._package_combo.count()):
+            data = self._package_combo.itemData(index)
+            if not isinstance(data, RezPackageSpec):
+                continue
+            if data.name != name:
+                continue
+            if version and data.version != version:
+                continue
+            self._package_combo.setCurrentIndex(index)
+            return
 
     def _open_plugin_dialog(self) -> None:
         start_path = self._resolve_plugin_dialog_start_path()
@@ -318,6 +468,63 @@ class ToolEnvironmentEditorDialog(QDialog):
             return
         for path in paths:
             self._append_required_plugin(Path(path))
+
+    def _open_node_plugin_dialog(self) -> None:
+        dialog = _NodePluginDialog(self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        values = dialog.values()
+        input_name = normalize_node_input_name(values["input_name"])
+        if input_name is None:
+            QMessageBox.warning(
+                self,
+                "入力プラグ名が不正です",
+                "入力プラグ名を入力してください。",
+            )
+            return
+        relative_raw = values["relative_path"].strip()
+        normalized_relative = ""
+        if relative_raw:
+            normalized = self._normalize_relative_path(relative_raw)
+            if normalized is None:
+                QMessageBox.warning(
+                    self,
+                    "相対パスが不正です",
+                    "相対パスには .. や絶対パスを含めないでください。",
+                )
+                return
+            normalized_relative = normalized
+        plugin_name = values["plugin_name"].strip() or input_name
+        payload = {
+            "name": plugin_name,
+            "path_type": "node",
+            "input_name": input_name,
+        }
+        if normalized_relative:
+            payload["relative_path"] = normalized_relative
+        self._required_plugins.append(payload)
+        self._refresh_plugin_list()
+
+    def _insert_node_input_token(self, editor: QPlainTextEdit) -> None:
+        text, ok = QInputDialog.getText(
+            self,
+            "ノード入力トークンを挿入",
+            "入力プラグ名を指定してください。",
+        )
+        if not ok:
+            return
+        input_name = normalize_node_input_name(text)
+        if input_name is None:
+            QMessageBox.warning(
+                self,
+                "入力プラグ名が不正です",
+                "入力プラグ名を入力してください。",
+            )
+            return
+        token = build_node_input_token(input_name)
+        cursor = editor.textCursor()
+        cursor.insertText(token)
+        editor.setTextCursor(cursor)
 
     def _resolve_plugin_dialog_start_path(self) -> str:
         package = self._current_package_spec()
@@ -390,6 +597,13 @@ class ToolEnvironmentEditorDialog(QDialog):
                 label = (
                     f"{entry['name']} (tool:{entry['relative_path']})"
                 )
+            elif entry.get("path_type") == "node":
+                input_name = entry.get("input_name", "")
+                relative = entry.get("relative_path", "")
+                if relative:
+                    label = f"{entry['name']} (input:{input_name}/{relative})"
+                else:
+                    label = f"{entry['name']} (input:{input_name})"
             else:
                 label = f"{entry['name']} ({entry['path']})"
             item = QListWidgetItem(label, self._plugin_list)
@@ -397,10 +611,19 @@ class ToolEnvironmentEditorDialog(QDialog):
         self._update_plugin_buttons()
 
     def _update_plugin_buttons(self) -> None:
-        has_selection = bool(self._plugin_list.selectedItems())
+        selected_indices = self._selected_plugin_indices()
+        has_selection = bool(selected_indices)
         self._plugin_remove_button.setEnabled(has_selection)
-        self._plugin_relative_button.setEnabled(has_selection)
-        self._plugin_absolute_button.setEnabled(has_selection)
+        if not has_selection:
+            self._plugin_relative_button.setEnabled(False)
+            self._plugin_absolute_button.setEnabled(False)
+            return
+        has_node_entry = any(
+            self._required_plugins[index].get("path_type") == "node"
+            for index in selected_indices
+        )
+        self._plugin_relative_button.setEnabled(not has_node_entry)
+        self._plugin_absolute_button.setEnabled(not has_node_entry)
 
     def _remove_selected_plugins(self) -> None:
         selected_items = self._plugin_list.selectedItems()
@@ -573,6 +796,8 @@ class ToolEnvironmentEditorDialog(QDialog):
             if base_dir is None:
                 return None
             return base_dir / Path(relative.replace("/", os.sep))
+        if path_type == "node":
+            return None
         return None
 
     def _resolve_known_folder_base(self, known_id: str) -> Optional[Path]:
@@ -816,6 +1041,45 @@ class ToolEnvironmentEditorDialog(QDialog):
         except ValueError:
             return False
         return os.path.normcase(common) == os.path.normcase(str(base))
+
+
+class _NodePluginDialog(QDialog):
+    """ノード入力を使う要求ファイル登録ダイアログ。"""
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("ノードプラグの追加")
+        self.resize(360, 200)
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignLeft)
+
+        self._input_name_edit = QLineEdit(self)
+        self._input_name_edit.setPlaceholderText("例: 入力ディレクトリ")
+        form.addRow("入力プラグ名", self._input_name_edit)
+
+        self._plugin_name_edit = QLineEdit(self)
+        self._plugin_name_edit.setPlaceholderText("例: required_file")
+        form.addRow("要求ファイル名", self._plugin_name_edit)
+
+        self._relative_path_edit = QLineEdit(self)
+        self._relative_path_edit.setPlaceholderText("例: Scripts/plugin.txt")
+        form.addRow("相対パス", self._relative_path_edit)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, Qt.Horizontal, self)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def values(self) -> dict[str, str]:
+        return {
+            "input_name": self._input_name_edit.text(),
+            "plugin_name": self._plugin_name_edit.text(),
+            "relative_path": self._relative_path_edit.text(),
+        }
 
 
 class _Guid(ctypes.Structure):
