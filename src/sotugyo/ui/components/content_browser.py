@@ -1230,6 +1230,9 @@ class NodeContentBrowser(QWidget):
                 self._root_folder.items.append(
                     CatalogItem(kind="folder", title=folder.name, folder=folder)
                 )
+        environment = self._find_folder("環境定義")
+        if environment is not None:
+            self._ensure_environment_subfolders(environment)
 
     def _persist_layout(self) -> None:
         payload = self._serialize_layout()
@@ -1288,6 +1291,20 @@ class NodeContentBrowser(QWidget):
         self._root_folder = CatalogFolder("root", None)
         workflow = CatalogFolder("ワークフロー", self._root_folder)
         environment = CatalogFolder("環境定義", self._root_folder)
+        created_environment = CatalogFolder("作成した環境", environment)
+        registered_tools = CatalogFolder("登録ツール", environment)
+        environment.items = [
+            CatalogItem(
+                kind="folder",
+                title=created_environment.name,
+                folder=created_environment,
+            ),
+            CatalogItem(
+                kind="folder",
+                title=registered_tools.name,
+                folder=registered_tools,
+            ),
+        ]
         self._root_folder.items = [
             CatalogItem(kind="folder", title=workflow.name, folder=workflow),
             CatalogItem(kind="folder", title=environment.name, folder=environment),
@@ -1321,8 +1338,12 @@ class NodeContentBrowser(QWidget):
         workflow, environment = self._default_folders()
         normalized = entry.node_type.lower()
         genre = entry.genre
+        if normalized.startswith("tool-environment:"):
+            return self._environment_subfolder(environment, "作成した環境")
+        if normalized.startswith("sotugyo.tooling"):
+            return self._environment_subfolder(environment, "登録ツール")
         if genre == "ツール環境":
-            return environment
+            return self._environment_subfolder(environment, "作成した環境")
         if genre in {"ワークフロー", "メモ"}:
             return workflow
         if "memo" in normalized or "date" in normalized:
@@ -1338,10 +1359,36 @@ class NodeContentBrowser(QWidget):
             environment = self._find_folder("環境定義")
         if workflow is None or environment is None:
             raise RuntimeError("既定フォルダの初期化に失敗しました。")
+        self._ensure_environment_subfolders(environment)
         return workflow, environment
 
     def _find_folder(self, name: str) -> Optional[CatalogFolder]:
         for item in self._root_folder.items:
+            if item.is_folder() and item.folder is not None and item.folder.name == name:
+                return item.folder
+        return None
+
+    def _ensure_environment_subfolders(self, environment: CatalogFolder) -> None:
+        self._ensure_child_folder(environment, "作成した環境")
+        self._ensure_child_folder(environment, "登録ツール")
+
+    def _environment_subfolder(self, environment: CatalogFolder, name: str) -> CatalogFolder:
+        return self._ensure_child_folder(environment, name)
+
+    def _ensure_child_folder(self, parent: CatalogFolder, name: str) -> CatalogFolder:
+        existing = self._find_child_folder(parent, name)
+        if existing is not None:
+            return existing
+        folder = CatalogFolder(name, parent)
+        parent.items.append(CatalogItem(kind="folder", title=folder.name, folder=folder))
+        return folder
+
+    @staticmethod
+    def _find_child_folder(
+        parent: CatalogFolder,
+        name: str,
+    ) -> Optional[CatalogFolder]:
+        for item in parent.items:
             if item.is_folder() and item.folder is not None and item.folder.name == name:
                 return item.folder
         return None
