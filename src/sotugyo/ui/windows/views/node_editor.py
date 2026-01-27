@@ -852,6 +852,8 @@ class NodeEditorWindow(QMainWindow):
         )
         self._apply_tool_node_rez_properties(node, definition)
         self._apply_tool_node_environment_payload(node, definition)
+        if self._ensure_tool_node_output_dir(node):
+            self._set_modified(True)
 
     def _build_tool_node_rez_info(self, definition: ToolEnvironmentDefinition) -> Dict[str, object]:
         env_id = ""
@@ -909,6 +911,37 @@ class NodeEditorWindow(QMainWindow):
         if self._ensure_tool_node_inputs(node, normalized_inputs):
             updated = True
         return updated
+
+    def _ensure_tool_node_output_dir(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        if self._current_project_root is None:
+            return False
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        output_dir = self._project_tool_node_dir(node_uuid)
+        if self._tool_output_dir_matches(node, output_dir):
+            return False
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            LOGGER.warning("ツールノードの出力先ディレクトリ作成に失敗しました: %s", output_dir)
+        output_path = self._project_relative_path(output_dir)
+        if self._set_node_custom_property(node, "tool_output_dir", output_path):
+            return True
+        return False
+
+    def _tool_output_dir_matches(self, node, expected: Path) -> bool:
+        if self._current_project_root is None:
+            return False
+        existing = self._node_custom_property_value(node, "tool_output_dir")
+        resolved = self._resolve_project_file_path(existing)
+        if resolved is not None:
+            return self._paths_match(resolved, expected)
+        if isinstance(existing, str):
+            candidate = Path(existing)
+            if candidate.is_absolute():
+                return self._paths_match(candidate, expected)
+        return False
 
     def _ensure_tool_node_inputs_from_properties(self, node) -> bool:
         if not isinstance(node, ToolEnvironmentNode):
@@ -998,6 +1031,8 @@ class NodeEditorWindow(QMainWindow):
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
         self._ensure_node_audit_properties(node)
+        if self._ensure_tool_node_output_dir(node):
+            self._set_modified(True)
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -2792,6 +2827,18 @@ class NodeEditorWindow(QMainWindow):
         safe_uuid = node_uuid.replace("/", "_")
         return base / safe_uuid
 
+    def _project_tool_node_dir(self, node_uuid: str) -> Path:
+        base = self._current_project_root / "tool_nodes"
+        safe_uuid = node_uuid.replace("/", "_")
+        return base / safe_uuid
+
+    @staticmethod
+    def _paths_match(left: Path, right: Path) -> bool:
+        try:
+            return left.resolve() == right.resolve()
+        except OSError:
+            return left == right
+
     def _project_relative_path(self, path: Path) -> str | Dict[str, str]:
         if self._current_project_root is None:
             return ""
@@ -3252,6 +3299,8 @@ class NodeEditorWindow(QMainWindow):
             if self._ensure_tool_node_rez_properties(node):
                 metadata_changed = True
             if self._ensure_tool_node_inputs_from_properties(node):
+                metadata_changed = True
+            if self._ensure_tool_node_output_dir(node):
                 metadata_changed = True
 
         failed_operations: List[str] = []

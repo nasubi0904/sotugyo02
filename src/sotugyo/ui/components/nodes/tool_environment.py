@@ -19,7 +19,7 @@ class ToolEnvironmentNode(BaseNode):
     def __init__(self) -> None:
         super().__init__()
         self.add_input("前段")
-        self.add_output("起動")
+        self.add_output("出力")
         self.set_property("width", 260, push_undo=False)
         self.set_property("height", 180, push_undo=False)
         self.set_color(80, 130, 190)
