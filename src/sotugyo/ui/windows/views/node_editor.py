@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import os
+import platform
 import re
 import shlex
 import shutil
@@ -995,6 +997,7 @@ class NodeEditorWindow(QMainWindow):
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
+        self._ensure_node_audit_properties(node)
         self._set_modified(True)
 
         clear_selection = getattr(self._graph, "clear_selection", None)
@@ -3085,6 +3088,7 @@ class NodeEditorWindow(QMainWindow):
         node_id_map: Dict = {}
         node_uuid_map: Dict[object, str] = {}
         for index, node in enumerate(node_list):
+            self._ensure_node_audit_properties(node, mark_saved=True)
             node_id_map[node] = index
             node_uuid, assigned_at, _ = self._ensure_node_metadata(node)
             node_uuid_map[node] = node_uuid
@@ -3243,6 +3247,8 @@ class NodeEditorWindow(QMainWindow):
                     if isinstance(key, str):
                         if not self._set_node_custom_property(node, key, value):
                             LOGGER.debug("プロパティ %s の適用に失敗しました", key)
+            if self._ensure_node_audit_properties(node):
+                metadata_changed = True
             if self._ensure_tool_node_rez_properties(node):
                 metadata_changed = True
             if self._ensure_tool_node_inputs_from_properties(node):
@@ -3392,6 +3398,41 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(props, dict):
             return props
         return None
+
+    def _current_audit_host(self) -> str:
+        hostname = os.getenv("COMPUTERNAME") or os.getenv("HOSTNAME") or ""
+        if not hostname:
+            hostname = platform.node()
+        return hostname or "unknown"
+
+    def _current_audit_user(self) -> Tuple[str, str]:
+        if self._current_user is not None:
+            user_id = self._current_user.user_id
+            display_name = self._current_user.display_name or user_id
+            return user_id, display_name
+        user = os.getenv("USERNAME") or os.getenv("USER") or getpass.getuser()
+        if not user:
+            user = "unknown"
+        return user, user
+
+    def _ensure_node_audit_properties(self, node, *, mark_saved: bool = False) -> bool:
+        host = self._current_audit_host()
+        user_id, user_name = self._current_audit_user()
+        changed = False
+
+        if not self._node_custom_property_value(node, "created_host"):
+            changed |= self._set_node_custom_property(node, "created_host", host)
+        if not self._node_custom_property_value(node, "created_user_id"):
+            changed |= self._set_node_custom_property(node, "created_user_id", user_id)
+        if not self._node_custom_property_value(node, "created_user_name"):
+            changed |= self._set_node_custom_property(node, "created_user_name", user_name)
+
+        if mark_saved:
+            changed |= self._set_node_custom_property(node, "saved_host", host)
+            changed |= self._set_node_custom_property(node, "saved_user_id", user_id)
+            changed |= self._set_node_custom_property(node, "saved_user_name", user_name)
+
+        return changed
 
     def _node_custom_property_value(self, node, key: str) -> object:
         props = self._node_custom_properties_map(node)
