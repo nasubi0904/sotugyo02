@@ -27,12 +27,13 @@ def manager() -> UserSettingsManager:
 
 
 def test_upsert_and_get_account(manager: UserSettingsManager) -> None:
-    manager.upsert_account("alice", "Alice", "secret")
+    manager.upsert_account("alice", "Alice", "secret", "C:/Users/alice")
 
     account = manager.get_account("alice")
     assert account is not None
     assert account.display_name == "Alice"
     assert account.verify_password("secret")
+    assert account.local_directory == "C:/Users/alice"
 
     accounts = manager.list_accounts()
     assert len(accounts) == 1
@@ -41,20 +42,20 @@ def test_upsert_and_get_account(manager: UserSettingsManager) -> None:
 
 
 def test_upsert_without_password_uses_default_hash(manager: UserSettingsManager) -> None:
-    manager.upsert_account("bob", "Bob", None)
+    manager.upsert_account("bob", "Bob", None, None)
 
     account = manager.get_account("bob")
     assert account is not None
     assert account.password_hash == hash_password("")
 
-    manager.upsert_account("bob", "Bob", None)
+    manager.upsert_account("bob", "Bob", None, None)
     updated = manager.get_account("bob")
     assert updated is not None
     assert updated.password_hash == hash_password("")
 
 
 def test_last_user_tracking(manager: UserSettingsManager) -> None:
-    manager.upsert_account("carol", "Carol", "pass")
+    manager.upsert_account("carol", "Carol", "pass", None)
     manager.set_last_user_id("carol")
 
     assert manager.last_user_id() == "carol"
