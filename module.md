@@ -53,6 +53,7 @@
   - バージョン 0.6 系は Qt6 対応が進行中であり、グラフィックビュー周りのバグ修正が頻繁。リリースノートを確認する。
   - パフォーマンス改善には `set_render_mode(NodeGraphQt.constants.RENDER_THREADED)` 等の API を検討する。
   - `NodeModel.custom_properties` は内部 `_custom_prop` 辞書を返すため、独自メタ情報は辞書を直接更新して永続化する。`set_property("custom", ...)` は既定プロパティに存在せず例外になる点に注意する。
+  - ノード作成/保存の監査情報は `custom_properties` に `created_host` / `created_user_id` / `created_user_name` / `saved_host` / `saved_user_id` / `saved_user_name` を保持し、保存時に更新する。
 
 ## OdenGraphQt
 - **公式ドキュメント / README**: <https://github.com/odenthought/OdenGraphQt>
@@ -239,3 +240,6 @@
 
 最終更新日: 2026-04-02
 - 2026-04-02: `content_browser.py` の file-node 表示において、ディレクトリアイコンの差別化と標準アイコン適用を確認し、`FILE_NODE_TYPE_PREFIX` 判定フローを整理した。
+
+最終更新日: 2026-04-03
+- 2026-04-03: NodeGraphQt ノードのカスタムプロパティに作成/保存のユーザー・PC情報を保持する監査項目を整理した。
