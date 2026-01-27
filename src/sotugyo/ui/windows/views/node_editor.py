@@ -283,6 +283,7 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         inspector_dock.file_path_verify_requested.connect(self._handle_file_path_verify_requested)
         inspector_dock.file_path_pick_requested.connect(self._handle_file_path_pick_requested)
+        inspector_dock.file_localize_requested.connect(self._handle_file_localize_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1385,6 +1386,7 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_memo()
                 inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
                 inspector.set_file_path_state(enabled=False, path="", visible=False)
+                inspector.set_file_localize_state(enabled=False, label="-", visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1420,6 +1422,7 @@ class NodeEditorWindow(QMainWindow):
             self._update_tool_launch_controls(node)
             self._update_file_reveal_controls(node)
             self._update_file_path_controls(node)
+            self._update_file_localize_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1912,6 +1915,45 @@ class NodeEditorWindow(QMainWindow):
             "ファイルパスを検証し、必要に応じてプロジェクト相対へ変換しました。"
         )
 
+    def _handle_file_localize_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("ファイルノードを選択してください。")
+            return
+        file_path = self._file_node_value(self._current_node)
+        if not file_path:
+            self._show_warning_dialog("フォルダパスが設定されていません。")
+            return
+        source = self._resolve_project_file_path(file_path)
+        if source is None or not source.exists():
+            self._show_warning_dialog("フォルダが見つかりません。")
+            return
+        if not source.is_dir():
+            self._show_warning_dialog("ディレクトリを保持するノードのみ対象です。")
+            return
+        local_target = self._local_nodes_directory_for_current_user(self._current_node)
+        if local_target is None:
+            self._show_warning_dialog(
+                "ユーザー設定でローカルディレクトリを設定してください。"
+            )
+            return
+        try:
+            missing = self._copy_directory_contents(source, local_target)
+        except OSError as exc:
+            self._show_warning_dialog(
+                "ローカルディレクトリへのコピーに失敗しました。\n"
+                f"理由: {exc}"
+            )
+            return
+        if missing:
+            self._show_warning_dialog(
+                "ローカルコピー中に存在しないファイルが見つかりました。\n"
+                f"件数: {len(missing)}"
+            )
+        self._show_info_dialog(
+            "ローカルディレクトリへフォルダをコピーしました。\n"
+            f"コピー先: {local_target}"
+        )
+
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
@@ -2355,6 +2397,30 @@ class NodeEditorWindow(QMainWindow):
         inspector.set_file_path_state(
             enabled=True,
             path=file_path,
+            visible=True,
+        )
+
+    def _update_file_localize_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_localize_state(enabled=False, label="-", visible=False)
+            return
+        file_path = self._file_node_value(node)
+        if not file_path:
+            inspector.set_file_localize_state(enabled=False, label="-", visible=False)
+            return
+        resolved = self._resolve_project_file_path(file_path)
+        if resolved is None or not resolved.exists() or not resolved.is_dir():
+            inspector.set_file_localize_state(enabled=False, label="-", visible=False)
+            return
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        local_target = self._local_nodes_directory(node_uuid)
+        label = str(local_target) if local_target is not None else "未設定"
+        inspector.set_file_localize_state(
+            enabled=local_target is not None,
+            label=label,
             visible=True,
         )
 
@@ -2831,6 +2897,24 @@ class NodeEditorWindow(QMainWindow):
         base = self._current_project_root / "tool_nodes"
         safe_uuid = node_uuid.replace("/", "_")
         return base / safe_uuid
+
+    def _local_nodes_directory(self, node_uuid: str) -> Optional[Path]:
+        if self._current_user is None or not self._current_user.local_directory:
+            return None
+        base_dir = Path(self._current_user.local_directory)
+        safe_uuid = node_uuid.replace("/", "_")
+        return base_dir / "nodes" / safe_uuid
+
+    def _local_nodes_directory_for_current_user(self, node) -> Optional[Path]:
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        target = self._local_nodes_directory(node_uuid)
+        if target is None:
+            return None
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return None
+        return target
 
     @staticmethod
     def _paths_match(left: Path, right: Path) -> bool:

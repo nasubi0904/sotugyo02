@@ -34,6 +34,7 @@ class NodeInspectorPanel(QWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
+    file_localize_requested = Signal()
 
     def __init__(
         self,
@@ -76,6 +77,11 @@ class NodeInspectorPanel(QWidget):
         self._file_path_verify_button = QPushButton("パスを検証/変換", self)
         self._file_path_verify_button.setEnabled(False)
         self._file_path_verify_button.clicked.connect(self._emit_file_path_verify_request)
+        self._file_localize_label = QLabel("ローカル保存先: -", self)
+        self._file_localize_label.setWordWrap(True)
+        self._file_localize_button = QPushButton("ローカルへ移動", self)
+        self._file_localize_button.setEnabled(False)
+        self._file_localize_button.clicked.connect(self._emit_file_localize_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -139,6 +145,9 @@ class NodeInspectorPanel(QWidget):
         file_path_buttons.addWidget(self._file_path_pick_button)
         file_path_buttons.addWidget(self._file_path_verify_button)
         layout.addLayout(file_path_buttons)
+        layout.addSpacing(6)
+        layout.addWidget(self._file_localize_label)
+        layout.addWidget(self._file_localize_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -252,6 +261,7 @@ class NodeInspectorPanel(QWidget):
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
         self.set_file_reveal_state(enabled=False, label="-", visible=False)
         self.set_file_path_state(enabled=False, path="", visible=False)
+        self.set_file_localize_state(enabled=False, label="-", visible=False)
 
     def set_tool_launch_state(
         self,
@@ -302,6 +312,21 @@ class NodeInspectorPanel(QWidget):
         self._file_path_pick_button.setVisible(visible)
         self._file_path_verify_button.setVisible(visible)
 
+    def set_file_localize_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ローカルコピー操作の状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._file_localize_label.setText(f"ローカル保存先: {display}")
+        self._file_localize_button.setEnabled(enabled)
+        self._file_localize_label.setVisible(visible)
+        self._file_localize_button.setVisible(visible)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -336,6 +361,11 @@ class NodeInspectorPanel(QWidget):
             return
         self.file_path_verify_requested.emit()
 
+    def _emit_file_localize_request(self) -> None:
+        if not self._file_localize_button.isEnabled():
+            return
+        self.file_localize_requested.emit()
+
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
             return
@@ -366,6 +396,7 @@ class NodeInspectorDock(QDockWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
+    file_localize_requested = Signal()
 
     def __init__(
         self,
@@ -396,6 +427,7 @@ class NodeInspectorDock(QDockWidget):
         panel.file_path_changed.connect(self.file_path_changed)
         panel.file_path_verify_requested.connect(self.file_path_verify_requested)
         panel.file_path_pick_requested.connect(self.file_path_pick_requested)
+        panel.file_localize_requested.connect(self.file_localize_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -486,5 +518,18 @@ class NodeInspectorDock(QDockWidget):
         self._panel.set_file_path_state(
             enabled=enabled,
             path=path,
+            visible=visible,
+        )
+
+    def set_file_localize_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_file_localize_state(
+            enabled=enabled,
+            label=label,
             visible=visible,
         )
