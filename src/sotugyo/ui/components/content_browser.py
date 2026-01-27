@@ -1464,6 +1464,12 @@ class NodeContentBrowser(QWidget):
         if cached is not None:
             return cached
 
+        if entry.node_type.startswith(FILE_NODE_TYPE_PREFIX):
+            icon = self._icon_for_file_entry(entry, icon_size)
+            if icon is not None:
+                self._icon_cache[cache_key] = icon
+                return icon
+
         if entry.icon_path:
             icon = self._load_icon_from_path(entry.icon_path, icon_size)
             if icon is not None:
@@ -1474,6 +1480,32 @@ class NodeContentBrowser(QWidget):
         icon = QIcon(pixmap)
         self._icon_cache[cache_key] = icon
         return icon
+
+    def _icon_for_file_entry(
+        self,
+        entry: NodeCatalogEntry,
+        icon_size: int,
+    ) -> Optional[QIcon]:
+        file_path = file_node_path_from_node_type(entry.node_type)
+        if not file_path:
+            return None
+        file_info = QFileInfo(file_path)
+        if not file_info.exists():
+            return None
+        if file_info.isDir():
+            icon = self.style().standardIcon(QStyle.SP_DirLinkIcon)
+            if icon.isNull():
+                icon = self.style().standardIcon(QStyle.SP_DirIcon)
+        else:
+            icon = self._file_icon_provider.icon(file_info)
+            if icon.isNull():
+                icon = self.style().standardIcon(QStyle.SP_FileIcon)
+        if icon.isNull():
+            return None
+        pixmap = icon.pixmap(QSize(icon_size, icon_size))
+        if pixmap.isNull():
+            return None
+        return QIcon(pixmap)
 
     def _load_icon_from_path(self, path: str, size: int) -> Optional[QIcon]:
         file_info = QFileInfo(path)
@@ -1527,8 +1559,33 @@ class NodeContentBrowser(QWidget):
             painter.setFont(font)
             painter.drawText(rect, Qt.AlignCenter, label_text)
 
+        if entry.node_type.startswith(FILE_NODE_TYPE_PREFIX):
+            self._draw_file_entry_badge(painter, rect, pixel_size)
+
         painter.end()
         return pixmap
+
+    def _draw_file_entry_badge(
+        self,
+        painter: QPainter,
+        rect: QtCore.QRect,
+        pixel_size: int,
+    ) -> None:
+        badge_icon = self.style().standardIcon(QStyle.SP_FileIcon)
+        if badge_icon.isNull():
+            return
+        badge_size = max(12, pixel_size // 3)
+        badge_pixmap = badge_icon.pixmap(QSize(badge_size, badge_size))
+        if badge_pixmap.isNull():
+            return
+        inset = max(2, pixel_size // 18)
+        target = QtCore.QRect(
+            rect.right() - badge_size - inset + 1,
+            rect.bottom() - badge_size - inset + 1,
+            badge_size,
+            badge_size,
+        )
+        painter.drawPixmap(target, badge_pixmap)
 
     def _genre_color(self, genre: str) -> QColor:
         palette = {
