@@ -19,6 +19,7 @@ QListWidget = QtWidgets.QListWidget
 QListWidgetItem = QtWidgets.QListWidgetItem
 QMessageBox = QtWidgets.QMessageBox
 QPushButton = QtWidgets.QPushButton
+QFileDialog = QtWidgets.QFileDialog
 QVBoxLayout = QtWidgets.QVBoxLayout
 
 from ...domain.users.settings import UserAccount, UserSettingsManager
@@ -42,6 +43,8 @@ class UserSettingsDialog(QDialog):
         self._display_name_edit = QLineEdit(self)
         self._password_edit = QLineEdit(self)
         self._password_edit.setEchoMode(QLineEdit.Password)
+        self._local_directory_edit = QLineEdit(self)
+        self._local_directory_button = QPushButton("参照", self)
 
         self._build_ui()
         self._populate_list()
@@ -91,6 +94,11 @@ class UserSettingsDialog(QDialog):
         form_layout.setVerticalSpacing(12)
         form_layout.addRow("表示名", self._display_name_edit)
         form_layout.addRow("パスワード", self._password_edit)
+        local_directory_row = QHBoxLayout()
+        local_directory_row.setSpacing(8)
+        local_directory_row.addWidget(self._local_directory_edit, 1)
+        local_directory_row.addWidget(self._local_directory_button)
+        form_layout.addRow("ローカルディレクトリ", local_directory_row)
         card_layout.addLayout(form_layout)
 
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, card)
@@ -101,6 +109,7 @@ class UserSettingsDialog(QDialog):
         self._list_widget.currentItemChanged.connect(self._on_selection_changed)
         add_button.clicked.connect(self._add_account)
         remove_button.clicked.connect(self._remove_account)
+        self._local_directory_button.clicked.connect(self._select_local_directory)
         button_box.accepted.connect(self._on_accept)
         button_box.rejected.connect(self.reject)
 
@@ -120,10 +129,12 @@ class UserSettingsDialog(QDialog):
         if not user_id or user_id not in self._accounts:
             self._display_name_edit.clear()
             self._password_edit.clear()
+            self._local_directory_edit.clear()
             return
         account = self._accounts[user_id]
         self._display_name_edit.setText(account.display_name)
         self._password_edit.clear()
+        self._local_directory_edit.setText(account.local_directory or "")
 
     def _add_account(self) -> None:
         user_id, ok = QInputDialog.getText(self, "ユーザーID", "新しいユーザーIDを入力")
@@ -133,7 +144,12 @@ class UserSettingsDialog(QDialog):
         if user_id in self._accounts:
             QMessageBox.warning(self, "エラー", "同じユーザーIDが既に存在します。")
             return
-        self._accounts[user_id] = UserAccount(user_id=user_id, display_name=user_id, password_hash="")
+        self._accounts[user_id] = UserAccount(
+            user_id=user_id,
+            display_name=user_id,
+            password_hash="",
+            local_directory=None,
+        )
         self._populate_list()
         items = self._list_widget.findItems(user_id, Qt.MatchExactly)
         if items:
@@ -163,6 +179,7 @@ class UserSettingsDialog(QDialog):
             return
         current_display = self._display_name_edit.text().strip()
         current_password = self._password_edit.text()
+        current_local_directory = self._local_directory_edit.text().strip() or None
         if self._current_user_id:
             if not current_display:
                 QMessageBox.warning(self, "エラー", "表示名を入力してください。")
@@ -172,14 +189,32 @@ class UserSettingsDialog(QDialog):
                 user_id=account.user_id,
                 display_name=current_display,
                 password_hash=account.password_hash,
+                local_directory=current_local_directory,
             )
             self._manager.upsert_account(
                 self._current_user_id,
                 current_display,
                 current_password or None,
+                current_local_directory,
             )
         for user_id, account in self._accounts.items():
             if self._current_user_id and user_id == self._current_user_id:
                 continue
-            self._manager.upsert_account(user_id, account.display_name, None)
+            self._manager.upsert_account(
+                user_id,
+                account.display_name,
+                None,
+                account.local_directory,
+            )
         self.accept()
+
+    def _select_local_directory(self) -> None:
+        current_path = self._local_directory_edit.text().strip()
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "ローカルディレクトリを選択",
+            current_path or "",
+        )
+        if not selected:
+            return
+        self._local_directory_edit.setText(selected)

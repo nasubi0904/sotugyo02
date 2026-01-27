@@ -19,6 +19,7 @@ class UserAccount:
     user_id: str
     display_name: str
     password_hash: str
+    local_directory: Optional[str] = None
 
     def verify_password(self, password: str) -> bool:
         """平文パスワードと保存済みハッシュを比較する。"""
@@ -61,15 +62,19 @@ class UserSettingsManager:
                 with _settings_group(self._store, user_id):
                     display_name = self._store.value("display_name", user_id)
                     password_hash = self._store.value("password_hash", "")
+                    local_directory = self._store.value("local_directory")
                 if not isinstance(display_name, str) or not isinstance(
                     password_hash, str
                 ):
                     continue
+                if not isinstance(local_directory, str):
+                    local_directory = None
                 accounts.append(
                     UserAccount(
                         user_id=user_id,
                         display_name=display_name,
                         password_hash=password_hash,
+                        local_directory=local_directory,
                     )
                 )
         return accounts
@@ -79,11 +84,15 @@ class UserSettingsManager:
             with _settings_group(self._store, user_id):
                 display_name = self._store.value("display_name")
                 password_hash = self._store.value("password_hash")
+                local_directory = self._store.value("local_directory")
         if isinstance(display_name, str) and isinstance(password_hash, str):
+            if not isinstance(local_directory, str):
+                local_directory = None
             return UserAccount(
                 user_id=user_id,
                 display_name=display_name,
                 password_hash=password_hash,
+                local_directory=local_directory,
             )
         return None
 
@@ -100,7 +109,11 @@ class UserSettingsManager:
         self._store.sync()
 
     def upsert_account(
-        self, user_id: str, display_name: str, password: Optional[str]
+        self,
+        user_id: str,
+        display_name: str,
+        password: Optional[str],
+        local_directory: Optional[str],
     ) -> None:
         with _settings_group(self._store, "users"):
             with _settings_group(self._store, user_id):
@@ -113,6 +126,10 @@ class UserSettingsManager:
                     self._store.set_value(
                         "password_hash", hash_password("")
                     )
+                if local_directory:
+                    self._store.set_value("local_directory", local_directory)
+                else:
+                    self._store.remove("local_directory")
         self._store.sync()
 
     def remove_account(self, user_id: str) -> None:
