@@ -2575,25 +2575,80 @@ class NodeEditorWindow(QMainWindow):
         return target_dir
 
     def _prepare_junction_root(self, junc_root: Path, node) -> Optional[Path]:
-        node_name = self._sanitize_node_dir_name(self._safe_node_name(node))
-        if not node_name:
-            node_name = "node"
-        candidate = junc_root / node_name
-        if candidate.exists():
-            for index in range(1, 100):
-                suffix = f"{node_name}_{index}"
-                alternate = junc_root / suffix
-                if not alternate.exists():
-                    candidate = alternate
-                    break
+        node_name = self._sanitize_node_dir_name(self._safe_node_name(node)) or "node"
+        resolved = self._resolve_junction_dir(
+            junc_root,
+            node_name,
+            title="ジャンクション生成先の確認",
+        )
+        if resolved is None:
+            return None
+        dir_path, _ = resolved
+        return dir_path
+
+    def _resolve_junction_dir(
+        self,
+        parent_dir: Path,
+        base_name: str,
+        *,
+        title: str,
+    ) -> Optional[Tuple[Path, str]]:
+        candidate = parent_dir / base_name
+        if not candidate.exists():
+            return self._create_junction_dir(candidate, base_name)
+        if not candidate.is_dir():
+            self._show_warning_dialog(f"既存のパスがディレクトリではありません: {candidate}")
+            return None
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setText(
+            "同名のフォルダが既に存在します。\n"
+            f"対象: {candidate}\n"
+            "どの方法で続行しますか？"
+        )
+        use_button = dialog.addButton("既存を使用", QMessageBox.AcceptRole)
+        rename_button = dialog.addButton("別名で作成", QMessageBox.ActionRole)
+        dialog.addButton("キャンセル", QMessageBox.RejectRole)
+        dialog.setDefaultButton(rename_button)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == use_button:
+            return candidate, base_name
+        if clicked == rename_button:
+            resolved = self._find_available_dir(parent_dir, base_name)
+            if resolved is None:
+                self._show_warning_dialog("別名フォルダの作成先が見つかりませんでした。")
+                return None
+            dir_path, name = resolved
+            return self._create_junction_dir(dir_path, name)
+        return None
+
+    def _find_available_dir(
+        self,
+        parent_dir: Path,
+        base_name: str,
+    ) -> Optional[Tuple[Path, str]]:
+        for index in range(1, 100):
+            candidate_name = f"{base_name}_{index}"
+            candidate = parent_dir / candidate_name
+            if not candidate.exists():
+                return candidate, candidate_name
+        return None
+
+    def _create_junction_dir(
+        self,
+        target: Path,
+        dir_name: str,
+    ) -> Optional[Tuple[Path, str]]:
         try:
-            candidate.mkdir(parents=True, exist_ok=True)
+            target.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             self._show_warning_dialog(
                 f"ジャンクション用フォルダの作成に失敗しました: {exc}"
             )
             return None
-        return candidate
+        return target, dir_name
 
     def _build_junction_tree(
         self,
@@ -2609,9 +2664,18 @@ class NodeEditorWindow(QMainWindow):
             if current_node in visited:
                 return
             visited.add(current_node)
-            node_label = self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
-            junction_name = node_label
-            junction_path = parent_dir / junction_name
+            node_label = (
+                self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
+            )
+            resolved = self._resolve_junction_dir(
+                parent_dir,
+                node_label,
+                title="ジャンクション生成先の競合",
+            )
+            if resolved is None:
+                return
+            dir_path, dir_label = resolved
+            junction_path = dir_path / dir_label
             local_copy = self._ensure_local_node_copy_with_prompt(
                 current_node,
                 local_root=local_root,
@@ -2620,14 +2684,8 @@ class NodeEditorWindow(QMainWindow):
             if local_copy is not None:
                 self._create_junction(junction_path, local_copy)
 
-            inputs_dir = parent_dir / f"{junction_name}_inputs"
-            try:
-                inputs_dir.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                return
-
             for input_node in self._collect_input_nodes(current_node):
-                walk(input_node, inputs_dir)
+                walk(input_node, dir_path)
 
         walk(node, root_dir)
 
