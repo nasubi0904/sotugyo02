@@ -1835,16 +1835,15 @@ class NodeEditorWindow(QMainWindow):
             )
             return
         self._ensure_node_metadata(self._current_node)
-        tree_root = self._prepare_junction_root(junc_root, self._current_node)
-        if tree_root is None:
-            return
-        self._build_junction_tree(
-            tree_root,
+        root_junction = self._build_junction_tree(
+            junc_root,
             self._current_node,
             local_root=local_root,
             confirm_missing=True,
         )
-        self._reveal_file_in_explorer(tree_root)
+        if root_junction is None:
+            return
+        self._reveal_file_in_explorer(root_junction)
 
     def _handle_local_directory_copy_requested(self) -> None:
         node = self._current_node
@@ -2574,18 +2573,6 @@ class NodeEditorWindow(QMainWindow):
             return None
         return target_dir
 
-    def _prepare_junction_root(self, junc_root: Path, node) -> Optional[Path]:
-        node_name = self._sanitize_node_dir_name(self._safe_node_name(node)) or "node"
-        resolved = self._resolve_junction_dir(
-            junc_root,
-            node_name,
-            title="ジャンクション生成先の確認",
-        )
-        if resolved is None:
-            return None
-        dir_path, _ = resolved
-        return dir_path
-
     def _resolve_junction_dir(
         self,
         parent_dir: Path,
@@ -2595,7 +2582,7 @@ class NodeEditorWindow(QMainWindow):
     ) -> Optional[Tuple[Path, str]]:
         candidate = parent_dir / base_name
         if not candidate.exists():
-            return self._create_junction_dir(candidate, base_name)
+            return candidate, base_name
         if not candidate.is_dir():
             self._show_warning_dialog(f"既存のパスがディレクトリではありません: {candidate}")
             return None
@@ -2616,15 +2603,15 @@ class NodeEditorWindow(QMainWindow):
         if clicked == use_button:
             return candidate, base_name
         if clicked == rename_button:
-            resolved = self._find_available_dir(parent_dir, base_name)
+            resolved = self._find_available_path(parent_dir, base_name)
             if resolved is None:
                 self._show_warning_dialog("別名フォルダの作成先が見つかりませんでした。")
                 return None
             dir_path, name = resolved
-            return self._create_junction_dir(dir_path, name)
+            return dir_path, name
         return None
 
-    def _find_available_dir(
+    def _find_available_path(
         self,
         parent_dir: Path,
         base_name: str,
@@ -2636,20 +2623,6 @@ class NodeEditorWindow(QMainWindow):
                 return candidate, candidate_name
         return None
 
-    def _create_junction_dir(
-        self,
-        target: Path,
-        dir_name: str,
-    ) -> Optional[Tuple[Path, str]]:
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            self._show_warning_dialog(
-                f"ジャンクション用フォルダの作成に失敗しました: {exc}"
-            )
-            return None
-        return target, dir_name
-
     def _build_junction_tree(
         self,
         root_dir: Path,
@@ -2657,10 +2630,12 @@ class NodeEditorWindow(QMainWindow):
         *,
         local_root: Path,
         confirm_missing: bool,
-    ) -> None:
+    ) -> Optional[Path]:
         visited: Set[object] = set()
+        root_junction: Optional[Path] = None
 
         def walk(current_node, parent_dir: Path) -> None:
+            nonlocal root_junction
             if current_node in visited:
                 return
             visited.add(current_node)
@@ -2674,8 +2649,7 @@ class NodeEditorWindow(QMainWindow):
             )
             if resolved is None:
                 return
-            dir_path, dir_label = resolved
-            junction_path = dir_path / dir_label
+            junction_path, _ = resolved
             local_copy = self._ensure_local_node_copy_with_prompt(
                 current_node,
                 local_root=local_root,
@@ -2683,11 +2657,14 @@ class NodeEditorWindow(QMainWindow):
             )
             if local_copy is not None:
                 self._create_junction(junction_path, local_copy)
+            if root_junction is None:
+                root_junction = junction_path
 
             for input_node in self._collect_input_nodes(current_node):
-                walk(input_node, dir_path)
+                walk(input_node, junction_path)
 
         walk(node, root_dir)
+        return root_junction
 
     def _ensure_local_node_copy_with_prompt(
         self,
@@ -2721,6 +2698,7 @@ class NodeEditorWindow(QMainWindow):
         if not sys.platform.startswith("win"):
             return
         try:
+            link_path.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(link_path), str(target_path)],
                 check=False,
