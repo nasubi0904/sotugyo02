@@ -1826,20 +1826,19 @@ class NodeEditorWindow(QMainWindow):
         local_root = self._resolve_user_local_root()
         if local_root is None:
             return
-        junc_root = local_root / "junc"
-        try:
-            junc_root.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            self._show_warning_dialog(
-                f"ジャンクション用ディレクトリの作成に失敗しました: {exc}"
-            )
-            return
-        self._ensure_node_metadata(self._current_node)
-        root_junction = self._build_junction_tree(
-            junc_root,
+        root_local = self._ensure_local_node_copy_with_prompt(
             self._current_node,
             local_root=local_root,
             confirm_missing=True,
+        )
+        if root_local is None:
+            return
+        root_junction = self._build_junction_tree(
+            root_local,
+            self._current_node,
+            local_root=local_root,
+            confirm_missing=True,
+            skip_root_junction=True,
         )
         if root_junction is None:
             return
@@ -2630,15 +2629,23 @@ class NodeEditorWindow(QMainWindow):
         *,
         local_root: Path,
         confirm_missing: bool,
+        skip_root_junction: bool = False,
     ) -> Optional[Path]:
         visited: Set[object] = set()
         root_junction: Optional[Path] = None
+        root_node = node
 
         def walk(current_node, parent_dir: Path) -> None:
             nonlocal root_junction
             if current_node in visited:
                 return
             visited.add(current_node)
+            if skip_root_junction and current_node is root_node:
+                for input_node in self._collect_input_nodes(current_node):
+                    walk(input_node, parent_dir)
+                if root_junction is None:
+                    root_junction = parent_dir
+                return
             node_label = (
                 self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
             )
