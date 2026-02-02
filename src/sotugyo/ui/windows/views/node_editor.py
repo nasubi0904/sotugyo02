@@ -283,6 +283,8 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         inspector_dock.file_path_verify_requested.connect(self._handle_file_path_verify_requested)
         inspector_dock.file_path_pick_requested.connect(self._handle_file_path_pick_requested)
+        inspector_dock.file_local_copy_requested.connect(self._handle_file_local_copy_requested)
+        inspector_dock.file_local_open_requested.connect(self._handle_file_local_open_requested)
         self.addDockWidget(Qt.RightDockWidgetArea, inspector_dock)
         self._inspector_dock = inspector_dock
 
@@ -1385,6 +1387,8 @@ class NodeEditorWindow(QMainWindow):
                 inspector.clear_memo()
                 inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
                 inspector.set_file_path_state(enabled=False, path="", visible=False)
+                inspector.set_file_local_copy_state(enabled=False, visible=False)
+                inspector.set_file_local_open_state(enabled=False, visible=False)
             self._update_alignment_controls(None)
             return
 
@@ -1420,6 +1424,8 @@ class NodeEditorWindow(QMainWindow):
             self._update_tool_launch_controls(node)
             self._update_file_reveal_controls(node)
             self._update_file_path_controls(node)
+            self._update_file_local_copy_controls(node)
+            self._update_file_local_open_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
 
@@ -1912,6 +1918,52 @@ class NodeEditorWindow(QMainWindow):
             "ファイルパスを検証し、必要に応じてプロジェクト相対へ変換しました。"
         )
 
+    def _handle_file_local_copy_requested(self) -> None:
+        if self._current_node is None:
+            self._show_info_dialog("対象のノードを選択してください。")
+            return
+        source = self._resolve_node_directory_source(self._current_node)
+        if source is None:
+            self._show_warning_dialog("ローカルへ移動できるディレクトリが見つかりません。")
+            return
+        local_root = self._resolve_user_local_root(show_dialog=True)
+        if local_root is None:
+            return
+        if not self._copy_node_directory_to_local(self._current_node, source, local_root):
+            return
+        self._show_info_dialog("ローカルへのコピーが完了しました。")
+
+    def _handle_file_local_open_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("対象のファイルノードを選択してください。")
+            return
+        local_root = self._resolve_user_local_root(show_dialog=True)
+        if local_root is None:
+            return
+        if not sys.platform.startswith("win"):
+            self._show_warning_dialog("ジャンクションは Windows 環境でのみ作成できます。")
+            return
+        input_graph = self._build_input_graph_tree(self._current_node)
+        if input_graph is None:
+            self._show_warning_dialog("入力側ノードの取得に失敗しました。")
+            return
+        missing_nodes: List[str] = []
+        if not self._ensure_local_copies_for_graph(input_graph, local_root, missing_nodes):
+            return
+        graph_root = self._create_junction_structure(
+            input_graph,
+            local_root,
+            missing_nodes,
+        )
+        if graph_root is None:
+            return
+        if missing_nodes:
+            message = "一部ノードのローカルコピーを作成できませんでした。\n" + "\n".join(
+                f"・{name}" for name in missing_nodes
+            )
+            self._show_warning_dialog(message)
+        self._reveal_file_in_explorer(graph_root)
+
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
         output_nodes = self._collect_connected_nodes(node, direction="outputs")
@@ -2358,6 +2410,32 @@ class NodeEditorWindow(QMainWindow):
             visible=True,
         )
 
+    def _update_file_local_copy_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not self._node_has_local_copy_source(node):
+            inspector.set_file_local_copy_state(enabled=False, visible=False)
+            return
+        local_root = self._resolve_user_local_root()
+        inspector.set_file_local_copy_state(
+            enabled=local_root is not None,
+            visible=True,
+        )
+
+    def _update_file_local_open_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_local_open_state(enabled=False, visible=False)
+            return
+        local_root = self._resolve_user_local_root()
+        inspector.set_file_local_open_state(
+            enabled=local_root is not None,
+            visible=True,
+        )
+
     def _is_memo_node(self, node) -> bool:
         if node is None:
             return False
@@ -2374,6 +2452,242 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(value, str):
             return value
         return ""
+
+    def _node_has_local_copy_source(self, node) -> bool:
+        return self._resolve_node_directory_source(node) is not None
+
+    def _resolve_node_directory_source(self, node) -> Optional[Path]:
+        if node is None:
+            return None
+        if isinstance(node, FileNode):
+            file_value = self._file_node_value(node)
+            if not file_value:
+                return None
+            target = self._resolve_project_file_path(file_value)
+            if target is None:
+                return None
+            if target.exists() and target.is_dir():
+                return target
+            return None
+        if isinstance(node, ToolEnvironmentNode):
+            output_dir = self._node_custom_property_value(node, "tool_output_dir")
+            target = self._resolve_project_file_path(output_dir)
+            if target is None:
+                return None
+            if target.exists() and target.is_dir():
+                return target
+            return None
+        return None
+
+    def _resolve_user_local_root(self, *, show_dialog: bool = False) -> Optional[Path]:
+        if self._current_user is None:
+            if show_dialog:
+                self._show_warning_dialog("ユーザー情報が取得できません。")
+            return None
+        local_directory = self._current_user.local_directory
+        if not local_directory:
+            if show_dialog:
+                self._show_warning_dialog(
+                    "ユーザー設定でローカルディレクトリを設定してください。"
+                )
+            return None
+        return Path(local_directory).expanduser()
+
+    def _ensure_local_base_dirs(self, local_root: Path) -> Tuple[Path, Path]:
+        nodes_dir = local_root / "nodes"
+        junc_dir = local_root / "junc"
+        nodes_dir.mkdir(parents=True, exist_ok=True)
+        junc_dir.mkdir(parents=True, exist_ok=True)
+        return nodes_dir, junc_dir
+
+    def _copy_node_directory_to_local(
+        self,
+        node,
+        source: Path,
+        local_root: Path,
+    ) -> bool:
+        try:
+            local_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(f"ローカルディレクトリの作成に失敗しました: {exc}")
+            return False
+        nodes_dir, _ = self._ensure_local_base_dirs(local_root)
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        destination = nodes_dir / self._sanitize_uuid(node_uuid)
+        destination.mkdir(parents=True, exist_ok=True)
+        try:
+            if source.is_dir():
+                self._copy_directory_contents(source, destination)
+            else:
+                shutil.copy2(
+                    self._normalize_windows_path(source),
+                    self._normalize_windows_path(destination / source.name),
+                )
+        except OSError as exc:
+            self._show_warning_dialog(
+                "ローカルコピーに失敗しました。\n"
+                f"ノード: {self._safe_node_name(node)}\n"
+                f"理由: {exc}"
+            )
+            return False
+        return True
+
+    def _ensure_local_copies_for_graph(
+        self,
+        tree: Dict[str, object],
+        local_root: Path,
+        missing_nodes: List[str],
+    ) -> bool:
+        nodes_dir, _ = self._ensure_local_base_dirs(local_root)
+        pending: List[Tuple[object, Path]] = []
+
+        def collect(node_tree: Dict[str, object]) -> None:
+            node = node_tree.get("node")
+            source = self._resolve_node_directory_source(node)
+            if source is None:
+                if node is not None:
+                    name = self._safe_node_name(node)
+                    if name not in missing_nodes:
+                        missing_nodes.append(name)
+            else:
+                node_uuid, _, _ = self._ensure_node_metadata(node)
+                destination = nodes_dir / self._sanitize_uuid(node_uuid)
+                if not destination.exists():
+                    pending.append((node, source))
+            for child in node_tree.get("children", []):
+                if isinstance(child, dict):
+                    collect(child)
+
+        collect(tree)
+        if pending:
+            summary = "\n".join(f"・{self._safe_node_name(node)}" for node, _ in pending)
+            result = QMessageBox.question(
+                self,
+                "確認",
+                "ローカルコピーが存在しないノードがあります。コピーしてもよいですか？\n"
+                + summary,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return False
+            for node, source in pending:
+                if not self._copy_node_directory_to_local(node, source, local_root):
+                    name = self._safe_node_name(node)
+                    if name not in missing_nodes:
+                        missing_nodes.append(name)
+        return True
+
+    def _build_input_graph_tree(self, root_node) -> Optional[Dict[str, object]]:
+        if root_node is None:
+            return None
+
+        def build(node, stack: Set[int]) -> Dict[str, object]:
+            node_id = id(node)
+            if node_id in stack:
+                return {"node": node, "children": []}
+            stack.add(node_id)
+            children = []
+            for input_node in self._collect_input_nodes(node):
+                children.append(build(input_node, stack))
+            stack.remove(node_id)
+            return {"node": node, "children": children}
+
+        return build(root_node, set())
+
+    def _collect_input_nodes(self, node) -> List:
+        nodes: List = []
+        for port in self._collect_ports(node, output=False):
+            for connected in self._connected_ports(port):
+                if not isinstance(connected, Port):
+                    continue
+                source_node = connected.node() if hasattr(connected, "node") else None
+                if source_node is None or source_node is node:
+                    continue
+                if source_node not in nodes:
+                    nodes.append(source_node)
+        return nodes
+
+    def _create_junction_structure(
+        self,
+        tree: Dict[str, object],
+        local_root: Path,
+        missing_nodes: List[str],
+    ) -> Optional[Path]:
+        nodes_dir, junc_dir = self._ensure_local_base_dirs(local_root)
+        root_node = tree.get("node")
+        if root_node is None:
+            return None
+        root_uuid, _, _ = self._ensure_node_metadata(root_node)
+        root_name = self._sanitize_node_name(self._safe_node_name(root_node))
+        container_name = f"{root_name}_{root_uuid[:8]}"
+        root_container = junc_dir / container_name
+        try:
+            root_container.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(f"ジャンクション用ディレクトリの作成に失敗しました: {exc}")
+            return None
+
+        def populate(node_tree: Dict[str, object], parent_dir: Path) -> None:
+            node = node_tree.get("node")
+            if node is None:
+                return
+            node_uuid, _, _ = self._ensure_node_metadata(node)
+            node_name = self._sanitize_node_name(self._safe_node_name(node))
+            container = parent_dir / f"{node_name}_{node_uuid[:8]}"
+            container.mkdir(parents=True, exist_ok=True)
+            junction_path = container / node_name
+            destination = nodes_dir / self._sanitize_uuid(node_uuid)
+            if destination.exists():
+                if not self._create_junction(junction_path, destination):
+                    name = self._safe_node_name(node)
+                    if name not in missing_nodes:
+                        missing_nodes.append(name)
+            else:
+                name = self._safe_node_name(node)
+                if name not in missing_nodes:
+                    missing_nodes.append(name)
+            inputs_dir = container / "inputs"
+            inputs_dir.mkdir(parents=True, exist_ok=True)
+            for child in node_tree.get("children", []):
+                if isinstance(child, dict):
+                    populate(child, inputs_dir)
+
+        populate(tree, root_container)
+        return root_container
+
+    def _create_junction(self, link: Path, target: Path) -> bool:
+        if not target.exists():
+            return False
+        if link.exists():
+            if not self._remove_directory_tree(link):
+                return False
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            LOGGER.warning(
+                "ジャンクション作成に失敗しました: %s", result.stderr.strip()
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _sanitize_node_name(name: str) -> str:
+        trimmed = name.strip() if isinstance(name, str) else ""
+        if not trimmed:
+            return "node"
+        invalid = '<>:"/\\\\|?*'
+        for char in invalid:
+            trimmed = trimmed.replace(char, "_")
+        return trimmed.rstrip(" .") or "node"
+
+    @staticmethod
+    def _sanitize_uuid(value: str) -> str:
+        return value.replace("/", "_")
 
     def _reveal_file_in_explorer(self, path: Path) -> None:
         if sys.platform.startswith("win"):

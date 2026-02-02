@@ -34,6 +34,8 @@ class NodeInspectorPanel(QWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
+    file_local_copy_requested = Signal()
+    file_local_open_requested = Signal()
 
     def __init__(
         self,
@@ -76,6 +78,12 @@ class NodeInspectorPanel(QWidget):
         self._file_path_verify_button = QPushButton("パスを検証/変換", self)
         self._file_path_verify_button.setEnabled(False)
         self._file_path_verify_button.clicked.connect(self._emit_file_path_verify_request)
+        self._file_local_copy_button = QPushButton("ローカルへ移動", self)
+        self._file_local_copy_button.setEnabled(False)
+        self._file_local_copy_button.clicked.connect(self._emit_file_local_copy_request)
+        self._file_local_open_button = QPushButton("ローカルで開く", self)
+        self._file_local_open_button.setEnabled(False)
+        self._file_local_open_button.clicked.connect(self._emit_file_local_open_request)
 
         self._rename_input = QLineEdit(self)
         self._rename_button = QPushButton("名前を更新", self)
@@ -139,6 +147,8 @@ class NodeInspectorPanel(QWidget):
         file_path_buttons.addWidget(self._file_path_pick_button)
         file_path_buttons.addWidget(self._file_path_verify_button)
         layout.addLayout(file_path_buttons)
+        layout.addWidget(self._file_local_copy_button)
+        layout.addWidget(self._file_local_open_button)
         return widget
 
     def _build_operation_tab(self) -> QWidget:
@@ -252,6 +262,8 @@ class NodeInspectorPanel(QWidget):
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
         self.set_file_reveal_state(enabled=False, label="-", visible=False)
         self.set_file_path_state(enabled=False, path="", visible=False)
+        self.set_file_local_copy_state(enabled=False, visible=False)
+        self.set_file_local_open_state(enabled=False, visible=False)
 
     def set_tool_launch_state(
         self,
@@ -302,6 +314,14 @@ class NodeInspectorPanel(QWidget):
         self._file_path_pick_button.setVisible(visible)
         self._file_path_verify_button.setVisible(visible)
 
+    def set_file_local_copy_state(self, *, enabled: bool, visible: bool) -> None:
+        self._file_local_copy_button.setEnabled(enabled)
+        self._file_local_copy_button.setVisible(visible)
+
+    def set_file_local_open_state(self, *, enabled: bool, visible: bool) -> None:
+        self._file_local_open_button.setEnabled(enabled)
+        self._file_local_open_button.setVisible(visible)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -336,6 +356,16 @@ class NodeInspectorPanel(QWidget):
             return
         self.file_path_verify_requested.emit()
 
+    def _emit_file_local_copy_request(self) -> None:
+        if not self._file_local_copy_button.isEnabled():
+            return
+        self.file_local_copy_requested.emit()
+
+    def _emit_file_local_open_request(self) -> None:
+        if not self._file_local_open_button.isEnabled():
+            return
+        self.file_local_open_requested.emit()
+
     def _on_memo_text_changed(self) -> None:
         if self._memo_controls_active:
             return
@@ -366,6 +396,8 @@ class NodeInspectorDock(QDockWidget):
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
+    file_local_copy_requested = Signal()
+    file_local_open_requested = Signal()
 
     def __init__(
         self,
@@ -396,6 +428,8 @@ class NodeInspectorDock(QDockWidget):
         panel.file_path_changed.connect(self.file_path_changed)
         panel.file_path_verify_requested.connect(self.file_path_verify_requested)
         panel.file_path_pick_requested.connect(self.file_path_pick_requested)
+        panel.file_local_copy_requested.connect(self.file_local_copy_requested)
+        panel.file_local_open_requested.connect(self.file_local_open_requested)
 
         container = QWidget(self)
         container.setObjectName("dockContentContainer")
@@ -488,3 +522,9 @@ class NodeInspectorDock(QDockWidget):
             path=path,
             visible=visible,
         )
+
+    def set_file_local_copy_state(self, *, enabled: bool, visible: bool) -> None:
+        self._panel.set_file_local_copy_state(enabled=enabled, visible=visible)
+
+    def set_file_local_open_state(self, *, enabled: bool, visible: bool) -> None:
+        self._panel.set_file_local_open_state(enabled=enabled, visible=visible)
