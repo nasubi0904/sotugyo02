@@ -2559,7 +2559,8 @@ class NodeEditorWindow(QMainWindow):
             return None
         try:
             if source.is_dir():
-                self._copy_directory_contents(source, target_dir)
+                missing, skipped = self._copy_directory_contents(source, target_dir)
+                self._notify_copy_directory_warnings(missing, skipped, "ローカルへのコピー")
             else:
                 destination = target_dir / source.name
                 shutil.copy2(
@@ -3007,13 +3008,13 @@ class NodeEditorWindow(QMainWindow):
         try:
             if source.is_dir():
                 if source != destination:
-                    missing = self._copy_directory_contents(source, destination)
-                    if missing:
-                        self._show_warning_dialog(
-                            "ファイルノードのコピー中に存在しないファイルが見つかりました。\n"
-                            f"ノード: {self._safe_node_name(node)}\n"
-                            f"件数: {len(missing)}"
-                        )
+                    missing, skipped = self._copy_directory_contents(source, destination)
+                    self._notify_copy_directory_warnings(
+                        missing,
+                        skipped,
+                        "ファイルノードのコピー",
+                        node=node,
+                    )
             else:
                 if source != destination:
                     shutil.copy2(
@@ -3068,18 +3069,84 @@ class NodeEditorWindow(QMainWindow):
             "%Y-%m-%d %H:%M:%S"
         )
 
-    def _copy_directory_contents(self, source: Path, destination: Path) -> List[str]:
+    def _format_warning_paths(self, paths: Iterable[str], *, limit: int = 5) -> str:
+        path_list = list(paths)
+        if not path_list:
+            return ""
+        preview = path_list[:limit]
+        lines = "\n".join(preview)
+        if len(path_list) > limit:
+            lines = f"{lines}\n...（省略: {len(path_list) - limit} 件）"
+        return lines
+
+    def _notify_copy_directory_warnings(
+        self,
+        missing_files: Iterable[str],
+        skipped_entries: Iterable[str],
+        context: str,
+        *,
+        node: Optional[object] = None,
+    ) -> None:
+        missing_list = list(missing_files)
+        if missing_list:
+            message = (
+                f"{context}中に存在しないファイルが見つかりました。\n"
+                f"件数: {len(missing_list)}"
+            )
+            if node is not None:
+                message = f"{message}\nノード: {self._safe_node_name(node)}"
+            details = self._format_warning_paths(missing_list)
+            if details:
+                message = f"{message}\n{details}"
+            self._show_warning_dialog(message)
+        skipped_list = list(skipped_entries)
+        if skipped_list:
+            message = (
+                f"{context}中に Windows の再解析ポイントを検出したため、"
+                "コピー対象から除外しました。\n"
+                f"件数: {len(skipped_list)}"
+            )
+            if node is not None:
+                message = f"{message}\nノード: {self._safe_node_name(node)}"
+            details = self._format_warning_paths(skipped_list)
+            if details:
+                message = f"{message}\n{details}"
+            self._show_warning_dialog(message)
+
+    def _is_reparse_point(self, target: Path) -> bool:
+        if target.is_symlink() or os.path.islink(target):
+            return True
+        try:
+            stat_result = os.lstat(target)
+        except OSError:
+            return False
+        file_attributes = getattr(stat_result, "st_file_attributes", 0)
+        reparse_flag = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+        return bool(file_attributes & reparse_flag)
+
+    def _copy_directory_contents(self, source: Path, destination: Path) -> Tuple[List[str], List[str]]:
         destination.mkdir(parents=True, exist_ok=True)
         missing_files: List[str] = []
+        skipped_entries: List[str] = []
         for root, dirs, files in os.walk(source):
             root_path = Path(root)
             relative_root = root_path.relative_to(source)
             target_root = destination / relative_root
             target_root.mkdir(parents=True, exist_ok=True)
+            safe_dirs: List[str] = []
             for directory in dirs:
+                source_dir = root_path / directory
+                if self._is_reparse_point(source_dir):
+                    skipped_entries.append(str(source_dir))
+                    continue
+                safe_dirs.append(directory)
                 (target_root / directory).mkdir(parents=True, exist_ok=True)
+            dirs[:] = safe_dirs
             for filename in files:
                 source_file = root_path / filename
+                if self._is_reparse_point(source_file):
+                    skipped_entries.append(str(source_file))
+                    continue
                 target_file = target_root / filename
                 target_file.parent.mkdir(parents=True, exist_ok=True)
                 try:
@@ -3089,7 +3156,7 @@ class NodeEditorWindow(QMainWindow):
                     )
                 except FileNotFoundError:
                     missing_files.append(str(source_file))
-        return missing_files
+        return missing_files, skipped_entries
 
     def _remove_project_path(self, target: Path) -> bool:
         normalized = self._normalize_windows_path(target)
