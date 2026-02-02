@@ -280,6 +280,10 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
         inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
         inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
+        inspector_dock.file_local_open_requested.connect(self._handle_file_local_open_requested)
+        inspector_dock.local_directory_copy_requested.connect(
+            self._handle_local_directory_copy_requested
+        )
         inspector_dock.file_path_changed.connect(self._handle_file_path_changed)
         inspector_dock.file_path_verify_requested.connect(self._handle_file_path_verify_requested)
         inspector_dock.file_path_pick_requested.connect(self._handle_file_path_pick_requested)
@@ -1384,6 +1388,8 @@ class NodeEditorWindow(QMainWindow):
                 inspector.disable_rename()
                 inspector.clear_memo()
                 inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
+                inspector.set_file_local_open_state(enabled=False, label="-", visible=False)
+                inspector.set_local_copy_state(enabled=False, label="-", visible=False)
                 inspector.set_file_path_state(enabled=False, path="", visible=False)
             self._update_alignment_controls(None)
             return
@@ -1419,6 +1425,8 @@ class NodeEditorWindow(QMainWindow):
             inspector.enable_rename(name)
             self._update_tool_launch_controls(node)
             self._update_file_reveal_controls(node)
+            self._update_file_local_open_controls(node)
+            self._update_local_copy_controls(node)
             self._update_file_path_controls(node)
         self._update_memo_controls(node)
         self._update_alignment_controls(node)
@@ -1805,6 +1813,55 @@ class NodeEditorWindow(QMainWindow):
             self._show_warning_dialog("ファイルが見つかりません。")
             return
         self._reveal_file_in_explorer(target)
+
+    def _handle_file_local_open_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, FileNode):
+            self._show_info_dialog("対象のファイルノードを選択してください。")
+            return
+        if not sys.platform.startswith("win"):
+            self._show_warning_dialog(
+                "ジャンクションの生成は Windows のみ対応しています。"
+            )
+            return
+        local_root = self._resolve_user_local_root()
+        if local_root is None:
+            return
+        junc_root = local_root / "junc"
+        try:
+            junc_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"ジャンクション用ディレクトリの作成に失敗しました: {exc}"
+            )
+            return
+        self._ensure_node_metadata(self._current_node)
+        root_junction = self._build_junction_tree(
+            junc_root,
+            self._current_node,
+            local_root=local_root,
+            confirm_missing=True,
+        )
+        if root_junction is None:
+            return
+        self._reveal_file_in_explorer(root_junction)
+
+    def _handle_local_directory_copy_requested(self) -> None:
+        node = self._current_node
+        if node is None:
+            self._show_info_dialog("対象のノードを選択してください。")
+            return
+        if not self._is_directory_source_node(node):
+            self._show_warning_dialog(
+                "ディレクトリを保持するノードを選択してください。"
+            )
+            return
+        local_root = self._resolve_user_local_root()
+        if local_root is None:
+            return
+        local_dir = self._ensure_local_node_copy(node, local_root=local_root)
+        if local_dir is None:
+            return
+        self._show_info_dialog(f"ローカルへコピーしました。\n{local_dir}")
 
     def _handle_file_path_changed(self, path: str) -> None:
         if self._current_node is None or not isinstance(self._current_node, FileNode):
@@ -2344,6 +2401,50 @@ class NodeEditorWindow(QMainWindow):
                 visible=True,
             )
 
+    def _update_file_local_open_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not isinstance(node, FileNode):
+            inspector.set_file_local_open_state(enabled=False, label="-", visible=False)
+            return
+        file_value = self._file_node_value(node)
+        if file_value:
+            enabled = sys.platform.startswith("win")
+            inspector.set_file_local_open_state(
+                enabled=enabled,
+                label=self._file_label_text(file_value),
+                visible=True,
+            )
+        else:
+            inspector.set_file_local_open_state(
+                enabled=False,
+                label="未設定",
+                visible=True,
+            )
+
+    def _update_local_copy_controls(self, node) -> None:
+        inspector = self._inspector_dock
+        if inspector is None:
+            return
+        if not self._is_directory_source_node(node):
+            inspector.set_local_copy_state(enabled=False, label="-", visible=False)
+            return
+        source = self._resolve_node_source_path(node)
+        label = self._safe_node_name(node)
+        enabled = (
+            source is not None
+            and source.exists()
+            and source.is_dir()
+            and self._current_user is not None
+            and bool((self._current_user.local_directory or "").strip())
+        )
+        inspector.set_local_copy_state(
+            enabled=enabled,
+            label=label,
+            visible=True,
+        )
+
     def _update_file_path_controls(self, node) -> None:
         inspector = self._inspector_dock
         if inspector is None:
@@ -2384,6 +2485,244 @@ class NodeEditorWindow(QMainWindow):
             return
         url = QtCore.QUrl.fromLocalFile(str(path.parent))
         QtGui.QDesktopServices.openUrl(url)
+
+    def _resolve_user_local_root(self) -> Optional[Path]:
+        if self._current_user is None:
+            self._show_warning_dialog("ユーザーが選択されていません。")
+            return None
+        local_directory = (self._current_user.local_directory or "").strip()
+        if not local_directory:
+            self._show_warning_dialog(
+                "ユーザーローカルディレクトリが未設定です。"
+            )
+            return None
+        root = Path(local_directory)
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"ローカルディレクトリの作成に失敗しました: {exc}"
+            )
+            return None
+        return root
+
+    def _resolve_node_source_path(self, node) -> Optional[Path]:
+        if isinstance(node, FileNode):
+            file_value = self._file_node_value(node)
+            if not file_value:
+                return None
+            return self._resolve_project_file_path(file_value)
+        if isinstance(node, ToolEnvironmentNode):
+            tool_output = self._node_custom_property_value(node, "tool_output_dir")
+            if not tool_output:
+                return None
+            return self._resolve_project_file_path(tool_output)
+        return None
+
+    def _is_directory_source_node(self, node) -> bool:
+        source = self._resolve_node_source_path(node)
+        if source is None:
+            return False
+        return source.exists() and source.is_dir()
+
+    def _ensure_local_node_copy(
+        self,
+        node,
+        *,
+        local_root: Path,
+    ) -> Optional[Path]:
+        source = self._resolve_node_source_path(node)
+        if source is None:
+            self._show_warning_dialog("ノードの参照先が見つかりません。")
+            return None
+        if not source.exists():
+            self._show_warning_dialog(
+                f"ノードの参照先が存在しません: {source}"
+            )
+            return None
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        nodes_root = local_root / "nodes"
+        try:
+            nodes_root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"nodes ディレクトリの作成に失敗しました: {exc}"
+            )
+            return None
+        target_dir = nodes_root / node_uuid
+        try:
+            target_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"コピー先ディレクトリの作成に失敗しました: {exc}"
+            )
+            return None
+        try:
+            if source.is_dir():
+                self._copy_directory_contents(source, target_dir)
+            else:
+                destination = target_dir / source.name
+                shutil.copy2(
+                    self._normalize_windows_path(source),
+                    self._normalize_windows_path(destination),
+                )
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"ローカルへのコピーに失敗しました: {exc}"
+            )
+            return None
+        return target_dir
+
+    def _resolve_junction_dir(
+        self,
+        parent_dir: Path,
+        base_name: str,
+        *,
+        title: str,
+    ) -> Optional[Tuple[Path, str]]:
+        candidate = parent_dir / base_name
+        if not candidate.exists():
+            return candidate, base_name
+        if not candidate.is_dir():
+            self._show_warning_dialog(f"既存のパスがディレクトリではありません: {candidate}")
+            return None
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setText(
+            "同名のフォルダが既に存在します。\n"
+            f"対象: {candidate}\n"
+            "どの方法で続行しますか？"
+        )
+        use_button = dialog.addButton("既存を使用", QMessageBox.AcceptRole)
+        rename_button = dialog.addButton("別名で作成", QMessageBox.ActionRole)
+        dialog.addButton("キャンセル", QMessageBox.RejectRole)
+        dialog.setDefaultButton(rename_button)
+        dialog.exec()
+        clicked = dialog.clickedButton()
+        if clicked == use_button:
+            return candidate, base_name
+        if clicked == rename_button:
+            resolved = self._find_available_path(parent_dir, base_name)
+            if resolved is None:
+                self._show_warning_dialog("別名フォルダの作成先が見つかりませんでした。")
+                return None
+            dir_path, name = resolved
+            return dir_path, name
+        return None
+
+    def _find_available_path(
+        self,
+        parent_dir: Path,
+        base_name: str,
+    ) -> Optional[Tuple[Path, str]]:
+        for index in range(1, 100):
+            candidate_name = f"{base_name}_{index}"
+            candidate = parent_dir / candidate_name
+            if not candidate.exists():
+                return candidate, candidate_name
+        return None
+
+    def _build_junction_tree(
+        self,
+        root_dir: Path,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> Optional[Path]:
+        visited: Set[object] = set()
+        root_junction: Optional[Path] = None
+
+        def walk(current_node, parent_dir: Path) -> None:
+            nonlocal root_junction
+            if current_node in visited:
+                return
+            visited.add(current_node)
+            node_label = (
+                self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
+            )
+            resolved = self._resolve_junction_dir(
+                parent_dir,
+                node_label,
+                title="ジャンクション生成先の競合",
+            )
+            if resolved is None:
+                return
+            junction_path, _ = resolved
+            local_copy = self._ensure_local_node_copy_with_prompt(
+                current_node,
+                local_root=local_root,
+                confirm_missing=confirm_missing,
+            )
+            if local_copy is not None:
+                self._create_junction(junction_path, local_copy)
+            if root_junction is None:
+                root_junction = junction_path
+
+            for input_node in self._collect_input_nodes(current_node):
+                walk(input_node, junction_path)
+
+        walk(node, root_dir)
+        return root_junction
+
+    def _ensure_local_node_copy_with_prompt(
+        self,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> Optional[Path]:
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        target_dir = local_root / "nodes" / node_uuid
+        if target_dir.exists():
+            return target_dir
+        if confirm_missing:
+            node_name = self._safe_node_name(node)
+            result = QMessageBox.question(
+                self,
+                "確認",
+                "ローカルコピーが存在しません。\n"
+                f"ノード: {node_name}\n"
+                "コピーしますか？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if result != QMessageBox.StandardButton.Yes:
+                return None
+        return self._ensure_local_node_copy(node, local_root=local_root)
+
+    def _create_junction(self, link_path: Path, target_path: Path) -> None:
+        if link_path.exists():
+            return
+        if not sys.platform.startswith("win"):
+            return
+        try:
+            link_path.parent.mkdir(parents=True, exist_ok=True)
+            subprocess.run(
+                ["cmd", "/c", "mklink", "/J", str(link_path), str(target_path)],
+                check=False,
+            )
+        except OSError:
+            LOGGER.warning("ジャンクション作成に失敗しました: %s", link_path)
+
+    def _sanitize_node_dir_name(self, name: str) -> str:
+        sanitized = name.strip() if name else ""
+        for ch in '<>:"/\\|?*':
+            sanitized = sanitized.replace(ch, "_")
+        sanitized = sanitized.replace("\n", "_").replace("\r", "_")
+        return sanitized.strip(" .")
+
+    def _collect_input_nodes(self, node) -> List:
+        inputs: List = []
+        for port in self._collect_ports(node, output=False):
+            for connected in self._connected_ports(port):
+                connected_node = connected.node() if hasattr(connected, "node") else None
+                if connected_node is None:
+                    continue
+                if connected_node not in inputs:
+                    inputs.append(connected_node)
+        return inputs
 
     def _return_to_start(self) -> None:
         if not self._confirm_discard_changes("未保存の変更があります。スタート画面に戻りますか？"):

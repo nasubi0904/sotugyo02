@@ -31,6 +31,8 @@ class NodeInspectorPanel(QWidget):
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
     file_reveal_requested = Signal()
+    file_local_open_requested = Signal()
+    local_directory_copy_requested = Signal()
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
@@ -67,6 +69,16 @@ class NodeInspectorPanel(QWidget):
         self._file_reveal_button = QPushButton("エクスプローラーで表示", self)
         self._file_reveal_button.setEnabled(False)
         self._file_reveal_button.clicked.connect(self._emit_file_reveal_request)
+        self._file_local_open_label = QLabel("ローカル表示: -", self)
+        self._file_local_open_label.setWordWrap(True)
+        self._file_local_open_button = QPushButton("ローカルで開く", self)
+        self._file_local_open_button.setEnabled(False)
+        self._file_local_open_button.clicked.connect(self._emit_file_local_open_request)
+        self._local_copy_label = QLabel("ローカルコピー: -", self)
+        self._local_copy_label.setWordWrap(True)
+        self._local_copy_button = QPushButton("ローカルへ移動", self)
+        self._local_copy_button.setEnabled(False)
+        self._local_copy_button.clicked.connect(self._emit_local_copy_request)
         self._file_path_input = QLineEdit(self)
         self._file_path_input.setPlaceholderText("ファイル/フォルダを選択")
         self._file_path_input.setReadOnly(True)
@@ -133,6 +145,10 @@ class NodeInspectorPanel(QWidget):
         layout.addSpacing(6)
         layout.addWidget(self._file_reveal_label)
         layout.addWidget(self._file_reveal_button)
+        layout.addWidget(self._file_local_open_label)
+        layout.addWidget(self._file_local_open_button)
+        layout.addWidget(self._local_copy_label)
+        layout.addWidget(self._local_copy_button)
         layout.addWidget(self._file_path_input)
         file_path_buttons = QHBoxLayout()
         file_path_buttons.setSpacing(6)
@@ -251,6 +267,8 @@ class NodeInspectorPanel(QWidget):
         self._property_plain_text.clear()
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
         self.set_file_reveal_state(enabled=False, label="-", visible=False)
+        self.set_file_local_open_state(enabled=False, label="-", visible=False)
+        self.set_local_copy_state(enabled=False, label="-", visible=False)
         self.set_file_path_state(enabled=False, path="", visible=False)
 
     def set_tool_launch_state(
@@ -302,6 +320,36 @@ class NodeInspectorPanel(QWidget):
         self._file_path_pick_button.setVisible(visible)
         self._file_path_verify_button.setVisible(visible)
 
+    def set_file_local_open_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ローカルで開くボタンの状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._file_local_open_label.setText(f"ローカル表示: {display}")
+        self._file_local_open_button.setEnabled(enabled)
+        self._file_local_open_label.setVisible(visible)
+        self._file_local_open_button.setVisible(visible)
+
+    def set_local_copy_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ローカルコピー用ボタンの状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._local_copy_label.setText(f"ローカルコピー: {display}")
+        self._local_copy_button.setEnabled(enabled)
+        self._local_copy_label.setVisible(visible)
+        self._local_copy_button.setVisible(visible)
+
     def _emit_rename_request(self) -> None:
         if not self._rename_button.isEnabled():
             return
@@ -317,6 +365,16 @@ class NodeInspectorPanel(QWidget):
         if not self._file_reveal_button.isEnabled():
             return
         self.file_reveal_requested.emit()
+
+    def _emit_file_local_open_request(self) -> None:
+        if not self._file_local_open_button.isEnabled():
+            return
+        self.file_local_open_requested.emit()
+
+    def _emit_local_copy_request(self) -> None:
+        if not self._local_copy_button.isEnabled():
+            return
+        self.local_directory_copy_requested.emit()
 
     def _emit_file_path_changed(self) -> None:
         if not self._file_path_input.isEnabled():
@@ -363,6 +421,8 @@ class NodeInspectorDock(QDockWidget):
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
     file_reveal_requested = Signal()
+    file_local_open_requested = Signal()
+    local_directory_copy_requested = Signal()
     file_path_changed = Signal(str)
     file_path_verify_requested = Signal()
     file_path_pick_requested = Signal()
@@ -393,6 +453,8 @@ class NodeInspectorDock(QDockWidget):
         panel.memo_font_changed.connect(self.memo_font_changed)
         panel.tool_launch_requested.connect(self.tool_launch_requested)
         panel.file_reveal_requested.connect(self.file_reveal_requested)
+        panel.file_local_open_requested.connect(self.file_local_open_requested)
+        panel.local_directory_copy_requested.connect(self.local_directory_copy_requested)
         panel.file_path_changed.connect(self.file_path_changed)
         panel.file_path_verify_requested.connect(self.file_path_verify_requested)
         panel.file_path_pick_requested.connect(self.file_path_pick_requested)
@@ -486,5 +548,31 @@ class NodeInspectorDock(QDockWidget):
         self._panel.set_file_path_state(
             enabled=enabled,
             path=path,
+            visible=visible,
+        )
+
+    def set_file_local_open_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_file_local_open_state(
+            enabled=enabled,
+            label=label,
+            visible=visible,
+        )
+
+    def set_local_copy_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_local_copy_state(
+            enabled=enabled,
+            label=label,
             visible=visible,
         )
