@@ -18,8 +18,8 @@ class FileNode(BaseNode):
 
     def __init__(self) -> None:
         super().__init__()
-        self.add_input("入力")
-        self.add_output("出力")
+        self.add_input("入力", multi_input=True)
+        self.add_output("出力", multi_output=True)
         self.set_color(96, 165, 250)
 
     @classmethod
