@@ -30,6 +30,7 @@ class NodeInspectorPanel(QWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    tool_local_launch_requested = Signal()
     file_reveal_requested = Signal()
     file_local_open_requested = Signal()
     local_directory_copy_requested = Signal()
@@ -64,6 +65,11 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_button = QPushButton("ツールを起動", self)
         self._tool_launch_button.setEnabled(False)
         self._tool_launch_button.clicked.connect(self._emit_tool_launch_request)
+        self._tool_local_launch_label = QLabel("ローカル起動対象: -", self)
+        self._tool_local_launch_label.setWordWrap(True)
+        self._tool_local_launch_button = QPushButton("ローカルで起動", self)
+        self._tool_local_launch_button.setEnabled(False)
+        self._tool_local_launch_button.clicked.connect(self._emit_tool_local_launch_request)
         self._file_reveal_label = QLabel("ファイル: -", self)
         self._file_reveal_label.setWordWrap(True)
         self._file_reveal_button = QPushButton("エクスプローラーで表示", self)
@@ -142,6 +148,8 @@ class NodeInspectorPanel(QWidget):
         layout.addSpacing(8)
         layout.addWidget(self._tool_launch_label)
         layout.addWidget(self._tool_launch_button)
+        layout.addWidget(self._tool_local_launch_label)
+        layout.addWidget(self._tool_local_launch_button)
         layout.addSpacing(6)
         layout.addWidget(self._file_reveal_label)
         layout.addWidget(self._file_reveal_button)
@@ -266,6 +274,7 @@ class NodeInspectorPanel(QWidget):
 
         self._property_plain_text.clear()
         self.set_tool_launch_state(enabled=False, label="-", visible=False)
+        self.set_tool_local_launch_state(enabled=False, label="-", visible=False)
         self.set_file_reveal_state(enabled=False, label="-", visible=False)
         self.set_file_local_open_state(enabled=False, label="-", visible=False)
         self.set_local_copy_state(enabled=False, label="-", visible=False)
@@ -285,6 +294,21 @@ class NodeInspectorPanel(QWidget):
         self._tool_launch_button.setEnabled(enabled)
         self._tool_launch_label.setVisible(visible)
         self._tool_launch_button.setVisible(visible)
+
+    def set_tool_local_launch_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        """ローカル起動ボタンの状態を更新する。"""
+
+        display = label.strip() if label and label.strip() else "-"
+        self._tool_local_launch_label.setText(f"ローカル起動対象: {display}")
+        self._tool_local_launch_button.setEnabled(enabled)
+        self._tool_local_launch_label.setVisible(visible)
+        self._tool_local_launch_button.setVisible(visible)
 
     def set_file_reveal_state(
         self,
@@ -361,6 +385,11 @@ class NodeInspectorPanel(QWidget):
             return
         self.tool_launch_requested.emit()
 
+    def _emit_tool_local_launch_request(self) -> None:
+        if not self._tool_local_launch_button.isEnabled():
+            return
+        self.tool_local_launch_requested.emit()
+
     def _emit_file_reveal_request(self) -> None:
         if not self._file_reveal_button.isEnabled():
             return
@@ -420,6 +449,7 @@ class NodeInspectorDock(QDockWidget):
     memo_text_changed = Signal(str)
     memo_font_changed = Signal(int)
     tool_launch_requested = Signal()
+    tool_local_launch_requested = Signal()
     file_reveal_requested = Signal()
     file_local_open_requested = Signal()
     local_directory_copy_requested = Signal()
@@ -452,6 +482,7 @@ class NodeInspectorDock(QDockWidget):
         panel.memo_text_changed.connect(self.memo_text_changed)
         panel.memo_font_changed.connect(self.memo_font_changed)
         panel.tool_launch_requested.connect(self.tool_launch_requested)
+        panel.tool_local_launch_requested.connect(self.tool_local_launch_requested)
         panel.file_reveal_requested.connect(self.file_reveal_requested)
         panel.file_local_open_requested.connect(self.file_local_open_requested)
         panel.local_directory_copy_requested.connect(self.local_directory_copy_requested)
@@ -520,6 +551,19 @@ class NodeInspectorDock(QDockWidget):
         visible: bool,
     ) -> None:
         self._panel.set_tool_launch_state(
+            enabled=enabled,
+            label=label,
+            visible=visible,
+        )
+
+    def set_tool_local_launch_state(
+        self,
+        *,
+        enabled: bool,
+        label: str,
+        visible: bool,
+    ) -> None:
+        self._panel.set_tool_local_launch_state(
             enabled=enabled,
             label=label,
             visible=visible,

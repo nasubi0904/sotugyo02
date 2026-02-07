@@ -279,6 +279,9 @@ class NodeEditorWindow(QMainWindow):
         inspector_dock.memo_text_changed.connect(self._handle_memo_text_changed)
         inspector_dock.memo_font_changed.connect(self._handle_memo_font_size_changed)
         inspector_dock.tool_launch_requested.connect(self._handle_tool_launch_requested)
+        inspector_dock.tool_local_launch_requested.connect(
+            self._handle_tool_local_launch_requested
+        )
         inspector_dock.file_reveal_requested.connect(self._handle_file_reveal_requested)
         inspector_dock.file_local_open_requested.connect(self._handle_file_local_open_requested)
         inspector_dock.local_directory_copy_requested.connect(
@@ -1657,6 +1660,114 @@ class NodeEditorWindow(QMainWindow):
             f"{debug_text}"
         )
 
+    def _handle_tool_local_launch_requested(self) -> None:
+        if self._current_node is None or not isinstance(self._current_node, ToolEnvironmentNode):
+            self._show_info_dialog("起動するツールノードを選択してください。")
+            return
+        local_root = self._resolve_user_local_root()
+        if local_root is None:
+            return
+        target = self._resolve_local_rez_launch_target(self._current_node)
+        if target is None:
+            self._show_warning_dialog("Rez 情報が見つからないため起動できません。")
+            return
+        package_request, available = target
+        if not available:
+            debug_text = self._format_launch_debug_text(
+                package_request=package_request,
+                extra_args=None,
+                extra_env=None,
+                resolved_command=None,
+            )
+            self._show_warning_dialog(
+                "ローカルの Rez パッケージが見つかりません。\n"
+                f"起動対象: {package_request}\n"
+                f"KDMrez: {get_rez_package_dir()}\n\n"
+                f"{debug_text}"
+            )
+            return
+        local_tool_dir = self._resolve_local_node_path(
+            self._current_node,
+            local_root=local_root,
+            confirm_missing=True,
+        )
+        if local_tool_dir is None:
+            self._show_warning_dialog(
+                "ツールノードのローカルディレクトリを用意できませんでした。"
+            )
+            return
+        input_paths = self._collect_tool_local_input_paths(
+            self._current_node,
+            local_root=local_root,
+        )
+        if input_paths is None:
+            return
+        extra_env = None
+        extra_args = None
+        payload = self._tool_environment_payload(self._current_node)
+        if isinstance(payload, dict):
+            env_text = payload.get("environment_variables")
+            args_text = payload.get("launch_arguments")
+            extra_env, missing_env = self._build_environment_map(
+                env_text if isinstance(env_text, str) else "",
+                input_paths,
+            )
+            extra_args, missing_args = self._build_tool_args(
+                args_text if isinstance(args_text, str) else "",
+                input_paths,
+            )
+            missing = sorted(set(missing_env) | set(missing_args))
+            if missing:
+                missing_list = "\n".join(f"・{name}" for name in missing)
+                debug_text = self._format_launch_debug_text(
+                    package_request=package_request,
+                    extra_args=extra_args,
+                    extra_env=extra_env,
+                    resolved_command=None,
+                )
+                self._show_warning_dialog(
+                    "ノード入力パスを解決できませんでした。\n"
+                    "入力ポートにファイルノードが接続されているか確認してください。\n"
+                    f"{missing_list}\n\n"
+                    f"{debug_text}"
+                )
+                return
+        if extra_env is None:
+            extra_env = {}
+        extra_env["TOOL_NODE_DIR"] = str(local_tool_dir)
+        try:
+            result = launch_rez_detached(
+                package_request=package_request,
+                tool_args=None,
+                extra_env=extra_env if extra_env else None,
+                extra_args=extra_args if extra_args else None,
+            )
+        except RezLauncherError as exc:
+            debug_text = self._format_launch_debug_text(
+                package_request=package_request,
+                extra_args=extra_args,
+                extra_env=extra_env,
+                resolved_command=None,
+            )
+            self._show_error_dialog(
+                "ローカル最適化した Rez 環境の起動に失敗しました。\n"
+                f"{exc}\n\n"
+                f"{debug_text}"
+            )
+            return
+        debug_text = self._format_launch_debug_text(
+            package_request=package_request,
+            extra_args=extra_args,
+            extra_env=extra_env,
+            resolved_command=list(result.command),
+        )
+        self._show_info_dialog(
+            "ローカル最適化した Rez 環境を起動しました。\n"
+            f"PID: {result.pid}\n"
+            f"Log: {result.log_path}\n\n"
+            f"{debug_text}"
+        )
+
     def _tool_environment_payload(self, node) -> Optional[Dict[str, object]]:
         if not isinstance(node, ToolEnvironmentNode):
             return None
@@ -1665,6 +1776,25 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(payload, dict):
             return payload
         return None
+
+    def _collect_tool_input_nodes(self, node) -> Dict[str, FileNode]:
+        if not isinstance(node, ToolEnvironmentNode):
+            return {}
+        input_nodes: Dict[str, FileNode] = {}
+        for port in self._collect_ports(node, output=False):
+            port_name = self._safe_port_name(port)
+            if not port_name or port_name in input_nodes:
+                continue
+            connected_ports = self._connected_ports(port)
+            for connected in connected_ports:
+                if not isinstance(connected, Port):
+                    continue
+                source_node = connected.node()
+                if not isinstance(source_node, FileNode):
+                    continue
+                input_nodes[port_name] = source_node
+                break
+        return input_nodes
 
     def _collect_tool_input_paths(self, node) -> Dict[str, Path]:
         if not isinstance(node, ToolEnvironmentNode):
@@ -1691,6 +1821,26 @@ class NodeEditorWindow(QMainWindow):
                     continue
                 input_paths[port_name] = resolved
                 break
+        return input_paths
+
+    def _collect_tool_local_input_paths(
+        self,
+        node,
+        *,
+        local_root: Path,
+    ) -> Optional[Dict[str, Path]]:
+        if not isinstance(node, ToolEnvironmentNode):
+            return None
+        input_paths: Dict[str, Path] = {}
+        for port_name, source_node in self._collect_tool_input_nodes(node).items():
+            local_path = self._resolve_local_node_path(
+                source_node,
+                local_root=local_root,
+                confirm_missing=True,
+            )
+            if local_path is None:
+                return None
+            input_paths[port_name] = local_path
         return input_paths
 
     def _build_environment_map(
@@ -2371,10 +2521,16 @@ class NodeEditorWindow(QMainWindow):
             return
         if not isinstance(node, ToolEnvironmentNode):
             inspector.set_tool_launch_state(enabled=False, label="-", visible=False)
+            inspector.set_tool_local_launch_state(enabled=False, label="-", visible=False)
             return
         target = self._resolve_local_rez_launch_target(node)
         if target is None:
             inspector.set_tool_launch_state(enabled=False, label="Rez 情報なし", visible=True)
+            inspector.set_tool_local_launch_state(
+                enabled=False,
+                label="Rez 情報なし",
+                visible=True,
+            )
             return
         package_request, available = target
         if not available:
@@ -2383,8 +2539,25 @@ class NodeEditorWindow(QMainWindow):
                 label=f"{package_request} (未検出)",
                 visible=True,
             )
+            inspector.set_tool_local_launch_state(
+                enabled=False,
+                label=f"{package_request} (未検出)",
+                visible=True,
+            )
             return
         inspector.set_tool_launch_state(enabled=True, label=package_request, visible=True)
+        if self._has_local_root_configured():
+            inspector.set_tool_local_launch_state(
+                enabled=True,
+                label=package_request,
+                visible=True,
+            )
+        else:
+            inspector.set_tool_local_launch_state(
+                enabled=False,
+                label="ローカル未設定",
+                visible=True,
+            )
 
     def _update_file_reveal_controls(self, node) -> None:
         inspector = self._inspector_dock
@@ -2528,6 +2701,11 @@ class NodeEditorWindow(QMainWindow):
             return None
         return root
 
+    def _has_local_root_configured(self) -> bool:
+        if self._current_user is None:
+            return False
+        return bool((self._current_user.local_directory or "").strip())
+
     def _resolve_node_source_path(self, node) -> Optional[Path]:
         if isinstance(node, FileNode):
             file_value = self._file_node_value(node)
@@ -2540,6 +2718,27 @@ class NodeEditorWindow(QMainWindow):
                 return None
             return self._resolve_project_file_path(tool_output)
         return None
+
+    def _resolve_local_node_path(
+        self,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> Optional[Path]:
+        local_copy = self._ensure_local_node_copy_with_prompt(
+            node,
+            local_root=local_root,
+            confirm_missing=confirm_missing,
+        )
+        if local_copy is None:
+            return None
+        source = self._resolve_node_source_path(node)
+        if source is None:
+            return None
+        if source.is_dir():
+            return local_copy
+        return local_copy / source.name
 
     def _is_directory_source_node(self, node) -> bool:
         source = self._resolve_node_source_path(node)
