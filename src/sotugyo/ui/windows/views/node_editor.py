@@ -1815,12 +1815,19 @@ class NodeEditorWindow(QMainWindow):
         self._reveal_file_in_explorer(target)
 
     def _handle_file_local_open_requested(self) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("対象のファイルノードを選択してください。")
+        if self._current_node is None or not isinstance(
+            self._current_node, (FileNode, ToolEnvironmentNode)
+        ):
+            self._show_info_dialog("対象のノードを選択してください。")
             return
         if not sys.platform.startswith("win"):
             self._show_warning_dialog(
                 "ジャンクションの生成は Windows のみ対応しています。"
+            )
+            return
+        if not self._is_directory_source_node(self._current_node):
+            self._show_warning_dialog(
+                "ディレクトリを保持するノードを選択してください。"
             )
             return
         local_root = self._resolve_user_local_root()
@@ -2404,15 +2411,31 @@ class NodeEditorWindow(QMainWindow):
         inspector = self._inspector_dock
         if inspector is None:
             return
-        if not isinstance(node, FileNode):
+        if not isinstance(node, (FileNode, ToolEnvironmentNode)):
             inspector.set_file_local_open_state(enabled=False, label="-", visible=False)
             return
-        file_value = self._file_node_value(node)
-        if file_value:
+        if isinstance(node, FileNode):
+            file_value = self._file_node_value(node)
+            if file_value:
+                enabled = sys.platform.startswith("win")
+                inspector.set_file_local_open_state(
+                    enabled=enabled,
+                    label=self._file_label_text(file_value),
+                    visible=True,
+                )
+            else:
+                inspector.set_file_local_open_state(
+                    enabled=False,
+                    label="未設定",
+                    visible=True,
+                )
+            return
+        tool_output = self._node_custom_property_value(node, "tool_output_dir")
+        if tool_output:
             enabled = sys.platform.startswith("win")
             inspector.set_file_local_open_state(
                 enabled=enabled,
-                label=self._file_label_text(file_value),
+                label=self._safe_node_name(node),
                 visible=True,
             )
         else:
