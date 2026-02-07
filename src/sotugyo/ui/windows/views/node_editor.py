@@ -149,6 +149,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph = NodeGraph()
         self._snap_settings = NodeSnapSettings()
         self._snap_action: QAction | None = None
+        self._node_full_name_cache: Dict[str, str] = {}
 
         self._background_pattern: StripedBackgroundPattern | None = None
         self._background_pattern = apply_striped_background(self._graph, TaskNode)
@@ -161,6 +162,7 @@ class NodeEditorWindow(QMainWindow):
         self._graph.register_node(DateNode)
         self._graph.register_node(FileNode)
         self._nodes_moved_handler = getattr(self._graph, "_on_nodes_moved", None)
+        self._hook_node_name_change_events()
 
         self._graph_widget = self._graph.widget
         self._graph_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -1028,6 +1030,7 @@ class NodeEditorWindow(QMainWindow):
             node.apply_default_size(self._snap_settings.grid_size)
             node.set_snap_grid_size(self._snap_settings.grid_size)
         self._apply_uniform_node_width(node)
+        self._update_node_label(node)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -1525,6 +1528,8 @@ class NodeEditorWindow(QMainWindow):
 
         if hasattr(self._current_node, "set_name"):
             self._current_node.set_name(normalized_name)
+        self._apply_uniform_node_width(self._current_node)
+        self._update_node_label(self._current_node)
         self._update_selected_node_info()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -2008,12 +2013,81 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _hook_node_name_change_events(self) -> None:
+        viewer_getter = getattr(self._graph, "viewer", None)
+        if not callable(viewer_getter):
+            return
+        viewer = viewer_getter()
+        if hasattr(viewer, "node_name_changed"):
+            viewer.node_name_changed.connect(self._handle_graph_node_name_changed)
+
+    def _handle_graph_node_name_changed(self, node_id: str, name: str) -> None:
+        getter = getattr(self._graph, "get_node_by_id", None)
+        if not callable(getter):
+            return
+        node = getter(node_id)
+        if node is None:
+            return
+        previous_full = self._node_full_name_cache.get(str(node_id))
+        if previous_full:
+            target_width = self._node_label_target_width(node)
+            text_item = getattr(getattr(node, "view", None), "text_item", None)
+            font_getter = getattr(text_item, "font", None) if text_item is not None else None
+            if callable(font_getter):
+                metrics = QtGui.QFontMetrics(font_getter())
+                elided = metrics.elidedText(previous_full, Qt.ElideRight, int(target_width))
+            else:
+                elided = self._elide_node_text(previous_full, target_width)
+            if name == elided and name != previous_full:
+                node.set_name(previous_full)
+        if self._apply_uniform_node_width(node):
+            self._set_modified(True)
+        self._update_node_label(node)
+
+    def _node_label_target_width(self, node) -> float:
+        width = self._safe_node_property(node, "width")
+        if width is None or width <= 0:
+            width = float(self._snap_settings.grid_size)
+        return max(0.0, width - 16.0)
+
+    @staticmethod
+    def _elide_node_text(text: str, max_width: float) -> str:
+        if max_width <= 0:
+            return text
+        metrics = QtGui.QFontMetrics(QtGui.QFont())
+        return metrics.elidedText(text, Qt.ElideRight, int(max_width))
+
+    def _update_node_label(self, node, *, target_width: float | None = None) -> None:
+        if node is None:
+            return
+        name_getter = getattr(node, "name", None)
+        if not callable(name_getter):
+            return
+        full_name = str(name_getter())
+        text_item = getattr(getattr(node, "view", None), "text_item", None)
+        if text_item is None:
+            return
+        max_width = target_width if target_width is not None else self._node_label_target_width(node)
+        font = getattr(text_item, "font", None)
+        if callable(font):
+            metrics = QtGui.QFontMetrics(font())
+            display = metrics.elidedText(full_name, Qt.ElideRight, int(max_width))
+        else:
+            display = self._elide_node_text(full_name, max_width)
+        if text_item.toPlainText() != display:
+            text_item.setPlainText(display)
+        text_item.setToolTip(full_name)
+        node_id = getattr(node, "id", None)
+        if node_id is not None:
+            self._node_full_name_cache[str(node_id)] = full_name
+
     def _apply_uniform_node_width(self, node) -> bool:
         if isinstance(node, MemoNode):
             return False
         grid_size = float(self._snap_settings.grid_size)
         if grid_size <= 0:
             return False
+        self._update_node_label(node, target_width=max(0.0, grid_size - 16.0))
         current_width = self._safe_node_property(node, "width")
         if current_width is not None and abs(current_width - grid_size) < 0.1:
             return False
@@ -2033,6 +2107,10 @@ class NodeEditorWindow(QMainWindow):
                 changed = True
         return changed
 
+    def _refresh_node_labels(self) -> None:
+        for node in self._graph.all_nodes():
+            self._update_node_label(node)
+
     def _refresh_date_node_snap_grid(self) -> None:
         grid_size = float(self._snap_settings.grid_size)
         for node in self._graph.all_nodes():
@@ -2048,6 +2126,7 @@ class NodeEditorWindow(QMainWindow):
         self._snap_settings.grid_size = float(spacing)
         self._refresh_date_node_snap_grid()
         self._apply_uniform_width_to_nodes(self._graph.all_nodes())
+        self._refresh_node_labels()
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
@@ -3331,6 +3410,7 @@ class NodeEditorWindow(QMainWindow):
                 metadata_changed = True
             if self._apply_uniform_node_width(node):
                 metadata_changed = True
+            self._update_node_label(node)
 
         failed_operations: List[str] = []
 
