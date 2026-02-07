@@ -79,6 +79,7 @@ class DateNode(BackdropNode):
 
     __identifier__: ClassVar[str] = "sotugyo.timeline"
     NODE_NAME: ClassVar[str] = "日付ノード"
+    STANDARD_NODE_WIDTH: ClassVar[float] = 256.0
     VERTICAL_OFFSET: ClassVar[float] = 24.0
 
     def __init__(self) -> None:
@@ -90,7 +91,7 @@ class DateNode(BackdropNode):
             widget_tooltip="表示する日付 (YYYY-MM-DD)",
         )
         self.apply_default_size(DateNodeItem.DEFAULT_SNAP_GRID)
-        self.set_color(200, 170, 110)
+        self.set_color(190, 150, 100)
         self.view.setZValue(Z_VAL_BACKDROP - 1)
         self._child_node_ids: Set[str] = set()
 
@@ -105,7 +106,9 @@ class DateNode(BackdropNode):
     def apply_default_size(self, grid_size: float) -> None:
         base = float(grid_size) if grid_size > 0 else DateNodeItem.DEFAULT_SNAP_GRID
         height = max(base * 3.0, self.VERTICAL_OFFSET * 2.0 + base)
-        self.set_property("width", base, push_undo=False)
+        width = max(self.STANDARD_NODE_WIDTH, base)
+        width = round(width / base) * base
+        self.set_property("width", width, push_undo=False)
         self.set_property("height", height, push_undo=False)
 
     def child_node_ids(self) -> Set[str]:

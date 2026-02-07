@@ -15,14 +15,15 @@ class ToolEnvironmentNode(BaseNode):
 
     __identifier__: ClassVar[str] = "sotugyo.tooling"
     NODE_NAME: ClassVar[str] = "ツール環境"
+    STANDARD_NODE_WIDTH: ClassVar[int] = 256
 
     def __init__(self) -> None:
         super().__init__()
         self.add_input("前段")
         self.add_output("出力")
-        self.set_property("width", 260, push_undo=False)
+        self.set_property("width", self.STANDARD_NODE_WIDTH, push_undo=False)
         self.set_property("height", 180, push_undo=False)
-        self.set_color(80, 130, 190)
+        self.set_color(150, 110, 230)
 
     @classmethod
     def node_type_identifier(cls) -> str:

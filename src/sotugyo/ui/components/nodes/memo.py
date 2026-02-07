@@ -271,6 +271,7 @@ class MemoNode(BaseNode):
 
     __identifier__: ClassVar[str] = "sotugyo.memo"
     NODE_NAME: ClassVar[str] = "メモノード"
+    STANDARD_NODE_WIDTH: ClassVar[int] = 256
     DEFAULT_FONT_SIZE: ClassVar[int] = 16
     MIN_FONT_SIZE: ClassVar[int] = 8
     MAX_FONT_SIZE: ClassVar[int] = 72
@@ -294,9 +295,9 @@ class MemoNode(BaseNode):
         )
         self.set_property("memo_font_size", self.DEFAULT_FONT_SIZE, push_undo=False)
         self._apply_font_size(self.DEFAULT_FONT_SIZE)
-        self.set_property("width", 320, push_undo=False)
+        self.set_property("width", self.STANDARD_NODE_WIDTH, push_undo=False)
         self.set_property("height", 240, push_undo=False)
-        self.set_color(238, 231, 200)
+        self.set_color(244, 228, 150)
         if hasattr(self.view, "setZValue"):
             self.view.setZValue(-1000)
         self._update_size_padding()

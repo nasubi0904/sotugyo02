@@ -15,11 +15,13 @@ class FileNode(BaseNode):
 
     __identifier__: ClassVar[str] = "sotugyo.workflow"
     NODE_NAME: ClassVar[str] = "ファイルノード"
+    STANDARD_NODE_WIDTH: ClassVar[int] = 256
 
     def __init__(self) -> None:
         super().__init__()
         self.add_input("入力")
         self.add_output("出力")
+        self.set_property("width", self.STANDARD_NODE_WIDTH, push_undo=False)
         self.set_color(96, 165, 250)
 
     @classmethod
