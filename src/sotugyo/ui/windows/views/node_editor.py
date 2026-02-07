@@ -2076,6 +2076,9 @@ class NodeEditorWindow(QMainWindow):
             display = self._elide_node_text(full_name, max_width)
         if text_item.toPlainText() != display:
             text_item.setPlainText(display)
+            align_label = getattr(getattr(node, "view", None), "align_label", None)
+            if callable(align_label):
+                align_label()
         text_item.setToolTip(full_name)
         node_id = getattr(node, "id", None)
         if node_id is not None:
