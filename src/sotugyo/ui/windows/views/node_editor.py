@@ -1826,18 +1826,19 @@ class NodeEditorWindow(QMainWindow):
         local_root = self._resolve_user_local_root()
         if local_root is None:
             return
-        root_local = self._ensure_local_node_copy_with_prompt(
+        prepared = self._ensure_local_node_copies_for_tree(
             self._current_node,
             local_root=local_root,
             confirm_missing=True,
         )
-        if root_local is None:
+        if not prepared:
             return
         root_junction = self._build_junction_tree(
-            root_local,
+            local_root / "junc",
             self._current_node,
             local_root=local_root,
             confirm_missing=True,
+            allow_copy=False,
             skip_root_junction=True,
         )
         if root_junction is None:
@@ -2629,6 +2630,7 @@ class NodeEditorWindow(QMainWindow):
         *,
         local_root: Path,
         confirm_missing: bool,
+        allow_copy: bool = True,
         skip_root_junction: bool = False,
     ) -> Optional[Path]:
         visited: Set[object] = set()
@@ -2657,11 +2659,18 @@ class NodeEditorWindow(QMainWindow):
             if resolved is None:
                 return
             junction_path, _ = resolved
-            local_copy = self._ensure_local_node_copy_with_prompt(
-                current_node,
-                local_root=local_root,
-                confirm_missing=confirm_missing,
-            )
+            if allow_copy:
+                local_copy = self._ensure_local_node_copy_with_prompt(
+                    current_node,
+                    local_root=local_root,
+                    confirm_missing=confirm_missing,
+                )
+            else:
+                local_copy = self._resolve_existing_local_node_copy(
+                    current_node,
+                    local_root=local_root,
+                    confirm_missing=confirm_missing,
+                )
             if local_copy is not None:
                 self._create_junction(junction_path, local_copy)
             if root_junction is None:
@@ -2672,6 +2681,53 @@ class NodeEditorWindow(QMainWindow):
 
         walk(node, root_dir)
         return root_junction
+
+    def _ensure_local_node_copies_for_tree(
+        self,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> bool:
+        visited: Set[object] = set()
+
+        def walk(current_node) -> bool:
+            if current_node in visited:
+                return True
+            visited.add(current_node)
+            local_copy = self._ensure_local_node_copy_with_prompt(
+                current_node,
+                local_root=local_root,
+                confirm_missing=confirm_missing,
+            )
+            if local_copy is None:
+                return False
+            for input_node in self._collect_input_nodes(current_node):
+                if not walk(input_node):
+                    return False
+            return True
+
+        return walk(node)
+
+    def _resolve_existing_local_node_copy(
+        self,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> Optional[Path]:
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        target_dir = local_root / "nodes" / node_uuid
+        if target_dir.exists():
+            return target_dir
+        if confirm_missing:
+            node_name = self._safe_node_name(node)
+            self._show_warning_dialog(
+                "ローカルコピーが見つかりません。\n"
+                f"ノード: {node_name}\n"
+                "コピー完了後に再実行してください。"
+            )
+        return None
 
     def _ensure_local_node_copy_with_prompt(
         self,
