@@ -9,6 +9,8 @@ from sotugyo.qt_compat import ensure_qt_module_alias
 ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 
+from .node_metrics import DEFAULT_NODE_WIDTH
+
 
 class FileNode(BaseNode):
     """ワークフローでファイルを参照するノード。"""
@@ -20,7 +22,8 @@ class FileNode(BaseNode):
         super().__init__()
         self.add_input("入力")
         self.add_output("出力")
-        self.set_color(96, 165, 250)
+        self.set_property("width", DEFAULT_NODE_WIDTH, push_undo=False)
+        self.set_color(59, 130, 246)
 
     @classmethod
     def node_type_identifier(cls) -> str:
