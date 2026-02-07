@@ -22,7 +22,7 @@ class ToolEnvironmentNode(BaseNode):
         self.add_output("出力")
         self.set_property("width", 260, push_undo=False)
         self.set_property("height", 180, push_undo=False)
-        self.set_color(80, 130, 190)
+        self.set_color(90, 130, 210)
 
     @classmethod
     def node_type_identifier(cls) -> str:

@@ -1027,6 +1027,7 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(node, DateNode):
             node.apply_default_size(self._snap_settings.grid_size)
             node.set_snap_grid_size(self._snap_settings.grid_size)
+        self._apply_uniform_node_width(node)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -2007,6 +2008,31 @@ class NodeEditorWindow(QMainWindow):
             pos_y,
         )
 
+    def _apply_uniform_node_width(self, node) -> bool:
+        if isinstance(node, MemoNode):
+            return False
+        grid_size = float(self._snap_settings.grid_size)
+        if grid_size <= 0:
+            return False
+        current_width = self._safe_node_property(node, "width")
+        if current_width is not None and abs(current_width - grid_size) < 0.1:
+            return False
+        try:
+            node.set_property("width", grid_size, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug(
+                "ノード幅の更新に失敗しました: node=%s", self._safe_node_name(node), exc_info=True
+            )
+            return False
+        return True
+
+    def _apply_uniform_width_to_nodes(self, nodes: Iterable) -> bool:
+        changed = False
+        for node in nodes:
+            if self._apply_uniform_node_width(node):
+                changed = True
+        return changed
+
     def _refresh_date_node_snap_grid(self) -> None:
         grid_size = float(self._snap_settings.grid_size)
         for node in self._graph.all_nodes():
@@ -2021,6 +2047,7 @@ class NodeEditorWindow(QMainWindow):
         spacing = max(1, int(self._background_pattern.total_width()))
         self._snap_settings.grid_size = float(spacing)
         self._refresh_date_node_snap_grid()
+        self._apply_uniform_width_to_nodes(self._graph.all_nodes())
 
     def _refresh_snap_actions(self) -> None:
         spacing = max(1, int(self._snap_settings.grid_size))
@@ -3301,6 +3328,8 @@ class NodeEditorWindow(QMainWindow):
             if self._ensure_tool_node_inputs_from_properties(node):
                 metadata_changed = True
             if self._ensure_tool_node_output_dir(node):
+                metadata_changed = True
+            if self._apply_uniform_node_width(node):
                 metadata_changed = True
 
         failed_operations: List[str] = []

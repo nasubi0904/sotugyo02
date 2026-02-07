@@ -27,8 +27,16 @@ class TaskNode(BaseDemoNode):
 
     NODE_NAME: ClassVar[str] = "タスクノード"
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_color(70, 165, 120)
+
 
 class ReviewNode(BaseDemoNode):
     """レビュー工程を表すデモノード。"""
 
     NODE_NAME: ClassVar[str] = "レビュー ノード"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_color(200, 120, 90)

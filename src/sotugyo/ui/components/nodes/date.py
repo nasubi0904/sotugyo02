@@ -90,7 +90,7 @@ class DateNode(BackdropNode):
             widget_tooltip="表示する日付 (YYYY-MM-DD)",
         )
         self.apply_default_size(DateNodeItem.DEFAULT_SNAP_GRID)
-        self.set_color(200, 170, 110)
+        self.set_color(180, 140, 80)
         self.view.setZValue(Z_VAL_BACKDROP - 1)
         self._child_node_ids: Set[str] = set()
 

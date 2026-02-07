@@ -20,7 +20,7 @@ class FileNode(BaseNode):
         super().__init__()
         self.add_input("入力")
         self.add_output("出力")
-        self.set_color(96, 165, 250)
+        self.set_color(120, 95, 210)
 
     @classmethod
     def node_type_identifier(cls) -> str:
