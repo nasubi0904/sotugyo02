@@ -1833,18 +1833,21 @@ class NodeEditorWindow(QMainWindow):
         local_root = self._resolve_user_local_root()
         if local_root is None:
             return
-        root_local = self._ensure_local_node_copy_with_prompt(
+        local_copies = self._ensure_local_node_copies_for_tree(
             self._current_node,
             local_root=local_root,
             confirm_missing=True,
         )
+        if local_copies is None:
+            return
+        root_local = local_copies.get(self._current_node)
         if root_local is None:
+            self._show_warning_dialog("ローカルコピーが見つかりません。")
             return
         root_junction = self._build_junction_tree(
             root_local,
             self._current_node,
-            local_root=local_root,
-            confirm_missing=True,
+            local_copies=local_copies,
             skip_root_junction=True,
         )
         if root_junction is None:
@@ -2645,13 +2648,46 @@ class NodeEditorWindow(QMainWindow):
                 return candidate, candidate_name
         return None
 
+    def _collect_junction_nodes(self, node) -> List:
+        visited: Set[object] = set()
+        ordered: List = []
+
+        def walk(current_node) -> None:
+            if current_node in visited:
+                return
+            visited.add(current_node)
+            ordered.append(current_node)
+            for input_node in self._collect_input_nodes(current_node):
+                walk(input_node)
+
+        walk(node)
+        return ordered
+
+    def _ensure_local_node_copies_for_tree(
+        self,
+        node,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> Optional[Dict[object, Path]]:
+        copies: Dict[object, Path] = {}
+        for target in self._collect_junction_nodes(node):
+            local_copy = self._ensure_local_node_copy_with_prompt(
+                target,
+                local_root=local_root,
+                confirm_missing=confirm_missing,
+            )
+            if local_copy is None:
+                return None
+            copies[target] = local_copy
+        return copies
+
     def _build_junction_tree(
         self,
         root_dir: Path,
         node,
         *,
-        local_root: Path,
-        confirm_missing: bool,
+        local_copies: Dict[object, Path],
         skip_root_junction: bool = False,
     ) -> Optional[Path]:
         visited: Set[object] = set()
@@ -2680,13 +2716,14 @@ class NodeEditorWindow(QMainWindow):
             if resolved is None:
                 return
             junction_path, _ = resolved
-            local_copy = self._ensure_local_node_copy_with_prompt(
-                current_node,
-                local_root=local_root,
-                confirm_missing=confirm_missing,
-            )
-            if local_copy is not None:
-                self._create_junction(junction_path, local_copy)
+            local_copy = local_copies.get(current_node)
+            if local_copy is None:
+                node_name = self._safe_node_name(current_node)
+                self._show_warning_dialog(
+                    f"ローカルコピーが見つかりません。\nノード: {node_name}"
+                )
+                return
+            self._create_junction(junction_path, local_copy)
             if root_junction is None:
                 root_junction = junction_path
 
