@@ -53,6 +53,7 @@
   - バージョン 0.6 系は Qt6 対応が進行中であり、グラフィックビュー周りのバグ修正が頻繁。リリースノートを確認する。
   - パフォーマンス改善には `set_render_mode(NodeGraphQt.constants.RENDER_THREADED)` 等の API を検討する。
   - `NodeModel.custom_properties` は内部 `_custom_prop` 辞書を返すため、独自メタ情報は辞書を直接更新して永続化する。`set_property("custom", ...)` は既定プロパティに存在せず例外になる点に注意する。
+  - ノードの横幅を固定したい場合は `set_property("width", ...)` をノード生成時に適用し、ラベル長による自動拡張を抑制する。
   - ノード作成/保存の監査情報は `custom_properties` に `created_host` / `created_user_id` / `created_user_name` / `saved_host` / `saved_user_id` / `saved_user_name` を保持し、保存時に更新する。
 
 ## OdenGraphQt
@@ -246,6 +247,9 @@
 
 最終更新日: 2026-04-04
 - 2026-04-04: ツールノードの出力ディレクトリを UUID と紐づけて保持し、既定のノード出力先として `tool_nodes/<uuid>` を採用する方針を整理した。
+
+最終更新日: 2026-04-05
+- 2026-04-05: ノード幅の固定は `set_property("width", ...)` で行い、ノード種別ごとの配色で視認性を高める方針を確認した。
 
 最終更新日: 2026-01-27
 - 2026-01-27: ユーザー設定にユーザー別ローカルディレクトリを紐づけて保存する方針を整理した。

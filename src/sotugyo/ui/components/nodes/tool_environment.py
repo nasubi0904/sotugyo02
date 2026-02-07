@@ -9,6 +9,8 @@ from sotugyo.qt_compat import ensure_qt_module_alias
 ensure_qt_module_alias()
 from NodeGraphQt import BaseNode
 
+from .node_style import NODE_STANDARD_WIDTH
+
 
 class ToolEnvironmentNode(BaseNode):
     """登録済みツール環境を表すノード。"""
@@ -20,9 +22,9 @@ class ToolEnvironmentNode(BaseNode):
         super().__init__()
         self.add_input("前段")
         self.add_output("出力")
-        self.set_property("width", 260, push_undo=False)
+        self.set_property("width", NODE_STANDARD_WIDTH, push_undo=False)
         self.set_property("height", 180, push_undo=False)
-        self.set_color(80, 130, 190)
+        self.set_color(60, 170, 160)
 
     @classmethod
     def node_type_identifier(cls) -> str:
