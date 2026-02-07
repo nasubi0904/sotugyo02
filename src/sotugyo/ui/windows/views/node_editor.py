@@ -1835,11 +1835,22 @@ class NodeEditorWindow(QMainWindow):
             )
             return
         self._ensure_node_metadata(self._current_node)
-        root_junction = self._build_junction_tree(
+        nodes_in_order = self._collect_input_nodes_recursive(self._current_node)
+        local_copies: Dict[object, Path] = {}
+        for target_node in nodes_in_order:
+            local_copy = self._ensure_local_node_copy_with_prompt(
+                target_node,
+                local_root=local_root,
+                confirm_missing=True,
+            )
+            if local_copy is None:
+                return
+            local_copies[target_node] = local_copy
+        root_junction = self._create_junction_tree(
             junc_root,
             self._current_node,
-            local_root=local_root,
-            confirm_missing=True,
+            local_copies=local_copies,
+            node_order=nodes_in_order,
         )
         if root_junction is None:
             return
@@ -2623,21 +2634,37 @@ class NodeEditorWindow(QMainWindow):
                 return candidate, candidate_name
         return None
 
-    def _build_junction_tree(
+    def _create_junction_tree(
         self,
         root_dir: Path,
         node,
         *,
-        local_root: Path,
-        confirm_missing: bool,
+        local_copies: Dict[object, Path],
+        node_order: List[object],
     ) -> Optional[Path]:
         visited: Set[object] = set()
         root_junction: Optional[Path] = None
+        created_links: List[Path] = []
+        order_index = {target: index for index, target in enumerate(node_order)}
 
-        def walk(current_node, parent_dir: Path) -> None:
+        def cleanup_links() -> None:
+            for link_path in reversed(created_links):
+                try:
+                    link_path.rmdir()
+                except OSError:
+                    LOGGER.warning("ジャンクションの後始末に失敗しました: %s", link_path)
+
+        def resolve_inputs(current_node) -> List[object]:
+            inputs = self._collect_input_nodes(current_node)
+            return sorted(
+                inputs,
+                key=lambda item: order_index.get(item, len(order_index)),
+            )
+
+        def walk(current_node, parent_dir: Path) -> bool:
             nonlocal root_junction
             if current_node in visited:
-                return
+                return True
             visited.add(current_node)
             node_label = (
                 self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
@@ -2648,23 +2675,45 @@ class NodeEditorWindow(QMainWindow):
                 title="ジャンクション生成先の競合",
             )
             if resolved is None:
-                return
+                return False
             junction_path, _ = resolved
-            local_copy = self._ensure_local_node_copy_with_prompt(
-                current_node,
-                local_root=local_root,
-                confirm_missing=confirm_missing,
-            )
-            if local_copy is not None:
-                self._create_junction(junction_path, local_copy)
+            local_copy = local_copies.get(current_node)
+            if local_copy is None:
+                self._show_warning_dialog("ローカルコピーが見つからないため中断しました。")
+                return False
+            existed_before = junction_path.exists()
+            if not self._create_junction(junction_path, local_copy):
+                self._show_warning_dialog("ジャンクションの作成に失敗しました。")
+                return False
+            if not existed_before and junction_path.exists():
+                created_links.append(junction_path)
             if root_junction is None:
                 root_junction = junction_path
 
-            for input_node in self._collect_input_nodes(current_node):
-                walk(input_node, junction_path)
+            for input_node in resolve_inputs(current_node):
+                if not walk(input_node, junction_path):
+                    return False
+            return True
 
-        walk(node, root_dir)
+        if not walk(node, root_dir):
+            cleanup_links()
+            return None
         return root_junction
+
+    def _collect_input_nodes_recursive(self, node) -> List[object]:
+        visited: Set[object] = set()
+        ordered: List[object] = []
+
+        def walk(current_node) -> None:
+            if current_node in visited:
+                return
+            visited.add(current_node)
+            ordered.append(current_node)
+            for input_node in self._collect_input_nodes(current_node):
+                walk(input_node)
+
+        walk(node)
+        return ordered
 
     def _ensure_local_node_copy_with_prompt(
         self,
@@ -2692,11 +2741,11 @@ class NodeEditorWindow(QMainWindow):
                 return None
         return self._ensure_local_node_copy(node, local_root=local_root)
 
-    def _create_junction(self, link_path: Path, target_path: Path) -> None:
+    def _create_junction(self, link_path: Path, target_path: Path) -> bool:
         if link_path.exists():
-            return
+            return True
         if not sys.platform.startswith("win"):
-            return
+            return False
         try:
             link_path.parent.mkdir(parents=True, exist_ok=True)
             subprocess.run(
@@ -2705,6 +2754,11 @@ class NodeEditorWindow(QMainWindow):
             )
         except OSError:
             LOGGER.warning("ジャンクション作成に失敗しました: %s", link_path)
+            return False
+        if not link_path.exists():
+            LOGGER.warning("ジャンクション作成後にパスが見つかりません: %s", link_path)
+            return False
+        return True
 
     def _sanitize_node_dir_name(self, name: str) -> str:
         sanitized = name.strip() if name else ""
