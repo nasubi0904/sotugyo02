@@ -1826,19 +1826,23 @@ class NodeEditorWindow(QMainWindow):
         local_root = self._resolve_user_local_root()
         if local_root is None:
             return
-        root_local = self._ensure_local_node_copy_with_prompt(
-            self._current_node,
+        nodes_to_copy = self._collect_input_tree_nodes(self._current_node, include_root=True)
+        if not self._ensure_local_copies_for_nodes(
+            nodes_to_copy,
             local_root=local_root,
             confirm_missing=True,
-        )
+        ):
+            return
+        root_local = self._local_node_copy_path(self._current_node, local_root=local_root)
         if root_local is None:
             return
         root_junction = self._build_junction_tree(
             root_local,
             self._current_node,
             local_root=local_root,
-            confirm_missing=True,
+            confirm_missing=False,
             skip_root_junction=True,
+            ensure_local_copy=False,
         )
         if root_junction is None:
             return
@@ -2572,6 +2576,13 @@ class NodeEditorWindow(QMainWindow):
             return None
         return target_dir
 
+    def _local_node_copy_path(self, node, *, local_root: Path) -> Optional[Path]:
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        target_dir = local_root / "nodes" / node_uuid
+        if target_dir.exists():
+            return target_dir
+        return None
+
     def _resolve_junction_dir(
         self,
         parent_dir: Path,
@@ -2630,22 +2641,24 @@ class NodeEditorWindow(QMainWindow):
         local_root: Path,
         confirm_missing: bool,
         skip_root_junction: bool = False,
+        ensure_local_copy: bool = True,
     ) -> Optional[Path]:
         visited: Set[object] = set()
         root_junction: Optional[Path] = None
         root_node = node
 
-        def walk(current_node, parent_dir: Path) -> None:
+        def walk(current_node, parent_dir: Path) -> bool:
             nonlocal root_junction
             if current_node in visited:
-                return
+                return True
             visited.add(current_node)
             if skip_root_junction and current_node is root_node:
                 for input_node in self._collect_input_nodes(current_node):
-                    walk(input_node, parent_dir)
+                    if not walk(input_node, parent_dir):
+                        return False
                 if root_junction is None:
                     root_junction = parent_dir
-                return
+                return True
             node_label = (
                 self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
             )
@@ -2655,23 +2668,73 @@ class NodeEditorWindow(QMainWindow):
                 title="ジャンクション生成先の競合",
             )
             if resolved is None:
-                return
+                return False
             junction_path, _ = resolved
-            local_copy = self._ensure_local_node_copy_with_prompt(
-                current_node,
-                local_root=local_root,
-                confirm_missing=confirm_missing,
-            )
-            if local_copy is not None:
-                self._create_junction(junction_path, local_copy)
+            if ensure_local_copy:
+                local_copy = self._ensure_local_node_copy_with_prompt(
+                    current_node,
+                    local_root=local_root,
+                    confirm_missing=confirm_missing,
+                )
+            else:
+                local_copy = self._local_node_copy_path(current_node, local_root=local_root)
+            if local_copy is None:
+                if confirm_missing:
+                    self._show_warning_dialog(
+                        "ローカルコピーが見つかりません。\n"
+                        f"ノード: {self._safe_node_name(current_node)}"
+                    )
+                return False
+            self._create_junction(junction_path, local_copy)
             if root_junction is None:
                 root_junction = junction_path
 
             for input_node in self._collect_input_nodes(current_node):
-                walk(input_node, junction_path)
+                if not walk(input_node, junction_path):
+                    return False
+            return True
 
-        walk(node, root_dir)
+        if not walk(node, root_dir):
+            return None
         return root_junction
+
+    def _collect_input_tree_nodes(self, node, *, include_root: bool) -> List:
+        collected: List = []
+        visited: Set[object] = set()
+
+        def walk(current_node) -> None:
+            if current_node in visited:
+                return
+            visited.add(current_node)
+            collected.append(current_node)
+            for input_node in self._collect_input_nodes(current_node):
+                walk(input_node)
+
+        if include_root and node is not None:
+            walk(node)
+        elif node is not None:
+            for input_node in self._collect_input_nodes(node):
+                walk(input_node)
+        return collected
+
+    def _ensure_local_copies_for_nodes(
+        self,
+        nodes: Iterable,
+        *,
+        local_root: Path,
+        confirm_missing: bool,
+    ) -> bool:
+        for node in nodes:
+            if node is None:
+                continue
+            local_copy = self._ensure_local_node_copy_with_prompt(
+                node,
+                local_root=local_root,
+                confirm_missing=confirm_missing,
+            )
+            if local_copy is None:
+                return False
+        return True
 
     def _ensure_local_node_copy_with_prompt(
         self,
