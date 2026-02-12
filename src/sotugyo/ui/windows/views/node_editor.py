@@ -2880,21 +2880,27 @@ class NodeEditorWindow(QMainWindow):
         ensure_local_copy: bool = True,
         created_relative_paths: Optional[Set[str]] = None,
     ) -> Optional[Path]:
-        visited: Set[object] = set()
         root_junction: Optional[Path] = None
         root_node = node
+        active_path: Set[object] = set()
 
         def walk(current_node, parent_dir: Path) -> bool:
             nonlocal root_junction
-            if current_node in visited:
+            if current_node in active_path:
+                LOGGER.warning(
+                    "ジャンクション生成中に循環参照を検出したため再帰を停止します: node=%s",
+                    self._safe_node_name(current_node),
+                )
                 return True
-            visited.add(current_node)
+            active_path.add(current_node)
             if skip_root_junction and current_node is root_node:
                 for input_node in self._collect_input_nodes(current_node):
                     if not walk(input_node, parent_dir):
+                        active_path.discard(current_node)
                         return False
                 if root_junction is None:
                     root_junction = parent_dir
+                active_path.discard(current_node)
                 return True
             node_label = (
                 self._sanitize_node_dir_name(self._safe_node_name(current_node)) or "node"
@@ -2905,6 +2911,7 @@ class NodeEditorWindow(QMainWindow):
                 title="ジャンクション生成先の競合",
             )
             if resolved is None:
+                active_path.discard(current_node)
                 return False
             junction_path, _ = resolved
             if ensure_local_copy:
@@ -2921,6 +2928,7 @@ class NodeEditorWindow(QMainWindow):
                         "ローカルコピーが見つかりません。\n"
                         f"ノード: {self._safe_node_name(current_node)}"
                     )
+                active_path.discard(current_node)
                 return False
             self._create_junction(junction_path, local_copy)
             if created_relative_paths is not None:
@@ -2935,7 +2943,9 @@ class NodeEditorWindow(QMainWindow):
 
             for input_node in self._collect_input_nodes(current_node):
                 if not walk(input_node, junction_path):
+                    active_path.discard(current_node)
                     return False
+            active_path.discard(current_node)
             return True
 
         if not walk(node, root_dir):
