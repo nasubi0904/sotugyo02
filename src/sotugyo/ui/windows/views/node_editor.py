@@ -1798,25 +1798,25 @@ class NodeEditorWindow(QMainWindow):
         )
 
     def _handle_file_reveal_requested(self) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("対象のファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("対象ノードを選択してください。")
             return
-        file_path = self._file_node_value(self._current_node)
+        file_path = self._node_path_value(self._current_node)
         if not file_path:
-            self._show_warning_dialog("ファイルパスが設定されていません。")
+            self._show_warning_dialog("参照パスが設定されていません。")
             return
         target = self._resolve_project_file_path(file_path)
         if target is None:
-            self._show_warning_dialog("ファイルパスの解決に失敗しました。")
+            self._show_warning_dialog("参照パスの解決に失敗しました。")
             return
         if not target.exists():
-            self._show_warning_dialog("ファイルが見つかりません。")
+            self._show_warning_dialog("参照先が見つかりません。")
             return
         self._reveal_file_in_explorer(target)
 
     def _handle_file_local_open_requested(self) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("対象のファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("対象ノードを選択してください。")
             return
         if not sys.platform.startswith("win"):
             self._show_warning_dialog(
@@ -1867,12 +1867,15 @@ class NodeEditorWindow(QMainWindow):
         self._show_info_dialog(f"ローカルへコピーしました。\n{local_dir}")
 
     def _handle_file_path_changed(self, path: str) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("ファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("ノードを選択してください。")
+            return
+        if not self._supports_path_controls(self._current_node):
+            self._show_info_dialog("パス編集に対応したノードを選択してください。")
             return
         normalized = path.strip()
         if not normalized:
-            self._show_warning_dialog("ファイルパスを入力してください。")
+            self._show_warning_dialog("参照パスを入力してください。")
             return
         if self._current_project_root is not None:
             parsed = parse_project_path(normalized)
@@ -1894,22 +1897,28 @@ class NodeEditorWindow(QMainWindow):
                         self._show_warning_dialog("プロジェクト相対パスの形式が不正です。")
                         return
                     normalized = f"{PROJECT_PATH_SCHEME}{relative}"
-        self._set_node_custom_property(self._current_node, "file_path", normalized)
-        new_name = self._file_display_name(normalized)
-        if new_name and hasattr(self._current_node, "set_name"):
-            self._current_node.set_name(new_name)
+        self._set_node_path_value(self._current_node, normalized)
+        if isinstance(self._current_node, FileNode):
+            new_name = self._file_display_name(normalized)
+            if new_name and hasattr(self._current_node, "set_name"):
+                self._current_node.set_name(new_name)
         self._set_modified(True)
         self._update_selected_node_info()
 
     def _handle_file_path_pick_requested(self) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("ファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("ノードを選択してください。")
+            return
+        if not self._supports_path_controls(self._current_node):
+            self._show_info_dialog("パス編集に対応したノードを選択してください。")
             return
         menu = QMenu(self)
-        file_action = menu.addAction("ファイルを選択")
+        file_action = None
+        if isinstance(self._current_node, FileNode):
+            file_action = menu.addAction("ファイルを選択")
         folder_action = menu.addAction("フォルダを選択")
         chosen = menu.exec_(QtGui.QCursor.pos())
-        if chosen is file_action:
+        if file_action is not None and chosen is file_action:
             selected = self._select_file_node_path(kind="file")
         elif chosen is folder_action:
             selected = self._select_file_node_path(kind="directory")
@@ -1920,12 +1929,15 @@ class NodeEditorWindow(QMainWindow):
         self._handle_file_path_changed(selected)
 
     def _select_file_node_path(self, *, kind: str) -> Optional[str]:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("ファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("ノードを選択してください。")
+            return None
+        if not self._supports_path_controls(self._current_node):
+            self._show_info_dialog("パス編集に対応したノードを選択してください。")
             return None
         base_dir = self._current_project_root or Path.home()
         initial_dir = self._resolve_project_file_path(
-            self._file_node_value(self._current_node)
+            self._node_path_value(self._current_node)
         )
         if initial_dir is None:
             initial_path = str(base_dir)
@@ -1949,28 +1961,92 @@ class NodeEditorWindow(QMainWindow):
         return None
 
     def _handle_file_path_verify_requested(self) -> None:
-        if self._current_node is None or not isinstance(self._current_node, FileNode):
-            self._show_info_dialog("ファイルノードを選択してください。")
+        if self._current_node is None:
+            self._show_info_dialog("ノードを選択してください。")
+            return
+        if not self._supports_path_controls(self._current_node):
+            self._show_info_dialog("パス編集に対応したノードを選択してください。")
             return
         if self._current_project_root is None:
             self._show_warning_dialog("先にプロジェクトを開いてください。")
             return
-        file_path = self._file_node_value(self._current_node)
+        file_path = self._node_path_value(self._current_node)
         if not file_path:
-            self._show_warning_dialog("ファイルパスが設定されていません。")
+            self._show_warning_dialog("参照パスが設定されていません。")
             return
         if self._is_project_relative_file_path(file_path):
             target = self._resolve_project_file_path(file_path)
             if target is None or not target.exists():
-                self._show_warning_dialog("プロジェクト内のファイルが見つかりません。")
+                self._show_warning_dialog("プロジェクト内の参照先が見つかりません。")
                 return
-            self._show_info_dialog("プロジェクト内のファイルを確認しました。")
+            self._show_info_dialog("プロジェクト内の参照先を確認しました。")
             return
-        if not self._sync_file_node_to_project(self._current_node):
+        if isinstance(self._current_node, ToolEnvironmentNode):
+            if not self._sync_tool_node_output_dir_to_project(self._current_node):
+                return
+        elif not self._sync_file_node_to_project(self._current_node):
             return
         self._show_info_dialog(
-            "ファイルパスを検証し、必要に応じてプロジェクト相対へ変換しました。"
+            "参照パスを検証し、必要に応じてプロジェクト相対へ変換しました。"
         )
+
+    def _supports_path_controls(self, node) -> bool:
+        return isinstance(node, (FileNode, ToolEnvironmentNode))
+
+    def _node_path_value(self, node) -> object | None:
+        if isinstance(node, FileNode):
+            return self._file_node_value(node)
+        if isinstance(node, ToolEnvironmentNode):
+            return self._node_custom_property_value(node, "tool_output_dir")
+        return None
+
+    def _set_node_path_value(self, node, value: object) -> bool:
+        if isinstance(node, FileNode):
+            return self._set_node_custom_property(node, "file_path", value)
+        if isinstance(node, ToolEnvironmentNode):
+            return self._set_node_custom_property(node, "tool_output_dir", value)
+        return False
+
+    def _sync_tool_node_output_dir_to_project(self, node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        if self._current_project_root is None:
+            return True
+        output_value = self._node_custom_property_value(node, "tool_output_dir")
+        if output_value is None:
+            return self._ensure_tool_node_output_dir(node)
+        if self._is_project_relative_file_path(output_value):
+            output_path = self._resolve_project_file_path(output_value)
+            if output_path is None:
+                return True
+            try:
+                output_path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                self._show_warning_dialog(
+                    f"ツールノード出力先の作成に失敗しました: {exc}"
+                )
+            return True
+        source = self._resolve_project_file_path(output_value)
+        if source is None or not source.exists():
+            return True
+        node_uuid, _, _ = self._ensure_node_metadata(node)
+        destination = self._project_tool_node_dir(node_uuid)
+        try:
+            destination.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self._show_warning_dialog(
+                f"ツールノード出力先の作成に失敗しました: {exc}"
+            )
+            return True
+        if source != destination and source.is_dir():
+            try:
+                shutil.copytree(source, destination, dirs_exist_ok=True)
+            except OSError as exc:
+                self._show_warning_dialog(
+                    f"ツールノード出力先のコピーに失敗しました: {exc}"
+                )
+        self._apply_project_relative_path(node, destination, property_name="tool_output_dir")
+        return True
 
     def _update_alignment_controls(self, node) -> None:
         input_nodes = self._collect_connected_nodes(node, direction="inputs")
@@ -2387,13 +2463,14 @@ class NodeEditorWindow(QMainWindow):
         inspector = self._inspector_dock
         if inspector is None:
             return
-        if not isinstance(node, FileNode):
+        if not self._supports_path_controls(node):
             inspector.set_file_reveal_state(enabled=False, label="-", visible=False)
             return
-        file_value = self._file_node_value(node)
+        file_value = self._node_path_value(node)
         if file_value:
+            resolved = self._resolve_project_file_path(file_value)
             inspector.set_file_reveal_state(
-                enabled=True,
+                enabled=resolved is not None and resolved.exists(),
                 label=self._file_label_text(file_value),
                 visible=True,
             )
@@ -2408,10 +2485,10 @@ class NodeEditorWindow(QMainWindow):
         inspector = self._inspector_dock
         if inspector is None:
             return
-        if not isinstance(node, FileNode):
+        if not self._supports_path_controls(node):
             inspector.set_file_local_open_state(enabled=False, label="-", visible=False)
             return
-        file_value = self._file_node_value(node)
+        file_value = self._node_path_value(node)
         if file_value:
             enabled = sys.platform.startswith("win")
             inspector.set_file_local_open_state(
@@ -2452,10 +2529,10 @@ class NodeEditorWindow(QMainWindow):
         inspector = self._inspector_dock
         if inspector is None:
             return
-        if not isinstance(node, FileNode):
+        if not self._supports_path_controls(node):
             inspector.set_file_path_state(enabled=False, path="", visible=False)
             return
-        file_path = self._file_label_text(self._file_node_value(node))
+        file_path = self._file_label_text(self._node_path_value(node))
         inspector.set_file_path_state(
             enabled=True,
             path=file_path,
@@ -3099,18 +3176,25 @@ class NodeEditorWindow(QMainWindow):
             return False
         return True
 
-    def _apply_project_relative_path(self, node, destination: Path) -> None:
+    def _apply_project_relative_path(
+        self,
+        node,
+        destination: Path,
+        *,
+        property_name: str = "file_path",
+    ) -> None:
         relative_path = self._project_relative_path(destination)
         if not relative_path:
             return
-        if self._set_node_custom_property(node, "file_path", relative_path):
-            new_name = self._file_display_name(relative_path)
-            if new_name and hasattr(node, "set_name"):
-                node.set_name(new_name)
+        if self._set_node_custom_property(node, property_name, relative_path):
+            if property_name == "file_path":
+                new_name = self._file_display_name(relative_path)
+                if new_name and hasattr(node, "set_name"):
+                    node.set_name(new_name)
+                self._refresh_node_catalog()
             self._set_modified(True)
             if node == self._current_node:
                 self._update_selected_node_info()
-            self._refresh_node_catalog()
 
     def _path_modified_ns(self, path: Path) -> int:
         try:
