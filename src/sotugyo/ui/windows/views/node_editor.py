@@ -853,6 +853,7 @@ class NodeEditorWindow(QMainWindow):
         )
         self._apply_tool_node_rez_properties(node, definition)
         self._apply_tool_node_environment_payload(node, definition)
+        self._apply_fixed_node_width(node)
         if self._ensure_tool_node_output_dir(node):
             self._set_modified(True)
 
@@ -987,6 +988,8 @@ class NodeEditorWindow(QMainWindow):
                 continue
             existing.add(name)
             added = True
+        if added:
+            self._apply_fixed_node_width(node)
         return added
 
     def _ensure_tool_node_rez_properties(self, node) -> bool:
@@ -3280,6 +3283,7 @@ class NodeEditorWindow(QMainWindow):
             if not isinstance(node_type, str) or not isinstance(node_name, str):
                 continue
             node = self._graph.create_node(node_type, name=node_name)
+            self._apply_fixed_node_width(node)
             if isinstance(position, (list, tuple)) and len(position) >= 2:
                 try:
                     node.set_pos(float(position[0]), float(position[1]))
