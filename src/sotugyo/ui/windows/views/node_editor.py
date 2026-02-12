@@ -16,6 +16,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from collections import deque
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -181,6 +182,7 @@ class NodeEditorWindow(QMainWindow):
         self._current_user: Optional[UserAccount] = None
         self._current_user_password: Optional[str] = None
         self._is_updating_selection = False
+        self._suppress_cycle_connection_validation = False
         self._coordinator = NodeEditorCoordinator(
             project_service=project_service,
             user_manager=user_manager,
@@ -1107,6 +1109,15 @@ class NodeEditorWindow(QMainWindow):
     def _connect_ports_compat(self, source_port: Port, target_port: Port) -> None:
         """NodeGraphQt のバージョン差異を吸収してポートを接続する。"""
 
+        if not self._can_connect_ports_without_cycle(source_port, target_port):
+            path = self._build_cycle_path(source_port.node(), target_port.node())
+            detail = " -> ".join(path) if path else "経路を特定できませんでした"
+            self._show_warning_dialog(
+                "循環参照になる接続は許可されません。\n"
+                f"検出経路: {detail}"
+            )
+            return
+
         connect_ports = getattr(self._graph, "connect_ports", None)
         try:
             if callable(connect_ports):
@@ -1373,8 +1384,122 @@ class NodeEditorWindow(QMainWindow):
         self._update_selected_node_info()
 
     def _on_port_connection_changed(self, *_ports, **_kwargs) -> None:
+        if self._suppress_cycle_connection_validation:
+            self._set_modified(True)
+            self._update_selected_node_info()
+            return
+
+        connected_ports = [port for port in _ports if isinstance(port, Port)]
+        if len(connected_ports) >= 2:
+            source_port, target_port = connected_ports[0], connected_ports[1]
+            if not self._is_output_port(source_port):
+                source_port, target_port = target_port, source_port
+            if self._is_output_port(source_port) and self._is_input_port(target_port):
+                if self._are_ports_connected(
+                    source_port, target_port
+                ) and self._does_connection_form_cycle(source_port, target_port):
+                    self._suppress_cycle_connection_validation = True
+                    try:
+                        self._disconnect_ports_compat(source_port, target_port)
+                    finally:
+                        self._suppress_cycle_connection_validation = False
+                    path = self._build_cycle_path(source_port.node(), target_port.node())
+                    detail = " -> ".join(path) if path else "経路を特定できませんでした"
+                    self._show_warning_dialog(
+                        "循環参照になる接続を取り消しました。\n"
+                        f"検出経路: {detail}"
+                    )
         self._set_modified(True)
         self._update_selected_node_info()
+
+    def _can_connect_ports_without_cycle(self, source_port: Port, target_port: Port) -> bool:
+        source_node = source_port.node() if hasattr(source_port, "node") else None
+        target_node = target_port.node() if hasattr(target_port, "node") else None
+        if source_node is None or target_node is None:
+            return True
+        if source_node is target_node:
+            return False
+        if not self._is_output_port(source_port) or not self._is_input_port(target_port):
+            return True
+        return not self._path_exists(target_node, source_node)
+
+    def _are_ports_connected(self, source_port: Port, target_port: Port) -> bool:
+        return any(port is target_port for port in self._connected_ports(source_port))
+
+    def _does_connection_form_cycle(self, source_port: Port, target_port: Port) -> bool:
+        source_node = source_port.node() if hasattr(source_port, "node") else None
+        target_node = target_port.node() if hasattr(target_port, "node") else None
+        if source_node is None or target_node is None:
+            return False
+        if source_node is target_node:
+            return True
+        return self._path_exists(target_node, source_node)
+
+    def _build_cycle_path(self, source_node, target_node) -> List[str]:
+        if source_node is None or target_node is None:
+            return []
+        path_nodes = self._find_path(target_node, source_node)
+        if not path_nodes:
+            return []
+        rendered = [self._safe_node_name(node) for node in path_nodes]
+        rendered.append(self._safe_node_name(target_node))
+        return rendered
+
+    def _path_exists(self, start_node, goal_node) -> bool:
+        return bool(self._find_path(start_node, goal_node))
+
+    def _find_path(self, start_node, goal_node):
+        if start_node is goal_node:
+            return [start_node]
+
+        queue = deque([start_node])
+        visited: Set[int] = {id(start_node)}
+        parents: Dict[int, Optional[object]] = {id(start_node): None}
+
+        while queue:
+            current = queue.popleft()
+            if current is goal_node:
+                break
+            for neighbour in self._iter_downstream_nodes(current):
+                neighbour_id = id(neighbour)
+                if neighbour_id in visited:
+                    continue
+                visited.add(neighbour_id)
+                parents[neighbour_id] = current
+                queue.append(neighbour)
+
+        goal_id = id(goal_node)
+        if goal_id not in parents and start_node is not goal_node:
+            return []
+
+        path: List = []
+        cursor = goal_node
+        while cursor is not None:
+            path.append(cursor)
+            cursor_id = id(cursor)
+            cursor = parents.get(cursor_id)
+        path.reverse()
+        return path
+
+    def _iter_downstream_nodes(self, node):
+        for output_port in self._collect_ports(node, output=True):
+            for connected in self._connected_ports(output_port):
+                connected_node = connected.node() if hasattr(connected, "node") else None
+                if connected_node is None:
+                    continue
+                yield connected_node
+
+    def _is_output_port(self, port: Port) -> bool:
+        node = port.node() if hasattr(port, "node") else None
+        if node is None:
+            return False
+        return any(candidate is port for candidate in self._collect_ports(node, output=True))
+
+    def _is_input_port(self, port: Port) -> bool:
+        node = port.node() if hasattr(port, "node") else None
+        if node is None:
+            return False
+        return any(candidate is port for candidate in self._collect_ports(node, output=False))
 
     def _update_selected_node_info(self) -> None:
         nodes = self._graph.selected_nodes()
