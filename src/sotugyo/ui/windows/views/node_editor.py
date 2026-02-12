@@ -1832,7 +1832,8 @@ class NodeEditorWindow(QMainWindow):
         root_local = self._local_node_copy_path(self._current_node, local_root=local_root)
         if root_local is None:
             return
-        if not self._clear_recorded_junctions(root_local):
+        node_uuid, _, _ = self._ensure_node_metadata(self._current_node)
+        if not self._clear_recorded_junctions(local_root, node_uuid=node_uuid, root_dir=root_local):
             return
         created_junctions: Set[str] = set()
         root_junction = self._build_junction_tree(
@@ -1845,9 +1846,13 @@ class NodeEditorWindow(QMainWindow):
             created_relative_paths=created_junctions,
         )
         if root_junction is None:
-            self._save_recorded_junctions(root_local, set())
+            self._save_recorded_junctions(local_root, node_uuid=node_uuid, junctions=set())
             return
-        self._save_recorded_junctions(root_local, created_junctions)
+        self._save_recorded_junctions(
+            local_root,
+            node_uuid=node_uuid,
+            junctions=created_junctions,
+        )
         self._reveal_file_in_explorer(root_junction)
 
     def _handle_local_directory_copy_requested(self) -> None:
@@ -2821,31 +2826,40 @@ class NodeEditorWindow(QMainWindow):
         except OSError:
             LOGGER.warning("ジャンクション作成に失敗しました: %s", link_path)
 
-    def _junction_manifest_path(self, root_dir: Path) -> Path:
-        return root_dir / ".sotugyo_junctions.json"
+    def _junction_manifest_path(self, local_root: Path) -> Path:
+        return local_root / "nodes" / "junctions.json"
 
-    def _load_recorded_junctions(self, root_dir: Path) -> Set[str]:
-        manifest_path = self._junction_manifest_path(root_dir)
+    def _load_recorded_junctions(self, local_root: Path) -> Dict[str, Set[str]]:
+        manifest_path = self._junction_manifest_path(local_root)
         if not manifest_path.exists():
-            return set()
+            return {}
         try:
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            return set()
+            return {}
         if not isinstance(payload, dict):
-            return set()
-        values = payload.get("junctions")
-        if not isinstance(values, list):
-            return set()
-        collected: Set[str] = set()
-        for value in values:
-            if isinstance(value, str) and value:
-                collected.add(value)
+            return {}
+        node_junctions = payload.get("node_junctions")
+        if not isinstance(node_junctions, dict):
+            return {}
+        collected: Dict[str, Set[str]] = {}
+        for node_uuid, values in node_junctions.items():
+            if not isinstance(node_uuid, str) or not isinstance(values, list):
+                continue
+            paths = {
+                value for value in values if isinstance(value, str) and value
+            }
+            if paths:
+                collected[node_uuid] = paths
         return collected
 
-    def _save_recorded_junctions(self, root_dir: Path, junctions: Set[str]) -> None:
-        manifest_path = self._junction_manifest_path(root_dir)
-        if not junctions:
+    def _write_recorded_junctions(
+        self,
+        local_root: Path,
+        node_junctions: Dict[str, Set[str]],
+    ) -> None:
+        manifest_path = self._junction_manifest_path(local_root)
+        if not node_junctions:
             try:
                 manifest_path.unlink()
             except FileNotFoundError:
@@ -2853,8 +2867,15 @@ class NodeEditorWindow(QMainWindow):
             except OSError:
                 LOGGER.warning("ジャンクション管理ファイルの削除に失敗しました: %s", manifest_path)
             return
-        payload = {"junctions": sorted(junctions)}
+        payload = {
+            "node_junctions": {
+                node_uuid: sorted(paths)
+                for node_uuid, paths in sorted(node_junctions.items())
+                if paths
+            }
+        }
         try:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
             manifest_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
@@ -2862,10 +2883,31 @@ class NodeEditorWindow(QMainWindow):
         except OSError:
             LOGGER.warning("ジャンクション管理ファイルの保存に失敗しました: %s", manifest_path)
 
-    def _clear_recorded_junctions(self, root_dir: Path) -> bool:
+    def _save_recorded_junctions(
+        self,
+        local_root: Path,
+        *,
+        node_uuid: str,
+        junctions: Set[str],
+    ) -> None:
+        node_junctions = self._load_recorded_junctions(local_root)
+        if junctions:
+            node_junctions[node_uuid] = set(junctions)
+        else:
+            node_junctions.pop(node_uuid, None)
+        self._write_recorded_junctions(local_root, node_junctions)
+
+    def _clear_recorded_junctions(
+        self,
+        local_root: Path,
+        *,
+        node_uuid: str,
+        root_dir: Path,
+    ) -> bool:
         if not sys.platform.startswith("win"):
             return True
-        recorded = self._load_recorded_junctions(root_dir)
+        node_junctions = self._load_recorded_junctions(local_root)
+        recorded = node_junctions.get(node_uuid, set())
         if not recorded:
             return True
         sorted_entries = sorted(recorded, key=lambda value: value.count("/"), reverse=True)
@@ -2877,7 +2919,8 @@ class NodeEditorWindow(QMainWindow):
                     f"対象: {target}"
                 )
                 return False
-        self._save_recorded_junctions(root_dir, set())
+        node_junctions.pop(node_uuid, None)
+        self._write_recorded_junctions(local_root, node_junctions)
         return True
 
     def _remove_windows_directory_link(self, target: Path) -> bool:
