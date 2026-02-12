@@ -16,6 +16,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
+from collections import deque
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional, Set, Tuple
@@ -147,6 +148,7 @@ class NodeEditorWindow(QMainWindow):
         self.resize(960, 600)
 
         self._graph = NodeGraph()
+        self._graph.set_acyclic(True)
         self._snap_settings = NodeSnapSettings()
         self._snap_action: QAction | None = None
 
@@ -1160,6 +1162,16 @@ class NodeEditorWindow(QMainWindow):
         if not source_port or not target_port:
             self._show_info_dialog("接続できるポートが見つかりませんでした。")
             return
+
+        cycle_path = self._find_cycle_path_for_connection(source, target)
+        if cycle_path is not None:
+            cycle_text = " -> ".join(cycle_path)
+            self._show_warning_dialog(
+                "この接続は循環参照になるため作成できません。\n"
+                f"循環経路: {cycle_text}"
+            )
+            return
+
         self._connect_ports_compat(source_port, target_port)
         self._set_modified(True)
 
@@ -1373,8 +1385,116 @@ class NodeEditorWindow(QMainWindow):
         self._update_selected_node_info()
 
     def _on_port_connection_changed(self, *_ports, **_kwargs) -> None:
+        self._enforce_acyclic_graph()
         self._set_modified(True)
         self._update_selected_node_info()
+
+    def _enforce_acyclic_graph(self) -> None:
+        """循環接続を検出した場合は自動で切断して警告を表示する。"""
+
+        removed_connections: list[tuple[Port, Port, list[str]]] = []
+        for source_port, target_port in self._iter_connected_port_pairs():
+            source_node = self._node_from_port(source_port)
+            target_node = self._node_from_port(target_port)
+            if source_node is None or target_node is None:
+                continue
+
+            cycle_path = self._find_cycle_path_for_connection(source_node, target_node)
+            if cycle_path is None:
+                continue
+            removed_connections.append((source_port, target_port, cycle_path))
+
+        if not removed_connections:
+            return
+
+        for source_port, target_port, _ in removed_connections:
+            self._disconnect_ports_compat(source_port, target_port)
+
+        first_cycle = " -> ".join(removed_connections[0][2])
+        self._show_warning_dialog(
+            "循環参照を検出したため接続を自動的に解除しました。\n"
+            f"循環経路: {first_cycle}"
+        )
+
+    def _iter_connected_port_pairs(self) -> List[tuple[Port, Port]]:
+        """現在の接続を source->target のポート組で列挙する。"""
+
+        pairs: List[tuple[Port, Port]] = []
+        for node in self._collect_all_nodes():
+            for source_port in self._collect_ports(node, output=True):
+                for target_port in list(source_port.connected_ports()):
+                    if self._port_is_output(source_port) and not self._port_is_output(
+                        target_port
+                    ):
+                        pairs.append((source_port, target_port))
+        return pairs
+
+    def _find_cycle_path_for_connection(self, source_node, target_node) -> Optional[list[str]]:
+        """source->target を追加した場合に生じる循環経路を返す。"""
+
+        if source_node is target_node:
+            name = self._safe_node_name(source_node)
+            return [name, name]
+
+        predecessors: dict[object, object | None] = {target_node: None}
+        queue: deque = deque([target_node])
+
+        while queue:
+            current = queue.popleft()
+            if current is source_node:
+                path_nodes = self._reconstruct_node_path(predecessors, source_node)
+                path_names = [self._safe_node_name(node) for node in path_nodes]
+                path_names.append(path_names[0])
+                return path_names
+
+            for child in self._iter_downstream_nodes(current):
+                if child in predecessors:
+                    continue
+                predecessors[child] = current
+                queue.append(child)
+        return None
+
+    def _reconstruct_node_path(self, predecessors: dict[object, object | None], end_node) -> List:
+        """探索結果から経路ノード列を復元する。"""
+
+        path: List = [end_node]
+        current = end_node
+        while predecessors.get(current) is not None:
+            current = predecessors[current]
+            path.append(current)
+        path.reverse()
+        return path
+
+    def _iter_downstream_nodes(self, node):
+        """ノードの出力先ノードを順に返す。"""
+
+        for output_port in self._collect_ports(node, output=True):
+            for connected_port in list(output_port.connected_ports()):
+                if self._port_is_output(connected_port):
+                    continue
+                downstream = self._node_from_port(connected_port)
+                if downstream is not None:
+                    yield downstream
+
+    def _node_from_port(self, port: Port):
+        getter = getattr(port, "node", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter()
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            LOGGER.debug("ポートからノードの取得に失敗しました", exc_info=True)
+            return None
+
+    @staticmethod
+    def _port_is_output(port: Port) -> bool:
+        getter = getattr(port, "type_", None)
+        if callable(getter):
+            try:
+                return str(getter()).lower() == "out"
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                return False
+        return False
 
     def _update_selected_node_info(self) -> None:
         nodes = self._graph.selected_nodes()
