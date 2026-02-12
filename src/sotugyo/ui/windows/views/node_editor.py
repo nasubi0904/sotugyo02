@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Iterable as IterableABC, Mapping
 from datetime import datetime
-from typing import Dict, Iterable, List, Optional, Set, Tuple
+from typing import ClassVar, Dict, Iterable, List, Optional, Set, Tuple
 
 from qtpy import QtCore, QtGui, QtWidgets
 
@@ -132,6 +132,7 @@ class NodeEditorWindow(QMainWindow):
     """NodeGraphQt を用いたノード編集画面。"""
 
     WINDOW_TITLE = "ノード編集テスト"
+    TOOL_NODE_FIXED_WIDTH: ClassVar[float] = 260.0
     return_to_start_requested = Signal()
 
     def __init__(
@@ -1018,6 +1019,7 @@ class NodeEditorWindow(QMainWindow):
         position: QtCore.QPointF | None = None,
     ):
         node = self._graph.create_node(node_type, name=display_name)
+        self._apply_fixed_node_width(node)
         if position is None:
             pos_x = (self._node_spawn_offset % 4) * 220
             pos_y = (self._node_spawn_offset // 4) * 180
@@ -1043,6 +1045,14 @@ class NodeEditorWindow(QMainWindow):
         self._on_selection_changed()
         self._refresh_node_catalog()
         return node
+
+    def _apply_fixed_node_width(self, node) -> None:
+        if not isinstance(node, ToolEnvironmentNode):
+            return
+        try:
+            node.set_property("width", self.TOOL_NODE_FIXED_WIDTH, push_undo=False)
+        except Exception:  # pragma: no cover - NodeGraph 依存の例外
+            LOGGER.debug("ツール環境ノードの固定幅適用に失敗しました", exc_info=True)
 
     def _delete_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
@@ -1524,6 +1534,7 @@ class NodeEditorWindow(QMainWindow):
 
         if hasattr(self._current_node, "set_name"):
             self._current_node.set_name(normalized_name)
+            self._apply_fixed_node_width(self._current_node)
         self._update_selected_node_info()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -1838,6 +1849,7 @@ class NodeEditorWindow(QMainWindow):
         new_name = self._file_display_name(normalized)
         if new_name and hasattr(self._current_node, "set_name"):
             self._current_node.set_name(new_name)
+            self._apply_fixed_node_width(self._current_node)
         self._set_modified(True)
         self._update_selected_node_info()
 
@@ -2698,6 +2710,7 @@ class NodeEditorWindow(QMainWindow):
             new_name = self._file_display_name(relative_path)
             if new_name and hasattr(node, "set_name"):
                 node.set_name(new_name)
+                self._apply_fixed_node_width(node)
             self._set_modified(True)
             if node == self._current_node:
                 self._update_selected_node_info()
