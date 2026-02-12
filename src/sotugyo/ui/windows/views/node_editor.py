@@ -52,6 +52,7 @@ from NodeGraphQt import NodeGraph, Port
 
 
 LOGGER = logging.getLogger(__name__)
+TOOL_ENVIRONMENT_NODE_WIDTH = 260.0
 
 from ...components.content_browser import (
     FILE_NODE_TYPE_PREFIX,
@@ -1027,6 +1028,8 @@ class NodeEditorWindow(QMainWindow):
         if isinstance(node, DateNode):
             node.apply_default_size(self._snap_settings.grid_size)
             node.set_snap_grid_size(self._snap_settings.grid_size)
+        if self._enforce_tool_environment_node_width(node):
+            self._set_modified(True)
         self._node_spawn_offset += 1
         self._known_nodes.append(node)
         self._ensure_node_metadata(node)
@@ -1043,6 +1046,19 @@ class NodeEditorWindow(QMainWindow):
         self._on_selection_changed()
         self._refresh_node_catalog()
         return node
+
+    @staticmethod
+    def _enforce_tool_environment_node_width(node) -> bool:
+        if not isinstance(node, ToolEnvironmentNode):
+            return False
+        try:
+            current_width = float(node.get_property("width"))
+        except Exception:
+            current_width = TOOL_ENVIRONMENT_NODE_WIDTH
+        if abs(current_width - TOOL_ENVIRONMENT_NODE_WIDTH) < 0.01:
+            return False
+        node.set_property("width", TOOL_ENVIRONMENT_NODE_WIDTH, push_undo=False)
+        return True
 
     def _delete_selected_nodes(self) -> None:
         nodes = self._graph.selected_nodes()
@@ -1524,6 +1540,8 @@ class NodeEditorWindow(QMainWindow):
 
         if hasattr(self._current_node, "set_name"):
             self._current_node.set_name(normalized_name)
+            if self._enforce_tool_environment_node_width(self._current_node):
+                self._set_modified(True)
         self._update_selected_node_info()
         self._set_modified(True)
         self._refresh_node_catalog()
@@ -1838,6 +1856,8 @@ class NodeEditorWindow(QMainWindow):
         new_name = self._file_display_name(normalized)
         if new_name and hasattr(self._current_node, "set_name"):
             self._current_node.set_name(new_name)
+            if self._enforce_tool_environment_node_width(self._current_node):
+                self._set_modified(True)
         self._set_modified(True)
         self._update_selected_node_info()
 
@@ -2698,6 +2718,8 @@ class NodeEditorWindow(QMainWindow):
             new_name = self._file_display_name(relative_path)
             if new_name and hasattr(node, "set_name"):
                 node.set_name(new_name)
+                if self._enforce_tool_environment_node_width(node):
+                    self._set_modified(True)
             self._set_modified(True)
             if node == self._current_node:
                 self._update_selected_node_info()
