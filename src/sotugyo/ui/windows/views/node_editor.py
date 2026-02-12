@@ -148,6 +148,12 @@ class NodeEditorWindow(QMainWindow):
         self.resize(960, 600)
 
         self._graph = NodeGraph()
+        set_acyclic = getattr(self._graph, "set_acyclic", None)
+        if callable(set_acyclic):
+            try:
+                set_acyclic(True)
+            except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+                LOGGER.debug("NodeGraph の acyclic 設定に失敗しました", exc_info=True)
         self._snap_settings = NodeSnapSettings()
         self._snap_action: QAction | None = None
 
@@ -1389,28 +1395,91 @@ class NodeEditorWindow(QMainWindow):
             self._update_selected_node_info()
             return
 
-        connected_ports = [port for port in _ports if isinstance(port, Port)]
-        if len(connected_ports) >= 2:
-            source_port, target_port = connected_ports[0], connected_ports[1]
-            if not self._is_output_port(source_port):
-                source_port, target_port = target_port, source_port
-            if self._is_output_port(source_port) and self._is_input_port(target_port):
-                if self._are_ports_connected(
-                    source_port, target_port
-                ) and self._does_connection_form_cycle(source_port, target_port):
-                    self._suppress_cycle_connection_validation = True
-                    try:
-                        self._disconnect_ports_compat(source_port, target_port)
-                    finally:
-                        self._suppress_cycle_connection_validation = False
-                    path = self._build_cycle_path(source_port.node(), target_port.node())
-                    detail = " -> ".join(path) if path else "経路を特定できませんでした"
-                    self._show_warning_dialog(
-                        "循環参照になる接続を取り消しました。\n"
-                        f"検出経路: {detail}"
-                    )
+        source_port, target_port = self._extract_connected_ports(_ports, _kwargs)
+        if source_port is not None and target_port is not None:
+            if self._are_ports_connected(
+                source_port, target_port
+            ) and self._does_connection_form_cycle(source_port, target_port):
+                self._rollback_cycle_connection(source_port, target_port)
+        else:
+            fallback = self._find_any_cyclic_connection()
+            if fallback is not None:
+                self._rollback_cycle_connection(*fallback)
+
         self._set_modified(True)
         self._update_selected_node_info()
+
+    def _extract_connected_ports(self, args, kwargs) -> tuple[Optional[Port], Optional[Port]]:
+        candidates: List[Port] = []
+        for value in list(args) + list(kwargs.values()):
+            self._collect_port_candidates(value, candidates)
+        if len(candidates) < 2:
+            return None, None
+
+        source_port = next((port for port in candidates if self._is_output_port(port)), None)
+        target_port = next((port for port in candidates if self._is_input_port(port)), None)
+        if source_port is None or target_port is None:
+            return None, None
+        return source_port, target_port
+
+    def _collect_port_candidates(self, value, out: List[Port]) -> None:
+        if value is None:
+            return
+        if isinstance(value, Mapping):
+            for nested in value.values():
+                self._collect_port_candidates(nested, out)
+            return
+        if isinstance(value, IterableABC) and not isinstance(value, (str, bytes)):
+            for nested in value:
+                self._collect_port_candidates(nested, out)
+            return
+        port = self._coerce_port(value)
+        if port is not None and all(existing is not port for existing in out):
+            out.append(port)
+
+    def _coerce_port(self, candidate) -> Optional[Port]:
+        if isinstance(candidate, Port):
+            return candidate
+        node_getter = getattr(candidate, "node", None)
+        if not callable(node_getter):
+            return None
+        try:
+            node = node_getter()
+        except Exception:  # pragma: no cover - NodeGraphQt 依存の例外
+            return None
+        if node is None:
+            return None
+        return candidate
+
+    def _find_any_cyclic_connection(self) -> Optional[tuple[Port, Port]]:
+        for source_port, target_port in self._iter_connection_pairs():
+            if self._does_connection_form_cycle(source_port, target_port):
+                return source_port, target_port
+        return None
+
+    def _iter_connection_pairs(self):
+        for node in self._collect_all_nodes():
+            for source_port in self._collect_ports(node, output=True):
+                for target_port in self._connected_ports(source_port):
+                    port = self._coerce_port(target_port)
+                    if port is None:
+                        continue
+                    if not self._is_input_port(port):
+                        continue
+                    yield source_port, port
+
+    def _rollback_cycle_connection(self, source_port: Port, target_port: Port) -> None:
+        self._suppress_cycle_connection_validation = True
+        try:
+            self._disconnect_ports_compat(source_port, target_port)
+        finally:
+            self._suppress_cycle_connection_validation = False
+        path = self._build_cycle_path(source_port.node(), target_port.node())
+        detail = " -> ".join(path) if path else "経路を特定できませんでした"
+        self._show_warning_dialog(
+            "循環参照になる接続を取り消しました。\n"
+            f"検出経路: {detail}"
+        )
 
     def _can_connect_ports_without_cycle(self, source_port: Port, target_port: Port) -> bool:
         source_node = source_port.node() if hasattr(source_port, "node") else None
