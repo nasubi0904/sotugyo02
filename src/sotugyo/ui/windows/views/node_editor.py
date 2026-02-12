@@ -1832,6 +1832,10 @@ class NodeEditorWindow(QMainWindow):
         root_local = self._local_node_copy_path(self._current_node, local_root=local_root)
         if root_local is None:
             return
+        node_uuid, _, _ = self._ensure_node_metadata(self._current_node)
+        if not self._clear_recorded_junctions(local_root, node_uuid=node_uuid, root_dir=root_local):
+            return
+        created_junctions: Set[str] = set()
         root_junction = self._build_junction_tree(
             root_local,
             self._current_node,
@@ -1839,9 +1843,16 @@ class NodeEditorWindow(QMainWindow):
             confirm_missing=False,
             skip_root_junction=True,
             ensure_local_copy=False,
+            created_relative_paths=created_junctions,
         )
         if root_junction is None:
+            self._save_recorded_junctions(local_root, node_uuid=node_uuid, junctions=set())
             return
+        self._save_recorded_junctions(
+            local_root,
+            node_uuid=node_uuid,
+            junctions=created_junctions,
+        )
         self._reveal_file_in_explorer(root_junction)
 
     def _handle_local_directory_copy_requested(self) -> None:
@@ -2673,6 +2684,7 @@ class NodeEditorWindow(QMainWindow):
         confirm_missing: bool,
         skip_root_junction: bool = False,
         ensure_local_copy: bool = True,
+        created_relative_paths: Optional[Set[str]] = None,
     ) -> Optional[Path]:
         visited: Set[object] = set()
         root_junction: Optional[Path] = None
@@ -2717,6 +2729,13 @@ class NodeEditorWindow(QMainWindow):
                     )
                 return False
             self._create_junction(junction_path, local_copy)
+            if created_relative_paths is not None:
+                try:
+                    relative_path = junction_path.relative_to(root_dir).as_posix()
+                except ValueError:
+                    relative_path = junction_path.name
+                if relative_path:
+                    created_relative_paths.add(relative_path)
             if root_junction is None:
                 root_junction = junction_path
 
@@ -2806,6 +2825,118 @@ class NodeEditorWindow(QMainWindow):
             )
         except OSError:
             LOGGER.warning("ジャンクション作成に失敗しました: %s", link_path)
+
+    def _junction_manifest_path(self, local_root: Path) -> Path:
+        return local_root / "nodes" / "junctions.json"
+
+    def _load_recorded_junctions(self, local_root: Path) -> Dict[str, Set[str]]:
+        manifest_path = self._junction_manifest_path(local_root)
+        if not manifest_path.exists():
+            return {}
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        node_junctions = payload.get("node_junctions")
+        if not isinstance(node_junctions, dict):
+            return {}
+        collected: Dict[str, Set[str]] = {}
+        for node_uuid, values in node_junctions.items():
+            if not isinstance(node_uuid, str) or not isinstance(values, list):
+                continue
+            paths = {
+                value for value in values if isinstance(value, str) and value
+            }
+            if paths:
+                collected[node_uuid] = paths
+        return collected
+
+    def _write_recorded_junctions(
+        self,
+        local_root: Path,
+        node_junctions: Dict[str, Set[str]],
+    ) -> None:
+        manifest_path = self._junction_manifest_path(local_root)
+        if not node_junctions:
+            try:
+                manifest_path.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                LOGGER.warning("ジャンクション管理ファイルの削除に失敗しました: %s", manifest_path)
+            return
+        payload = {
+            "node_junctions": {
+                node_uuid: sorted(paths)
+                for node_uuid, paths in sorted(node_junctions.items())
+                if paths
+            }
+        }
+        try:
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            LOGGER.warning("ジャンクション管理ファイルの保存に失敗しました: %s", manifest_path)
+
+    def _save_recorded_junctions(
+        self,
+        local_root: Path,
+        *,
+        node_uuid: str,
+        junctions: Set[str],
+    ) -> None:
+        node_junctions = self._load_recorded_junctions(local_root)
+        if junctions:
+            node_junctions[node_uuid] = set(junctions)
+        else:
+            node_junctions.pop(node_uuid, None)
+        self._write_recorded_junctions(local_root, node_junctions)
+
+    def _clear_recorded_junctions(
+        self,
+        local_root: Path,
+        *,
+        node_uuid: str,
+        root_dir: Path,
+    ) -> bool:
+        if not sys.platform.startswith("win"):
+            return True
+        node_junctions = self._load_recorded_junctions(local_root)
+        recorded = node_junctions.get(node_uuid, set())
+        if not recorded:
+            return True
+        sorted_entries = sorted(recorded, key=lambda value: value.count("/"), reverse=True)
+        for relative in sorted_entries:
+            target = root_dir / Path(relative)
+            if not self._remove_windows_directory_link(target):
+                self._show_warning_dialog(
+                    "過去のジャンクション削除に失敗しました。\n"
+                    f"対象: {target}"
+                )
+                return False
+        node_junctions.pop(node_uuid, None)
+        self._write_recorded_junctions(local_root, node_junctions)
+        return True
+
+    def _remove_windows_directory_link(self, target: Path) -> bool:
+        normalized = self._normalize_windows_path(target)
+        if not os.path.exists(normalized):
+            return True
+        try:
+            result = subprocess.run(
+                ["cmd", "/c", "rmdir", normalized],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError:
+            return False
+        return result.returncode == 0
 
     def _sanitize_node_dir_name(self, name: str) -> str:
         sanitized = name.strip() if name else ""
